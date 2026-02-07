@@ -1,11 +1,13 @@
+from email import header
 import logging
 import tkinter as tk
 import threading
 import csv
 import os
-
+import tkinter.font as tkfont
 from src.generator_project import generate_project_rows
 from src.storage_sqlite_project import create_tables, insert_project_rows
+from dataclasses import dataclass
 
 from tkinter import ttk, messagebox, filedialog
 
@@ -24,6 +26,337 @@ logger = logging.getLogger("gui_schema_project")
 DTYPES = ["int", "float", "text", "bool", "date", "datetime"]
 
 
+
+# ---------------- Scrollable logic ----------------
+class ScrollableFrame(ttk.Frame):
+    """
+    A ttk.Frame that can scroll both vertically and horizontally.
+
+    Internals:
+    - A Canvas does the scrolling.
+    - An 'inner' Frame lives inside the Canvas and holds your actual widgets.
+    - Scrollbars are attached to the Canvas.
+    """
+    def __init__(self, parent: tk.Widget, *, padding: int = 0) -> None:
+        super().__init__(parent)
+
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        self.v_scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.h_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+
+        # Layout: canvas takes most space, scrollbars on right and bottom
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+        # Inner frame: where you will place all your widgets
+        self.inner = ttk.Frame(self.canvas, padding=padding)
+        self._inner_window_id = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+
+        # When inner frame resizes, update scrollable area
+        self.inner.bind("<Configure>", self._on_inner_configure)
+        # When canvas resizes, keep inner frame width synced if desired
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        # Mouse wheel scrolling (Windows/macOS/Linux variants)
+        self._bind_mousewheel(self.canvas)
+
+        #Zoom Logic
+        self.zoom = 1.0
+        self.min_zoom = 0.7
+        self.max_zoom = 1.5
+        self.zoom_step = 0.1
+
+        #Base font to enable zooming
+        self._fonts = {}
+        for name in ("TkDefaultFont", "TkTextFont", "TkFixedFont"):
+            f = tkfont.nametofont(name)
+            self._fonts[name] = {
+                "font": f,
+                "size": f.cget("size"),
+            }
+
+
+    def _on_inner_configure(self, _event=None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event) -> None:
+        # If you want the inner frame to expand to canvas width, uncomment:
+        # self.canvas.itemconfigure(self._inner_window_id, width=event.width)
+        # If you want horizontal scrolling to work, do NOT force width.
+        pass
+
+    def _bind_mousewheel(self, widget: tk.Widget) -> None:
+        # Windows: <MouseWheel>, Linux: Button-4/5, macOS uses <MouseWheel> too but delta differs.
+        widget.bind_all("<MouseWheel>", self._on_mousewheel)     # Windows/macOS
+        widget.bind_all("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        widget.bind_all("<Button-4>", self._on_linux_wheel_up)   # Linux
+        widget.bind_all("<Button-5>", self._on_linux_wheel_down)
+        widget.bind_all("<Control-MouseWheel>", self._on_ctrl_mousewheel)
+        widget.bind_all("<Control-plus>", lambda e: self.zoom_in())
+        widget.bind_all("<Control-minus>", lambda e: self.zoom_out())
+        widget.bind_all("<Control-0>", lambda e: self.reset_zoom())
+
+
+    def _on_mousewheel(self, event) -> None:
+        # Vertical scroll
+        if event.delta:
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _on_shift_mousewheel(self, event) -> None:
+        # Horizontal scroll (hold Shift)
+        if event.delta:
+            self.canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _on_linux_wheel_up(self, _event) -> None:
+        self.canvas.yview_scroll(-1, "units")
+
+    def _on_linux_wheel_down(self, _event) -> None:
+        self.canvas.yview_scroll(1, "units")
+    # Zooming methods
+    def zoom_in(self) -> None:
+        self._apply_zoom(self.zoom + self.zoom_step)
+
+    def zoom_out(self) -> None:
+        self._apply_zoom(self.zoom - self.zoom_step)
+
+    def reset_zoom(self) -> None:
+        self._apply_zoom(1.0)
+    def _apply_zoom(self, new_zoom: float) -> None:
+        new_zoom = max(self.min_zoom, min(self.max_zoom, new_zoom))
+        if abs(new_zoom - self.zoom) < 0.001:
+            return
+
+        self.zoom = new_zoom
+
+        for meta in self._fonts.values():
+            base = meta["size"]
+            meta["font"].configure(size=int(base * self.zoom))
+
+        # Update scroll region after resizing
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def scale_treeview_columns(tree: ttk.Treeview, factor: float) -> None:
+        for col in tree["columns"]:
+            w = tree.column(col, "width")
+            tree.column(col, width=int(w * factor))
+
+
+    def _on_ctrl_mousewheel(self, event) -> None:
+        if event.delta > 0:
+            self.zoom_in()
+        else:
+            self.zoom_out()
+
+
+# ---------------- Collapse widgets/sections ----------------
+class CollapsibleSection(ttk.Frame):
+    """
+    A collapsible panel with a header row and a content frame.
+
+    Usage:
+        section = CollapsibleSection(parent, title="Tables")
+        section.pack(fill="both", expand=True)
+        # put widgets inside:
+        ttk.Label(section.content, text="Hello").pack()
+    """
+    def __init__(self, parent: tk.Widget, title: str, *, start_collapsed: bool = False) -> None:
+        super().__init__(parent)
+
+        self._collapsed = tk.BooleanVar(value=start_collapsed)
+
+        # Header
+        header = ttk.Frame(self)
+        header.pack(fill="x")
+
+        self._btn = ttk.Button(header, width=3, command=self.toggle)
+        self._btn.pack(side="left")
+
+        self._title_lbl = ttk.Label(header, text=title, font=("Segoe UI", 10, "bold"))
+        self._title_lbl.pack(side="left", padx=(6, 0))
+
+        # Make header clickable too
+        self._title_lbl.bind("<Button-1>", lambda e: self.toggle())
+        header.bind("<Button-1>", lambda e: self.toggle())
+
+        # Content
+        self.content = ttk.Frame(self)
+        if not start_collapsed:
+            self.content.pack(fill="both", expand=True, pady=(6, 0))
+
+        self._sync_button()
+
+    def _sync_button(self) -> None:
+        # ▾ expanded, ▸ collapsed
+        self._btn.configure(text="▸" if self._collapsed.get() else "▾")
+
+    def toggle(self) -> None:
+        if self._collapsed.get():
+            self.expand()
+        else:
+            self.collapse()
+
+    def collapse(self) -> None:
+        if not self._collapsed.get():
+            self._collapsed.set(True)
+            self.content.pack_forget()
+            self._sync_button()
+
+    def expand(self) -> None:
+        if self._collapsed.get():
+            self._collapsed.set(False)
+            self.content.pack(fill="both", expand=True, pady=(6, 0))
+            self._sync_button()
+
+    @property
+    def is_collapsed(self) -> bool:
+        return bool(self._collapsed.get())
+
+# ---------------- Heatmaps to check validity of schema ----------------
+
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    severity: str   # "ok" | "warn" | "error"
+    scope: str      # "project" | "table" | "column" | "fk"
+    table: str | None
+    column: str | None
+    message: str
+
+
+class ValidationHeatmap(ttk.Frame):
+    """
+    Canvas-based heatmap:
+
+    - rows: tables
+    - cols: checks
+    - cell color: ok/warn/error
+    - click cell: show details
+    """
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent)
+
+        self.canvas = tk.Canvas(self, height=220, highlightthickness=0)
+        self.h = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.v = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=self.h.set, yscrollcommand=self.v.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.v.grid(row=0, column=1, sticky="ns")
+        self.h.grid(row=1, column=0, sticky="ew")
+
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+        self._tables: list[str] = []
+        self._checks: list[str] = []
+        self._cell_details: dict[tuple[int, int], list[str]] = {}
+
+        self._cell_w = 120
+        self._cell_h = 28
+        self._pad = 6
+
+        self.canvas.bind("<Button-1>", self._on_click)
+
+    def set_data(
+        self,
+        tables: list[str],
+        checks: list[str],
+        status: dict[tuple[str, str], str],
+        details: dict[tuple[str, str], list[str]],
+    ) -> None:
+        """
+        status[(table, check)] = "ok"|"warn"|"error"
+        details[(table, check)] = list of messages
+        """
+        self._tables = tables
+        self._checks = checks
+
+        self._cell_details.clear()
+        for ti, t in enumerate(tables):
+            for ci, c in enumerate(checks):
+                msgs = details.get((t, c), [])
+                self._cell_details[(ti, ci)] = msgs
+
+        self._draw(status)
+
+    def _color(self, sev: str) -> str:
+        # Keep colors subtle so text is readable
+        if sev == "error":
+            return "#f7b5b5"
+        if sev == "warn":
+            return "#ffe39a"
+        return "#bfe8bf"
+
+    def _draw(self, status: dict[tuple[str, str], str]) -> None:
+        self.canvas.delete("all")
+
+        # Header row (checks)
+        x0 = self._pad + self._cell_w  # leave space for table names on left
+        y0 = self._pad
+
+        for ci, check in enumerate(self._checks):
+            x = x0 + ci * self._cell_w
+            self.canvas.create_rectangle(x, y0, x + self._cell_w, y0 + self._cell_h, fill="#e9e9e9", outline="#999")
+            self.canvas.create_text(x + 6, y0 + self._cell_h / 2, text=check, anchor="w", font=("Segoe UI", 9, "bold"))
+
+        # Table names + cells
+        for ti, table in enumerate(self._tables):
+            y = y0 + self._cell_h + ti * self._cell_h
+
+            # table name cell
+            self.canvas.create_rectangle(self._pad, y, self._pad + self._cell_w, y + self._cell_h, fill="#e9e9e9", outline="#999")
+            self.canvas.create_text(self._pad + 6, y + self._cell_h / 2, text=table, anchor="w", font=("Segoe UI", 9, "bold"))
+
+            for ci, check in enumerate(self._checks):
+                x = x0 + ci * self._cell_w
+                sev = status.get((table, check), "ok")
+                self.canvas.create_rectangle(x, y, x + self._cell_w, y + self._cell_h, fill=self._color(sev), outline="#999")
+
+                # Small label
+                label = "OK" if sev == "ok" else ("WARN" if sev == "warn" else "ERR")
+                self.canvas.create_text(x + self._cell_w / 2, y + self._cell_h / 2, text=label, font=("Segoe UI", 9))
+
+        total_w = x0 + len(self._checks) * self._cell_w + self._pad
+        total_h = y0 + (len(self._tables) + 1) * self._cell_h + self._pad
+        self.canvas.configure(scrollregion=(0, 0, total_w, total_h))
+
+    def _hit_test(self, x: int, y: int) -> tuple[int, int] | None:
+        # translate x/y into table/check indices (excluding headers)
+        x0 = self._pad + self._cell_w
+        y0 = self._pad + self._cell_h
+
+        if x < x0 or y < y0:
+            return None
+
+        ci = (x - x0) // self._cell_w
+        ti = (y - y0) // self._cell_h
+
+        if ti < 0 or ti >= len(self._tables):
+            return None
+        if ci < 0 or ci >= len(self._checks):
+            return None
+        return int(ti), int(ci)
+
+    def _on_click(self, event) -> None:
+        x = int(self.canvas.canvasx(event.x))
+        y = int(self.canvas.canvasy(event.y))
+        hit = self._hit_test(x, y)
+        if not hit:
+            return
+        ti, ci = hit
+        msgs = self._cell_details.get((ti, ci), [])
+        if not msgs:
+            messagebox.showinfo("Validation", "No issues.")
+            return
+        messagebox.showinfo("Validation details", "\n".join(msgs))
+
+
+# ---------------- The actual screen ----------------
 class SchemaProjectDesignerScreen(ttk.Frame):
     """
     Schema Project Designer (Phase 1 + Phase 2):
@@ -34,9 +367,15 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     - Save/load full project JSON
     """
     def __init__(self, parent: tk.Widget, app: "object", cfg: AppConfig) -> None:
-        super().__init__(parent, padding=16)
+        super().__init__(parent)
         self.app = app
         self.cfg = cfg
+
+        #Scrollable container logic
+        self.scroll = ScrollableFrame(self, padding=16)
+        self.scroll.pack(fill="both", expand=True)
+
+
 
         # In-memory project
         self.project = SchemaProject(name="my_project", seed=cfg.seed, tables=[], foreign_keys=[])
@@ -71,6 +410,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.fk_min_children_var = tk.StringVar(value="1")
         self.fk_max_children_var = tk.StringVar(value="3")
 
+        #Validation
+        self.validation_summary_var = tk.StringVar(value="No validation run yet.")
+
+
         # Generation/preview state
         self.is_running = False
         self.generated_rows: dict[str, list[dict[str, object]]] = {}
@@ -89,13 +432,25 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     # ---------------- UI layout ----------------
     def _build(self) -> None:
-        header = ttk.Frame(self)
+        root = self.scroll.inner
+
+        # =========================
+        # Header (pack on root)
+        # =========================
+        header = ttk.Frame(root)
         header.pack(fill="x", pady=(0, 10))
+
         ttk.Button(header, text="← Back", command=self.app.go_home).pack(side="left")
         ttk.Label(header, text="Schema Project Designer", font=("Segoe UI", 16, "bold")).pack(side="left", padx=12)
+        ttk.Button(header, text="Zoom +", command=self.scroll.zoom_in).pack(side="top", padx=0)
+        ttk.Button(header, text="Zoom −", command=self.scroll.zoom_out).pack(side="top", padx=0)
+        ttk.Button(header, text="Reset", command=self.scroll.reset_zoom).pack(side="top", padx=0)
 
-        # Project bar
-        proj = ttk.LabelFrame(self, text="Project", padding=12)
+
+        # =========================
+        # Project bar (grid inside proj)
+        # =========================
+        proj = ttk.LabelFrame(root, text="Project", padding=12)
         proj.pack(fill="x")
 
         proj.columnconfigure(1, weight=1)
@@ -111,20 +466,50 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         btns.columnconfigure(0, weight=1)
         btns.columnconfigure(1, weight=1)
 
-        ttk.Button(btns, text="Save project JSON", command=self._save_project).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(btns, text="Load project JSON", command=self._load_project).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Button(btns, text="Save project JSON", command=self._save_project).grid(
+            row=0, column=0, sticky="ew", padx=(0, 6)
+        )
+        ttk.Button(btns, text="Load project JSON", command=self._load_project).grid(
+            row=0, column=1, sticky="ew", padx=(6, 0)
+        )
 
-        # Main area: tables list | table editor | relationships
-        main = ttk.Frame(self)
+        # Validation Panels
+        validation_section = CollapsibleSection(root, title="Schema validation", start_collapsed=False)
+        validation_section.pack(fill="x", pady=(10, 0))
+
+        validation_panel = ttk.LabelFrame(validation_section.content, text="", padding=10)
+        validation_panel.pack(fill="x", expand=True)
+
+        top = ttk.Frame(validation_panel)
+        top.pack(fill="x")
+
+        ttk.Button(top, text="Run validation", command=self._run_validation).pack(side="left")
+
+        self.validation_summary_var = tk.StringVar(value="No validation run yet.")
+        ttk.Label(top, textvariable=self.validation_summary_var).pack(side="left", padx=10)
+
+        self.heatmap = ValidationHeatmap(validation_panel)
+        self.heatmap.pack(fill="both", expand=True, pady=(8, 0))
+
+
+        # =========================
+        # Main area: Tables | Table editor | Relationships
+        # (pack main on root; grid inside main)
+        # =========================
+        main = ttk.Frame(root)
         main.pack(fill="both", expand=True, pady=(10, 0))
+
         main.columnconfigure(0, weight=1)  # tables
         main.columnconfigure(1, weight=3)  # table editor
         main.columnconfigure(2, weight=2)  # relationships
         main.rowconfigure(0, weight=1)
 
-        # Left: tables list
-        left = ttk.LabelFrame(main, text="Tables", padding=10)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        # ---- Left: tables list (pack inside left)
+        left_section = CollapsibleSection(main, title="Tables")
+        left_section.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left = ttk.LabelFrame(left_section.content, text="", padding=10)  # inner panel
+        left.pack(fill="both", expand=True)
+
 
         self.tables_list = tk.Listbox(left, height=12)
         self.tables_list.pack(fill="both", expand=True)
@@ -135,11 +520,13 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         ttk.Button(left_btns, text="+ Add table", command=self._add_table).pack(fill="x", pady=4)
         ttk.Button(left_btns, text="Remove selected", command=self._remove_table).pack(fill="x", pady=4)
 
-        # Middle: table editor
-        right = ttk.LabelFrame(main, text="Table editor", padding=10)
-        right.grid(row=0, column=1, sticky="nsew")
+        # ---- Middle: table editor (pack inside right)
+        right_section = CollapsibleSection(main, title="Table editor")
+        right_section.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
+        right = ttk.LabelFrame(right_section.content, text="", padding=10)
+        right.pack(fill="both", expand=True)
 
-        # Table properties
+        # Table properties (grid inside props)
         props = ttk.LabelFrame(right, text="Table properties", padding=10)
         props.pack(fill="x")
         props.columnconfigure(1, weight=1)
@@ -155,7 +542,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.apply_table_btn = ttk.Button(props, text="Apply table changes", command=self._apply_table_changes)
         self.apply_table_btn.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
 
-        # Column editor
+        # Column editor (grid inside col)
         col = ttk.LabelFrame(right, text="Add column", padding=10)
         col.pack(fill="x", pady=(10, 0))
         col.columnconfigure(1, weight=1)
@@ -165,7 +552,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_name_entry.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
 
         ttk.Label(col, text="Type:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
-        self.col_dtype_combo = ttk.Combobox(col, values=DTYPES, textvariable=self.col_dtype_var, state="readonly", width=12)
+        self.col_dtype_combo = ttk.Combobox(
+            col, values=DTYPES, textvariable=self.col_dtype_var, state="readonly", width=12
+        )
         self.col_dtype_combo.grid(row=0, column=3, padx=6, pady=6)
 
         self.col_nullable_chk = ttk.Checkbutton(col, text="Nullable", variable=self.col_nullable_var)
@@ -196,7 +585,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.add_col_btn = ttk.Button(col, text="Add column to selected table", command=self._add_column)
         self.add_col_btn.grid(row=5, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
 
-        # Columns table
+        # Columns table (pack inside cols_frame)
         cols_frame = ttk.LabelFrame(right, text="Columns", padding=8)
         cols_frame.pack(fill="both", expand=True, pady=(10, 0))
 
@@ -217,13 +606,17 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         col_actions = ttk.Frame(right)
         col_actions.pack(fill="x", pady=(8, 0))
-        ttk.Button(col_actions, text="Remove selected column", command=self._remove_selected_column).pack(side="left", padx=(0, 6))
+        ttk.Button(col_actions, text="Remove selected column", command=self._remove_selected_column).pack(
+            side="left", padx=(0, 6)
+        )
         ttk.Button(col_actions, text="Move up", command=lambda: self._move_selected_column(-1)).pack(side="left", padx=6)
         ttk.Button(col_actions, text="Move down", command=lambda: self._move_selected_column(1)).pack(side="left", padx=6)
 
-        # Right: relationships editor
-        rel = ttk.LabelFrame(main, text="Relationships (FKs)", padding=10)
-        rel.grid(row=0, column=2, sticky="nsew")
+        # ---- Right: relationships editor (grid/pack inside rel)
+        rel_section = CollapsibleSection(main, title="Relationships (FKs)")
+        rel_section.grid(row=0, column=2, sticky="nsew")
+        rel = ttk.LabelFrame(rel_section.content, text="", padding=10)
+        rel.pack(fill="both", expand=True)
         rel.columnconfigure(1, weight=1)
         rel.rowconfigure(6, weight=1)
 
@@ -276,19 +669,23 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.remove_fk_btn = ttk.Button(rel, text="Remove selected relationship", command=self._remove_selected_fk)
         self.remove_fk_btn.grid(row=7, column=0, columnspan=2, sticky="ew", padx=6, pady=(8, 0))
 
+        # =========================
+        # Bottom: Generate / Preview / Export / SQLite
+        # (pack bottom; grid inside bottom)
+        # =========================
+        bottom_section = CollapsibleSection(root, title="Generate / Preview / Export / SQLite")
+        bottom_section.pack(fill="both", expand=True, pady=(12, 0))
 
-        # -------- Phase 3: Generate / Preview / Export / SQLite --------
-        bottom = ttk.LabelFrame(self, text="Generate / Preview / Export / SQLite", padding=12)
-        bottom.pack(fill="both", expand=True, pady=(12, 0))
+        bottom = ttk.LabelFrame(bottom_section.content, text="", padding=12)
+        bottom.pack(fill="both", expand=True)
+
         bottom.columnconfigure(1, weight=1)
         bottom.rowconfigure(2, weight=1)
 
-        # Row 0: DB path
         ttk.Label(bottom, text="SQLite DB path:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(bottom, textvariable=self.db_path_var).grid(row=0, column=1, sticky="ew", padx=6, pady=6)
         ttk.Button(bottom, text="Browse…", command=self._browse_db_path).grid(row=0, column=2, padx=6, pady=6)
 
-        # Row 1: Action buttons
         actions = ttk.Frame(bottom)
         actions.grid(row=1, column=0, columnspan=3, sticky="ew", padx=6, pady=(6, 10))
         actions.columnconfigure(0, weight=1)
@@ -302,13 +699,14 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.export_btn = ttk.Button(actions, text="Export to CSV (folder)", command=self._on_export_csv)
         self.export_btn.grid(row=0, column=1, sticky="ew", padx=4)
 
-        self.create_insert_btn = ttk.Button(actions, text="Create tables + Insert into SQLite", command=self._on_create_insert_sqlite)
+        self.create_insert_btn = ttk.Button(
+            actions, text="Create tables + Insert into SQLite", command=self._on_create_insert_sqlite
+        )
         self.create_insert_btn.grid(row=0, column=2, sticky="ew", padx=4)
 
         self.clear_btn = ttk.Button(actions, text="Clear generated data", command=self._clear_generated)
         self.clear_btn.grid(row=0, column=3, sticky="ew", padx=4)
 
-        # Row 2: Preview area (left controls + right Treeview)
         preview_area = ttk.Frame(bottom)
         preview_area.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=6, pady=6)
         preview_area.columnconfigure(1, weight=1)
@@ -347,9 +745,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         y3.grid(row=0, column=1, sticky="ns")
         x3.grid(row=1, column=0, sticky="ew")
 
+        # Status line (pack on root)
+        ttk.Label(root, textvariable=self.status_var).pack(anchor="w", pady=(10, 0))
 
-
-        ttk.Label(self, textvariable=self.status_var).pack(anchor="w", pady=(10, 0))
 
     # ---------------- Helpers ----------------
     def _set_table_editor_enabled(self, enabled: bool) -> None:
@@ -533,6 +931,101 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Added table '{name}'.")
         except Exception as exc:
             messagebox.showerror("Add table failed", str(exc))
+
+
+    def validate_project_detailed(project: SchemaProject) -> list[ValidationIssue]:
+        issues: list[ValidationIssue] = []
+
+        # Use existing validator (throws on first error)
+        try:
+            validate_project(project)
+        except Exception as exc:
+            issues.append(ValidationIssue("error", "project", None, None, str(exc)))
+
+        # Per-table checks
+        for t in project.tables:
+            # Must have PK
+            if not any(c.primary_key for c in t.columns):
+                issues.append(ValidationIssue("error", "table", t.table_name, None, "Table has no primary key."))
+
+            # Duplicate column names
+            names = [c.name for c in t.columns]
+            if len(names) != len(set(names)):
+                issues.append(ValidationIssue("error", "table", t.table_name, None, "Duplicate column names."))
+
+            # Warn on nullable PK
+            for c in t.columns:
+                if c.primary_key and c.nullable:
+                    issues.append(ValidationIssue("warn", "column", t.table_name, c.name, "Primary key should not be nullable."))
+
+            # Warn on text PK (even if model prevents it)
+            for c in t.columns:
+                if c.primary_key and c.dtype != "int":
+                    issues.append(ValidationIssue("warn", "column", t.table_name, c.name, "Primary key is not int (recommended int)."))
+
+        # FK checks
+        for fk in project.foreign_keys:
+            # parent must exist
+            if fk.parent_table not in [t.table_name for t in project.tables]:
+                issues.append(ValidationIssue("error", "fk", fk.child_table, fk.child_column, f"Parent table '{fk.parent_table}' not found."))
+
+            # child must exist
+            if fk.child_table not in [t.table_name for t in project.tables]:
+                issues.append(ValidationIssue("error", "fk", fk.child_table, fk.child_column, f"Child table '{fk.child_table}' not found."))
+
+            if fk.min_children > fk.max_children:
+                issues.append(ValidationIssue("error", "fk", fk.child_table, fk.child_column, "FK min_children > max_children."))
+
+        return issues
+
+    def _run_validation(self) -> None:
+        try:
+            self._apply_project_vars_to_model()
+        except Exception as exc:
+            messagebox.showerror("Project error", str(exc))
+            return
+
+        issues = validate_project_detailed(self.project)
+
+        # Define checks (columns in the heatmap)
+        checks = ["PK", "Columns", "FKs", "Generator"]
+        tables = [t.table_name for t in self.project.tables]
+
+        # Default OK everywhere
+        status: dict[tuple[str, str], str] = {(t, c): "ok" for t in tables for c in checks}
+        details: dict[tuple[str, str], list[str]] = {}
+
+        def mark(table: str, check: str, sev: str, msg: str) -> None:
+            key = (table, check)
+            # escalate: ok < warn < error
+            rank = {"ok": 0, "warn": 1, "error": 2}
+            if rank[sev] > rank[status.get(key, "ok")]:
+                status[key] = sev
+            details.setdefault(key, []).append(msg)
+
+        # Map issues into heatmap buckets
+        for iss in issues:
+            if iss.table is None:
+                continue
+            if iss.scope in ("table", "column"):
+                # PK + Columns buckets
+                if "primary key" in iss.message.lower() or "pk" in iss.message.lower():
+                    mark(iss.table, "PK", iss.severity, iss.message)
+                else:
+                    mark(iss.table, "Columns", iss.severity, iss.message)
+            elif iss.scope == "fk":
+                mark(iss.table, "FKs", iss.severity, iss.message)
+            else:
+                mark(iss.table, "Generator", iss.severity, iss.message)
+
+        # Update heatmap
+        self.heatmap.set_data(tables=tables, checks=checks, status=status, details=details)
+
+        # Summary
+        e = sum(1 for i in issues if i.severity == "error")
+        w = sum(1 for i in issues if i.severity == "warn")
+        self.validation_summary_var.set(f"Validation: {e} errors, {w} warnings. Click cells for details.")
+
 
     def _remove_table(self) -> None:
         if self.selected_table_index is None:
@@ -1073,6 +1566,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     def _on_job_failed(self, msg: str) -> None:
         self._set_running(False, "Failed.")
         messagebox.showerror("Error", msg)
+
+
 
 
 
