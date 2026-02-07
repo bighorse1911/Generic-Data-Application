@@ -1,27 +1,22 @@
-def run_app():
-    while True:
-        print("\n=== My App ===")
-        print("1) Say hello")
-        print("2) Add two numbers")
-        print("0) Exit")
+import logging
 
-        choice = input("Choose: ").strip()
+from config import AppConfig
+from generator import generate_people
+from storage_sqlite import init_db, insert_people
 
-        if choice == "1":
-            say_hello()
-        elif choice == "2":
-            add_two_numbers()
-        elif choice == "0":
-            print("Bye!")
-            break
-        else:
-            print("Invalid choice. Try again.")
+logger = logging.getLogger("app")
 
-def say_hello():
-    name = input("Name: ")
-    print(f"Hello, {name}!")
+def run_app(cfg: AppConfig) -> None:
+    logger.debug("Starting app with config: %s", cfg)
 
-def add_two_numbers():
-    a = float(input("First number: "))
-    b = float(input("Second number: "))
-    print("Result:", a + b)
+    init_db(cfg.sqlite_db_path)
+
+    print("\n=== Synthetic Data App (MVP) ===")
+    raw = input(f"How many rows? (default {cfg.default_rows}): ").strip()
+    n = cfg.default_rows if raw == "" else int(raw)
+
+    rows = generate_people(n=n, seed=cfg.seed)
+    inserted = insert_people(cfg.sqlite_db_path, rows)
+
+    print(f"✅ Done. Inserted {inserted} rows into {cfg.sqlite_db_path}")
+    print("Tip: open the DB with any SQLite viewer, or query it in Python later.")
