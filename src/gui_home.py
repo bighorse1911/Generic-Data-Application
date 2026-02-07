@@ -3,6 +3,8 @@ from tkinter import ttk
 
 from src.gui_synth import SyntheticDataScreen
 from src.config import AppConfig
+from src.gui_relational import RelationalDataScreen
+
 
 
 class HomeScreen(ttk.Frame):
@@ -33,6 +35,8 @@ class HomeScreen(ttk.Frame):
         btn.pack(fill="x", pady=6)
 
         # Placeholder buttons for future features
+        ttk.Button(card, text="Relational Data → Customers / Orders / Items", command=lambda: self.app.show_screen("relational"),).pack(fill="x", pady=6)
+
         ttk.Button(card, text="(Coming soon) Multi-table relational generator", state="disabled").pack(fill="x", pady=6)
         ttk.Button(card, text="(Coming soon) Schema designer", state="disabled").pack(fill="x", pady=6)
 
@@ -60,6 +64,8 @@ class App(ttk.Frame):
 
         self.screens["home"] = HomeScreen(self.screen_container, self)
         self.screens["synthetic"] = SyntheticDataScreen(self.screen_container, self, cfg)
+        self.screens["relational"] = RelationalDataScreen(self.screen_container, self, cfg)
+
 
         # Put all screens in the same grid cell; raise the active one
         for frame in self.screens.values():
