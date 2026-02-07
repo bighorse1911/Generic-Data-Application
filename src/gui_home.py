@@ -4,6 +4,10 @@ from tkinter import ttk
 from src.gui_synth import SyntheticDataScreen
 from src.config import AppConfig
 from src.gui_relational import RelationalDataScreen
+from src.gui_schema import SchemaDesignerScreen
+from src.gui_schema_project import SchemaProjectDesignerScreen
+
+
 
 
 
@@ -39,6 +43,9 @@ class HomeScreen(ttk.Frame):
 
         ttk.Button(card, text="(Coming soon) Multi-table relational generator", state="disabled").pack(fill="x", pady=6)
         ttk.Button(card, text="(Coming soon) Schema designer", state="disabled").pack(fill="x", pady=6)
+        ttk.Button(card,text="Schema Designer → Design a table and generate data",command=lambda: self.app.show_screen("schema"),).pack(fill="x", pady=6)
+        ttk.Button(card,text="Schema Project Designer → Multiple tables + relationships",command=lambda: self.app.show_screen("schema_project"),).pack(fill="x", pady=6)
+
 
 
 class App(ttk.Frame):
@@ -51,7 +58,7 @@ class App(ttk.Frame):
         self.cfg = cfg
 
         self.root.title("Generic Data Application")
-        self.root.geometry("1000x650")
+        self.root.geometry("960x540")
 
         self.pack(fill="both", expand=True)
 
@@ -65,6 +72,9 @@ class App(ttk.Frame):
         self.screens["home"] = HomeScreen(self.screen_container, self)
         self.screens["synthetic"] = SyntheticDataScreen(self.screen_container, self, cfg)
         self.screens["relational"] = RelationalDataScreen(self.screen_container, self, cfg)
+        self.screens["schema"] = SchemaDesignerScreen(self.screen_container, self, cfg)
+        self.screens["schema_project"] = SchemaProjectDesignerScreen(self.screen_container, self, cfg)
+
 
 
         # Put all screens in the same grid cell; raise the active one
