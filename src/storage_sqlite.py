@@ -2,7 +2,7 @@ import logging
 import sqlite3
 from typing import Iterable
 
-from generator import PersonRow
+from src.generator import PersonRow
 
 logger = logging.getLogger("storage_sqlite")
 

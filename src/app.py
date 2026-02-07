@@ -1,8 +1,8 @@
 import logging
 
-from config import AppConfig
-from generator import generate_people
-from storage_sqlite import init_db, insert_people
+from src.config import AppConfig
+from src.generator import generate_people
+from src.storage_sqlite import init_db, insert_people
 
 logger = logging.getLogger("app")
 

@@ -5,9 +5,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter.scrolledtext import ScrolledText
 
-from config import AppConfig
-from generator import generate_people
-from storage_sqlite import init_db, insert_people
+from src.config import AppConfig
+from src.generator import generate_people
+from src.storage_sqlite import init_db, insert_people
 
 
 # ---- Logging handler that writes log records into a queue (thread-safe) ----
