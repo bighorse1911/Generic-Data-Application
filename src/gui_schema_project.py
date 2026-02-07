@@ -347,7 +347,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         y3.grid(row=0, column=1, sticky="ns")
         x3.grid(row=1, column=0, sticky="ew")
 
-        ttk.Label(self, textvariable=self.status_var).pack(anchor="w", pady=(10, 0))
+
 
         ttk.Label(self, textvariable=self.status_var).pack(anchor="w", pady=(10, 0))
 
@@ -928,15 +928,15 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         self._set_running(True, "Generating data for all tables…")
 
-    def work():
-        try:
-            rows = generate_project_rows(self.project)
-            self.after(0, lambda: self._on_generated_ok(rows))
-        except Exception as exc:
-            logger.exception("Generation failed: %s", exc)
-            self.after(0, lambda: self._on_job_failed(str(exc)))
+        def work():
+            try:
+                rows = generate_project_rows(self.project)
+                self.after(0, lambda: self._on_generated_ok(rows))
+            except Exception as exc:
+                logger.exception("Generation failed: %s", exc)
+                self.after(0, lambda: self._on_job_failed(str(exc)))
 
-    threading.Thread(target=work, daemon=True).start()
+        threading.Thread(target=work, daemon=True).start()
 
     def _on_generated_ok(self, rows: dict[str, list[dict[str, object]]]) -> None:
         self.generated_rows = rows
