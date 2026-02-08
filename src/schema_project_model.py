@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Optional
 
 DataType = Literal["int", "float", "text", "bool", "date", "datetime"]
 
@@ -9,16 +9,19 @@ DataType = Literal["int", "float", "text", "bool", "date", "datetime"]
 @dataclass(frozen=True)
 class ColumnSpec:
     name: str
-    dtype: DataType
+    dtype: str
     nullable: bool = True
     primary_key: bool = False
     unique: bool = False
-
-    # constraints (optional)
     min_value: float | None = None
     max_value: float | None = None
     choices: list[str] | None = None
-    pattern: str | None = None  # regex for text (enforced by generation retries)
+    pattern: str | None = None
+
+    # NEW
+    generator: str | None = None
+    params: dict[str, object] | None = None
+    depends_on: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -71,8 +74,10 @@ def validate_project(project: SchemaProject) -> None:
 
     # Per-table validations
     for t in project.tables:
-        if t.row_count <= 0:
-            raise ValueError(f"Table '{t.table_name}': row_count must be > 0.")
+ 
+        # # We now allow for auto-sizing of children
+        # if t.row_count <= 0:
+        #     raise ValueError(f"Table '{t.table_name}': row_count must be > 0.")
 
         if not t.columns:
             raise ValueError(f"Table '{t.table_name}': must have at least one column.")
@@ -102,3 +107,9 @@ def validate_project(project: SchemaProject) -> None:
                 raise ValueError(
                     f"Table '{t.table_name}', column '{c.name}': min_value cannot exceed max_value."
                 )
+        incoming = [fk for fk in project.foreign_keys if fk.child_table == t.table_name]
+
+        # #We now allow for auto-sizing of children
+        # if len(incoming) > 1 and t.row_count <= 0:
+        #     raise ValueError(f"Table '{t.table_name}' has multiple FKs; set row_count > 0 (total rows).")
+

@@ -1,4 +1,5 @@
 from email import header
+import json
 import logging
 import tkinter as tk
 import threading
@@ -24,6 +25,7 @@ from src.schema_project_io import save_project_to_json, load_project_from_json
 logger = logging.getLogger("gui_schema_project")
 
 DTYPES = ["int", "float", "text", "bool", "date", "datetime"]
+GENERATORS = ["", "sample_csv", "date", "timestamp_utc", "latitude", "longitude"]
 
 
 
@@ -403,6 +405,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_choices_var = tk.StringVar(value="")
         self.col_pattern_var = tk.StringVar(value="")
 
+        #Updated data generation variables
+        self.col_generator_var = tk.StringVar(value="")
+        self.col_params_var = tk.StringVar(value="")  # JSON text
+
+
         # Relationship editor vars
         self.fk_parent_table_var = tk.StringVar(value="")
         self.fk_child_table_var = tk.StringVar(value="")
@@ -542,7 +549,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_name_entry = ttk.Entry(props, textvariable=self.table_name_var)
         self.table_name_entry.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="Row count (root tables):").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="Row count (root tables (0 for children enables auto-sizing)):").grid(row=1, column=0, sticky="w", padx=6, pady=6)
         self.row_count_entry = ttk.Entry(props, textvariable=self.row_count_var)
         self.row_count_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
 
@@ -589,8 +596,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_pattern_entry = ttk.Entry(col, textvariable=self.col_pattern_var)
         self.col_pattern_entry.grid(row=4, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
 
+
+
+        ttk.Label(col, text="Generator:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        self.col_generator_combo = ttk.Combobox(col, values=GENERATORS, textvariable=self.col_generator_var, state="readonly")
+        self.col_generator_combo.grid(row=5, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(col, text="Params (JSON):").grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        self.col_params_entry = ttk.Entry(col, textvariable=self.col_params_var)
+        self.col_params_entry.grid(row=6, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+        #Adds Column
         self.add_col_btn = ttk.Button(col, text="Add column to selected table", command=self._add_column)
-        self.add_col_btn.grid(row=5, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
+        self.add_col_btn.grid(row=7, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
 
         # Columns table (pack inside cols_frame)
         cols_frame = ttk.LabelFrame(right, text="Columns", padding=8)
@@ -1120,8 +1137,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 raise ValueError("Table name cannot be empty.")
 
             row_count = int(self.row_count_var.get().strip())
-            if row_count <= 0:
-                raise ValueError("Row count must be > 0.")
+            
+            ## We now allow for auto-sizing of children
+            # if row_count <= 0:
+            #     raise ValueError("Row count must be > 0.")
 
             # rename references in existing foreign keys
             fks = []
@@ -1175,6 +1194,20 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             name = self.col_name_var.get().strip()
             dtype = self.col_dtype_var.get().strip()
 
+            gen_name = self.col_generator_var.get().strip() or None
+
+            params_text = self.col_params_var.get().strip()
+            params = None
+            if params_text:
+                try:
+                    obj = json.loads(params_text)
+                    if not isinstance(obj, dict):
+                        raise ValueError("Params JSON must be an object/dict, e.g. {\"path\": \"...\", \"column_index\": 0}")
+                    params = obj
+                except Exception as exc:
+                    raise ValueError(f"Params JSON invalid: {exc}") from exc
+
+
             if not name:
                 raise ValueError("Column name cannot be empty.")
 
@@ -1193,16 +1226,23 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             pattern = self.col_pattern_var.get().strip() or None
 
             new_col = ColumnSpec(
-                name=name,
-                dtype=dtype,  # type: ignore
-                nullable=nullable,
-                primary_key=pk,
-                unique=unique,
-                min_value=min_v,
-                max_value=max_v,
-                choices=choices,
-                pattern=pattern,
-            )
+                    name=name,
+                    dtype=dtype,
+                    nullable=nullable,
+                    primary_key=pk,
+                    unique=unique,
+                    min_value=min_v,
+                    max_value=max_v,
+                    choices=choices,
+                    pattern=pattern,
+
+                    generator=gen_name,
+                    params=params,
+                )
+
+            self.col_generator_var.set("")
+            self.col_params_var.set("")
+
 
             cols = list(t.columns)
 
@@ -1354,15 +1394,20 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             if min_k > max_k:
                 raise ValueError("Min children cannot exceed max children.")
 
-            # MVP constraint: child can only have one FK
-            if any(fk.child_table == child for fk in self.project.foreign_keys):
-                raise ValueError(f"Table '{child}' already has a foreign key (MVP supports 1 FK per child table).")
+            # # MVP constraint: child can only have one FK
+            # if any(fk.child_table == child for fk in self.project.foreign_keys):
+            #     raise ValueError(f"Table '{child}' already has a foreign key (MVP supports 1 FK per child table).")
 
             if child_col == child_pk:
                 raise ValueError("Child FK column cannot be the child's primary key column.")
 
             if child_col not in self._int_columns(child):
                 raise ValueError("Child FK column must be an int column.")
+            
+            # A child column can only be used by one FK
+            if any(fk.child_table == child and fk.child_column == child_col for fk in self.project.foreign_keys):
+                raise ValueError(f"Column '{child}.{child_col}' is already used as a foreign key.")
+
 
             fks = list(self.project.foreign_keys)
             fks.append(

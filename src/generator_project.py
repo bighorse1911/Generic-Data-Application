@@ -3,7 +3,7 @@ import logging
 import random
 import re
 from datetime import date, datetime, timedelta, timezone
-
+from src.generators import GenContext, get_generator
 from src.schema_project_model import SchemaProject, TableSpec, ColumnSpec, ForeignKeySpec, validate_project
 
 logger = logging.getLogger("generator_project")
@@ -25,8 +25,20 @@ def _iso_date(d: date) -> str:
 def _iso_datetime(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
+def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: str, row: dict[str, object]) -> object:
+    # 1) Custom generator path
+    if getattr(col, "generator", None):
+        ctx = GenContext(row_index=row_index, table=table_name, row=row, rng=rng)
+        fn = get_generator(col.generator)  # type: ignore[arg-type]
+        params = col.params or {}
+        v = fn(params, ctx)
+        return v
 
-def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int) -> object:
+    # 2) Fallback to your existing logic (whatever you already had)
+    return _gen_value_fallback(col, rng, row_index)
+
+
+def _gen_value_fallback(col: ColumnSpec, rng: random.Random, row_index: int) -> object:
     # Null handling
     if col.nullable and rng.random() < 0.05:  # 5% nulls
         return None
@@ -94,6 +106,11 @@ def _dependency_order(project: SchemaProject) -> list[str]:
         deps[child].add(parent)
         rev[parent].add(child)
 
+    # Optional additional fk sort
+    # fks_by_child: dict[str, list[ForeignKeySpec]] = {}
+    # for fk in project.foreign_keys:
+    #     fks_by_child.setdefault(fk.child_table, []).append(fk)
+
     # Kahn
     ready = [t for t in table_names if len(deps[t]) == 0]
     ready.sort()
@@ -123,7 +140,11 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
     validate_project(project)
 
     table_map: dict[str, TableSpec] = {t.table_name: t for t in project.tables}
-    fk_by_child: dict[str, ForeignKeySpec] = {fk.child_table: fk for fk in project.foreign_keys}
+
+    # CHANGE: allow multiple FKs per child table
+    fks_by_child: dict[str, list[ForeignKeySpec]] = {}
+    for fk in project.foreign_keys:
+        fks_by_child.setdefault(fk.child_table, []).append(fk)
 
     order = _dependency_order(project)
 
@@ -134,52 +155,125 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
     def pk_col_name(table: TableSpec) -> str:
         return [c.name for c in table.columns if c.primary_key][0]
 
+    # Helper: assign a FK column across rows while enforcing per-parent min/max constraints
+    def _assign_fk_column(
+        rng: random.Random,
+        rows: list[dict[str, object]],
+        child_fk_col: str,
+        parent_ids: list[int],
+        min_children: int,
+        max_children: int,
+        *,
+        child_table: str,
+        parent_table: str,
+    ) -> None:
+        """
+        Assign rows[*][child_fk_col] such that each parent_id appears between min_children and max_children times.
+
+        This requires:
+            len(parent_ids) * min_children <= len(rows) <= len(parent_ids) * max_children
+        """
+        parent_n = len(parent_ids)
+        total = len(rows)
+
+        min_total = parent_n * min_children
+        max_total = parent_n * max_children
+
+        if total < min_total:
+            raise ValueError(
+                f"Table '{child_table}': not enough rows to satisfy FK {child_fk_col} -> {parent_table}. "
+                f"Need at least {min_total} rows (parents={parent_n} * min_children={min_children}), have {total}."
+            )
+        if total > max_total:
+            raise ValueError(
+                f"Table '{child_table}': too many rows to satisfy FK {child_fk_col} -> {parent_table}. "
+                f"Need at most {max_total} rows (parents={parent_n} * max_children={max_children}), have {total}."
+            )
+
+        # Choose a count for each parent (within bounds), then adjust totals to match exactly
+        counts = [min_children] * parent_n
+        remaining = total - min_total
+
+        # How many extra slots are available beyond mins?
+        caps = [max_children - min_children] * parent_n
+
+        # Distribute remaining across parents
+        # (simple random allocation within caps)
+        while remaining > 0:
+            i = rng.randrange(parent_n)
+            if caps[i] > 0:
+                counts[i] += 1
+                caps[i] -= 1
+                remaining -= 1
+
+        # Build the pool
+        pool: list[int] = []
+        for pid, k in zip(parent_ids, counts, strict=True):
+            pool.extend([pid] * k)
+
+        rng.shuffle(pool)
+
+        # Assign
+        for r, pid in zip(rows, pool, strict=True):
+            r[child_fk_col] = pid
+
     for table_name in order:
         t = table_map[table_name]
         rng = random.Random(_stable_subseed(project.seed, f"table:{table_name}"))
 
         pk_col = pk_col_name(t)
+        incoming_fks = fks_by_child.get(table_name, [])
 
-        # Determine row count
-        if table_name not in fk_by_child:
-            # root table
+        # -------------------------
+        # ROOT TABLE (no incoming FK)
+        # -------------------------
+        if not incoming_fks:
             n = t.row_count
             rows: list[dict[str, object]] = []
+
             for i in range(1, n + 1):
                 row: dict[str, object] = {}
                 for col in t.columns:
-                    row[col.name] = _gen_value(col, rng, i)
+                    row[col.name] = _gen_value(col, rng, i, table_name, row)
                 rows.append(row)
+
             results[table_name] = rows
 
+            # Defensive: ensure PK exists
             for r in rows:
                 if r.get(pk_col) is None:
-                    raise ValueError(f"PK is None in table={table_name}, pk_col={pk_col}. Check schema PK settings.")
+                    raise ValueError(
+                        f"PK is None in table={table_name}, pk_col={pk_col}. Check schema PK settings."
+                    )
 
-            # Ensure PK column is always populated (defensive)
+            # Extra defensive fill (should not normally trigger)
             for i, r in enumerate(rows, start=1):
                 if r.get(pk_col) is None:
                     r[pk_col] = i
 
             pk_values[table_name] = [int(r.get(pk_col)) for r in rows]
             logger.info("Generated root table '%s' rows=%d", table_name, n)
-        else:
-            # child table: generate based on parent cardinality
-            fk = fk_by_child[table_name]
+            continue
+
+        # -----------------------------------------
+        # CHILD TABLE with exactly ONE incoming FK
+        # (keep your existing logic unchanged)
+        # -----------------------------------------
+        if len(incoming_fks) == 1:
+            fk = incoming_fks[0]
             parent_table_name = fk.parent_table
             parent_ids = pk_values[parent_table_name]
 
-            rows = []
+            rows: list[dict[str, object]] = []
             next_pk = 1
 
-            # For each parent id, generate k child rows
             for pid in parent_ids:
                 k = rng.randint(fk.min_children, fk.max_children)
                 for _ in range(k):
                     row: dict[str, object] = {}
                     for col in t.columns:
                         if col.name == fk.child_column:
-                            row[col.name] = pid  # FK value
+                            row[col.name] = pid
                         else:
                             row[col.name] = _gen_value(col, rng, next_pk)
                     rows.append(row)
@@ -191,5 +285,133 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 "Generated child table '%s' rows=%d (parent=%s rows=%d, per-parent=%d..%d)",
                 table_name, len(rows), parent_table_name, len(parent_ids), fk.min_children, fk.max_children
             )
+            continue
+
+        # -----------------------------------------
+        # CHILD TABLE with MULTIPLE incoming FKs
+        # Strategy: generate total rows = t.row_count, then assign each FK column.
+        # -----------------------------------------
+        # Compute allowed range intersection across all incoming FKs
+        mins = []
+        maxs = []
+        for fk in incoming_fks:
+            parent_ids = pk_values[fk.parent_table]
+            mins.append(len(parent_ids) * fk.min_children)
+            maxs.append(len(parent_ids) * fk.max_children)
+
+        min_allowed = max(mins)
+        max_allowed = min(maxs)
+
+        if max_allowed < min_allowed:
+            raise ValueError(
+                f"Table '{table_name}': FK constraints incompatible for row_count. "
+                f"Need intersection, got min_allowed={min_allowed}, max_allowed={max_allowed}."
+            )
+
+        # If user set row_count > 0, use it; else auto-pick a value in the intersection
+        if t.row_count and t.row_count > 0:
+            n = t.row_count
+            if not (min_allowed <= n <= max_allowed):
+                raise ValueError(
+                    f"Table '{table_name}': row_count={n} outside allowed range "
+                    f"[{min_allowed}, {max_allowed}] from FK constraints."
+                )
+        else:
+            n = rng.randint(min_allowed, max_allowed)
+
+
+        fk_cols = {fk.child_column for fk in incoming_fks}
+
+        rows: list[dict[str, object]] = []
+        for i in range(1, n + 1):
+            row: dict[str, object] = {}
+            for col in t.columns:
+                if col.name in fk_cols:
+                    # placeholder; we'll assign after parents exist
+                    row[col.name] = None
+                else:
+                    row[col.name] = _gen_value(col, rng, i, table_name, row)
+            rows.append(row)
+
+        # Defensive: ensure PK exists
+        for r in rows:
+            if r.get(pk_col) is None:
+                raise ValueError(
+                    f"PK is None in table={table_name}, pk_col={pk_col}. Check schema PK settings."
+                )
+
+        # Assign each FK column independently, enforcing its min/max rules
+        for fk in incoming_fks:
+            parent_ids = pk_values[fk.parent_table]
+            # Use a stable subseed per FK so results are repeatable
+            fk_rng = random.Random(_stable_subseed(project.seed, f"fk:{table_name}:{fk.child_column}:{fk.parent_table}"))
+
+            _assign_fk_column(
+                fk_rng,
+                rows,
+                fk.child_column,
+                parent_ids,
+                fk.min_children,
+                fk.max_children,
+                child_table=table_name,
+                parent_table=fk.parent_table,
+            )
+
+        results[table_name] = rows
+        pk_values[table_name] = [int(r[pk_col]) for r in rows]
+
+        logger.info(
+            "Generated multi-FK child table '%s' rows=%d (incoming_fks=%d)",
+            table_name, len(rows), len(incoming_fks)
+        )
 
     return results
+
+
+def _assign_fk_column(
+    rng: random.Random,
+    rows: list[dict[str, object]],
+    child_fk_col: str,
+    parent_ids: list[int],
+    min_children: int,
+    max_children: int,
+) -> None:
+    """
+    Assign values to rows[*][child_fk_col] such that each parent_id appears
+    between min_children and max_children times (if possible).
+    """
+
+    parent_n = len(parent_ids)
+    total = len(rows)
+
+    min_total = parent_n * min_children
+    max_total = parent_n * max_children
+
+    if total < min_total:
+        raise ValueError(
+            f"Not enough rows to satisfy FK min_children: need >= {min_total}, have {total}"
+        )
+    if total > max_total:
+        raise ValueError(
+            f"Too many rows to satisfy FK max_children: need <= {max_total}, have {total}"
+        )
+
+    # Build a pool with each parent repeated random(min..max) times
+    pool: list[int] = []
+    for pid in parent_ids:
+        k = rng.randint(min_children, max_children)
+        pool.extend([pid] * k)
+
+    rng.shuffle(pool)
+
+    # Adjust pool length to exactly total rows
+    if len(pool) > total:
+        pool = pool[:total]
+    elif len(pool) < total:
+        # Top up by sampling parents randomly
+        pool.extend(rng.choices(parent_ids, k=(total - len(pool))))
+        rng.shuffle(pool)
+
+    # Assign one-to-one to rows
+    for r, pid in zip(rows, pool, strict=True):
+        r[child_fk_col] = pid
