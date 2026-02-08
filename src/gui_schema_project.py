@@ -26,6 +26,20 @@ logger = logging.getLogger("gui_schema_project")
 
 DTYPES = ["int", "float", "text", "bool", "date", "datetime"]
 GENERATORS = ["", "sample_csv", "date", "timestamp_utc", "latitude", "longitude"]
+EXPORT_OPTION_CSV = "CSV (folder)"
+EXPORT_OPTION_SQLITE = "SQLite (database)"
+EXPORT_OPTIONS = [EXPORT_OPTION_CSV, EXPORT_OPTION_SQLITE]
+
+
+def validate_export_option(option: object) -> str:
+    value = option.strip() if isinstance(option, str) else ""
+    if value in EXPORT_OPTIONS:
+        return value
+    allowed = ", ".join(EXPORT_OPTIONS)
+    raise ValueError(
+        "Generate / Preview / Export / SQLite panel: unsupported export option "
+        f"'{option}'. Fix: choose one of: {allowed}."
+    )
 
 
 
@@ -429,6 +443,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         # Output / DB vars
         self.db_path_var = tk.StringVar(value=os.path.join(os.getcwd(), "schema_project.db"))
+        self.export_option_var = tk.StringVar(value=EXPORT_OPTION_CSV)
         self.preview_table_var = tk.StringVar(value="")
 
         #Validation state variables
@@ -713,40 +728,42 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         bottom.pack(fill="both", expand=True)
 
         bottom.columnconfigure(1, weight=1)
-        bottom.rowconfigure(2, weight=1)
+        bottom.rowconfigure(3, weight=1)
 
         ttk.Label(bottom, text="SQLite DB path:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(bottom, textvariable=self.db_path_var).grid(row=0, column=1, sticky="ew", padx=6, pady=6)
         ttk.Button(bottom, text="Browse…", command=self._browse_db_path).grid(row=0, column=2, padx=6, pady=6)
 
+        ttk.Label(bottom, text="Export format:").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        self.export_option_combo = ttk.Combobox(
+            bottom,
+            values=EXPORT_OPTIONS,
+            textvariable=self.export_option_var,
+            state="readonly",
+        )
+        self.export_option_combo.grid(row=1, column=1, sticky="ew", padx=6, pady=6)
+
         actions = ttk.Frame(bottom)
-        actions.grid(row=1, column=0, columnspan=3, sticky="ew", padx=6, pady=(6, 10))
+        actions.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(6, 10))
         actions.columnconfigure(0, weight=1)
         actions.columnconfigure(1, weight=1)
         actions.columnconfigure(2, weight=1)
         actions.columnconfigure(3, weight=1)
-        actions.columnconfigure(4, weight=1)
 
         self.generate_btn = ttk.Button(actions, text="Generate data (all tables)", command=self._on_generate_project)
         self.generate_btn.grid(row=0, column=0, sticky="ew", padx=4)
 
-        self.export_btn = ttk.Button(actions, text="Export to CSV (folder)", command=self._on_export_csv)
+        self.export_btn = ttk.Button(actions, text="Export data", command=self._on_export_data)
         self.export_btn.grid(row=0, column=1, sticky="ew", padx=4)
 
         self.sample_btn = ttk.Button(actions, text="Generate sample (10 rows/table)", command=self._on_generate_sample)
         self.sample_btn.grid(row=0, column=2, sticky="ew", padx=4)
 
-
-        self.create_insert_btn = ttk.Button(
-            actions, text="Create tables + Insert into SQLite", command=self._on_create_insert_sqlite
-        )
-        self.create_insert_btn.grid(row=0, column=3, sticky="ew", padx=4)
-
         self.clear_btn = ttk.Button(actions, text="Clear generated data", command=self._clear_generated)
-        self.clear_btn.grid(row=0, column=4, sticky="ew", padx=4)
+        self.clear_btn.grid(row=0, column=3, sticky="ew", padx=4)
 
         preview_area = ttk.Frame(bottom)
-        preview_area.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=6, pady=6)
+        preview_area.grid(row=3, column=0, columnspan=3, sticky="nsew", padx=6, pady=6)
         preview_area.columnconfigure(1, weight=1)
         preview_area.rowconfigure(0, weight=1)
 
@@ -1493,7 +1510,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         state = tk.DISABLED if running else tk.NORMAL
         self.generate_btn.configure(state=state)
         self.export_btn.configure(state=state)
-        self.create_insert_btn.configure(state=state)
+        self.export_option_combo.configure(state=("disabled" if running else "readonly"))
         self.clear_btn.configure(state=state)
         self.preview_btn.configure(state=state)
 
@@ -1580,6 +1597,29 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         for r in rows:
             values = [r.get(c) for c in cols]
             self.preview_tree.insert("", tk.END, values=values)
+
+    def _on_export_data(self) -> None:
+        if self.is_running:
+            return
+
+        try:
+            export_option = validate_export_option(self.export_option_var.get())
+        except ValueError as exc:
+            messagebox.showerror("Invalid export option", str(exc))
+            return
+
+        if export_option == EXPORT_OPTION_CSV:
+            self._on_export_csv()
+            return
+        if export_option == EXPORT_OPTION_SQLITE:
+            self._on_create_insert_sqlite()
+            return
+
+        # Defensive fallback: export options are validated above.
+        messagebox.showerror(
+            "Invalid export option",
+            f"Unsupported export option '{export_option}'. Fix: choose a supported export option.",
+        )
 
     def _on_export_csv(self) -> None:
         if self.is_running:

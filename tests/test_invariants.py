@@ -6,6 +6,11 @@ import unittest
 from src.config import AppConfig
 from src.generator_project import generate_project_rows
 from src.gui_home import App
+from src.gui_schema_project import (
+    EXPORT_OPTION_CSV,
+    EXPORT_OPTION_SQLITE,
+    validate_export_option,
+)
 from src.schema_project_io import load_project_from_json, save_project_to_json
 from src.schema_project_model import ColumnSpec, ForeignKeySpec, SchemaProject, TableSpec, validate_project
 from src.storage_sqlite_project import create_tables, insert_project_rows
@@ -239,6 +244,21 @@ class TestInvariants(unittest.TestCase):
         self.assertIn("column 'score'", msg)
         self.assertIn("min_value cannot exceed max_value", msg)
 
+    def test_export_option_validation_accepts_supported_values(self):
+        self.assertEqual(validate_export_option(EXPORT_OPTION_CSV), EXPORT_OPTION_CSV)
+        self.assertEqual(validate_export_option(f"  {EXPORT_OPTION_SQLITE}  "), EXPORT_OPTION_SQLITE)
+
+    def test_export_option_validation_error_has_location_and_hint(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_export_option("Parquet")
+
+        msg = str(ctx.exception)
+        self.assertIn("Generate / Preview / Export / SQLite panel", msg)
+        self.assertIn("unsupported export option", msg)
+        self.assertIn("Fix: choose one of", msg)
+        self.assertIn(EXPORT_OPTION_CSV, msg)
+        self.assertIn(EXPORT_OPTION_SQLITE, msg)
+
     def test_gui_navigation_contract(self):
         try:
             root = tk.Tk()
@@ -251,6 +271,23 @@ class TestInvariants(unittest.TestCase):
             app = App(root, AppConfig())
             self.assertIn("home", app.screens)
             self.assertIn("schema_project", app.screens)
+
+            schema_screen = app.screens["schema_project"]
+            self.assertEqual(schema_screen.export_option_var.get(), EXPORT_OPTION_CSV)
+            self.assertEqual(
+                tuple(schema_screen.export_option_combo["values"]),
+                (EXPORT_OPTION_CSV, EXPORT_OPTION_SQLITE),
+            )
+
+            called: list[str] = []
+            schema_screen._on_export_csv = lambda: called.append("csv")
+            schema_screen._on_create_insert_sqlite = lambda: called.append("sqlite")
+
+            schema_screen.export_option_var.set(EXPORT_OPTION_CSV)
+            schema_screen._on_export_data()
+            schema_screen.export_option_var.set(EXPORT_OPTION_SQLITE)
+            schema_screen._on_export_data()
+            self.assertEqual(called, ["csv", "sqlite"])
 
             with self.assertRaisesRegex(KeyError, "Unknown screen 'missing'"):
                 app.show_screen("missing")

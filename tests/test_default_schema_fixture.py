@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import re
@@ -41,6 +42,22 @@ class TestDefaultSchemaFixture(unittest.TestCase):
             except PermissionError:
                 pass
 
+    def _write_timestamped_output_csv(self, rows_by_table: dict[str, list[dict[str, object]]]) -> Path:
+        output_dir = Path(__file__).resolve().parent / "testoutputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        output_path = output_dir / f"default_schema_fixture_{timestamp}.csv"
+
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["table", "row_index", "row_json"])
+            for table_name in sorted(rows_by_table.keys()):
+                for row_index, row in enumerate(rows_by_table[table_name], start=1):
+                    writer.writerow([table_name, row_index, json.dumps(row, sort_keys=True)])
+
+        return output_path
+
     def test_fixture_generates_deterministically_and_covers_behaviors(self):
         project = self._load_fixture_project()
 
@@ -48,6 +65,34 @@ class TestDefaultSchemaFixture(unittest.TestCase):
         rows_b = generate_project_rows(project)
 
         self.assertEqual(rows_a, rows_b)
+
+        output_csv_path = self._write_timestamped_output_csv(rows_a)
+        self.assertTrue(
+            output_csv_path.exists(),
+            "Fixture output file was not created in tests/testoutputs. "
+            "Fix: ensure _write_timestamped_output_csv() writes to a real path.",
+        )
+        self.assertRegex(
+            output_csv_path.name,
+            r"^default_schema_fixture_\d{8}_\d{6}_\d{6}\.csv$",
+            "Fixture output filename is not timestamped as expected. "
+            "Fix: use YYYYMMDD_HHMMSS_microseconds format in filename.",
+        )
+        with open(output_csv_path, "r", encoding="utf-8") as f:
+            header = f.readline().strip()
+            line_count = sum(1 for _ in f) + 1  # include header
+        self.assertEqual(
+            header,
+            "table,row_index,row_json",
+            "Fixture output CSV header mismatch. "
+            "Fix: write columns exactly as table,row_index,row_json.",
+        )
+        self.assertGreater(
+            line_count,
+            1,
+            "Fixture output CSV is empty. "
+            "Fix: ensure generated rows are serialized to CSV rows.",
+        )
 
         self.assertEqual(set(rows_a.keys()), {"customers", "campaigns", "orders", "events"})
         self.assertEqual(len(rows_a["customers"]), 12)

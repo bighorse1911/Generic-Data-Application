@@ -29,6 +29,10 @@ REGISTRY: Dict[str, GeneratorFn] = {}
 
 def register(name: str):
     def deco(fn: GeneratorFn) -> GeneratorFn:
+        if name in REGISTRY:
+            raise KeyError(
+                f"Generator '{name}' is already registered. Existing: {sorted(REGISTRY.keys())}"
+            )
         REGISTRY[name] = fn
         return fn
     return deco
@@ -140,14 +144,6 @@ def gen_uniform_float(params, ctx):
     decimals = int(params.get("decimals", 3))
     return round(ctx.rng.uniform(mn, mx), decimals)
 
-
-@register("normal")
-def gen_normal(params, ctx):
-    mean = float(params.get("mean", 0.0))
-    stdev = float(params.get("stdev", 1.0))
-    decimals = int(params.get("decimals", 2))
-    x = ctx.rng.gauss(mean, stdev)
-    return round(x, decimals)
 
 
 @register("lognormal")
