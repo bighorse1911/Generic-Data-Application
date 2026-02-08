@@ -25,17 +25,90 @@ def _iso_date(d: date) -> str:
 def _iso_datetime(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
-def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: str, row: dict[str, object]) -> object:
-    # 1) Custom generator path
-    if getattr(col, "generator", None):
-        ctx = GenContext(row_index=row_index, table=table_name, row=row, rng=rng)
-        fn = get_generator(col.generator)  # type: ignore[arg-type]
-        params = col.params or {}
-        v = fn(params, ctx)
+from src.generators import GenContext, get_generator
+
+def _maybe_null(col, ctx: GenContext) -> bool:
+    # PKs cannot be null
+    if getattr(col, "primary_key", False):
+        return False
+
+    params = getattr(col, "params", None) or {}
+    null_rate = params.get("null_rate", None)
+    if null_rate is None:
+        return False
+
+    r = float(null_rate)
+    if r <= 0.0:
+        return False
+    if r >= 1.0:
+        return True
+    return ctx.rng.random() < r
+
+
+def _apply_numeric_post(col, v: object) -> object:
+    if v is None:
+        return None
+    if not isinstance(v, (int, float)):
         return v
 
-    # 2) Fallback to your existing logic (whatever you already had)
-    return _gen_value_fallback(col, rng, row_index)
+    params = getattr(col, "params", None) or {}
+    mn = params.get("clamp_min", None)
+    mx = params.get("clamp_max", None)
+
+    x = float(v)
+    if mn is not None:
+        x = max(float(mn), x)
+    if mx is not None:
+        x = min(float(mx), x)
+
+    # If dtype says int, keep int
+    if getattr(col, "dtype", "") == "int":
+        return int(round(x))
+
+    return x
+
+
+
+def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: str, row: dict[str, object]) -> object:
+    ctx = GenContext(row_index=row_index, table=table_name, row=row, rng=rng)
+
+    # Nulls (probabilistic)
+    if _maybe_null(col, ctx):
+        return None
+
+    # Generate
+    if getattr(col, "generator", None):
+        fn = get_generator(col.generator)  # type: ignore[arg-type]
+        params = col.params or {}
+
+        v = fn(params, ctx)
+
+        # Optional numeric outliers (only when numeric)
+        out_rate = float(params.get("outlier_rate", 0.0) or 0.0)
+        out_scale = float(params.get("outlier_scale", 3.0) or 3.0)
+        if out_rate > 0 and isinstance(v, (int, float)) and rng.random() < out_rate:
+            v = float(v) * out_scale
+
+    else:
+        v = _gen_value_fallback(col, rng, row_index)
+
+    # Post-processing
+    v = _apply_numeric_post(col, v)
+
+    # choices override (if set)
+    if col.choices:
+        v = rng.choice(col.choices)
+
+    # regex validation (if set)
+    if col.pattern and v is not None:
+        import re
+        if not re.fullmatch(col.pattern, str(v)):
+            raise ValueError(f"Value '{v}' does not match pattern '{col.pattern}' for {table_name}.{col.name}")
+
+    return v
+
+
+
 
 
 def _gen_value_fallback(col: ColumnSpec, rng: random.Random, row_index: int) -> object:
@@ -140,7 +213,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
     validate_project(project)
 
     table_map: dict[str, TableSpec] = {t.table_name: t for t in project.tables}
-
+    
     # CHANGE: allow multiple FKs per child table
     fks_by_child: dict[str, list[ForeignKeySpec]] = {}
     for fk in project.foreign_keys:
@@ -223,6 +296,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
         pk_col = pk_col_name(t)
         incoming_fks = fks_by_child.get(table_name, [])
+        ordered_cols = _order_columns_by_dependencies(t.columns)
 
         # -------------------------
         # ROOT TABLE (no incoming FK)
@@ -233,7 +307,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
             for i in range(1, n + 1):
                 row: dict[str, object] = {}
-                for col in t.columns:
+                for col in ordered_cols:
                     row[col.name] = _gen_value(col, rng, i, table_name, row)
                 rows.append(row)
 
@@ -271,7 +345,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 k = rng.randint(fk.min_children, fk.max_children)
                 for _ in range(k):
                     row: dict[str, object] = {}
-                    for col in t.columns:
+                    for col in ordered_cols:
                         if col.name == fk.child_column:
                             row[col.name] = pid
                         else:
@@ -325,7 +399,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         rows: list[dict[str, object]] = []
         for i in range(1, n + 1):
             row: dict[str, object] = {}
-            for col in t.columns:
+            for col in ordered_cols:
                 if col.name in fk_cols:
                     # placeholder; we'll assign after parents exist
                     row[col.name] = None
@@ -366,6 +440,34 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         )
 
     return results
+
+def _order_columns_by_dependencies(cols: list[ColumnSpec]) -> list[ColumnSpec]:
+    """
+    Topological-ish ordering for column dependencies within a row.
+    - columns without depends_on first
+    - then columns whose deps are satisfied
+    Raises on cycles / missing deps.
+    """
+    remaining = list(cols)
+    ordered: list[ColumnSpec] = []
+    produced: set[str] = set()
+
+    # pre-seed: treat columns with no depends as ready
+    while remaining:
+        progressed = False
+        for c in list(remaining):
+            deps = getattr(c, "depends_on", None) or []
+            if all(d in produced for d in deps):
+                ordered.append(c)
+                produced.add(c.name)
+                remaining.remove(c)
+                progressed = True
+        if not progressed:
+            # cycle or missing dependency
+            stuck = [(c.name, getattr(c, "depends_on", None)) for c in remaining]
+            raise ValueError(f"Cannot resolve column dependencies: {stuck}")
+    return ordered
+
 
 
 def _assign_fk_column(

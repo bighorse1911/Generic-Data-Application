@@ -1,0 +1,41 @@
+{
+  "name": "Data Generation",
+  "seed": 1,
+  "tables": [
+    {
+      "table_name": "Test All Datatypes",
+      "columns": [
+        {
+          "name": "new_table_id",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        },
+        {
+          "name": "PKID",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true,
+          "unique": true,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        }
+      ],
+      "row_count": 100
+    }
+  ],
+  "foreign_keys": []
+}

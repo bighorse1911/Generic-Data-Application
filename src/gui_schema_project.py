@@ -409,6 +409,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_generator_var = tk.StringVar(value="")
         self.col_params_var = tk.StringVar(value="")  # JSON text
 
+        self.col_depends_var = tk.StringVar(value="")
+
 
         # Relationship editor vars
         self.fk_parent_table_var = tk.StringVar(value="")
@@ -607,7 +609,14 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_params_entry.grid(row=6, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
         #Adds Column
         self.add_col_btn = ttk.Button(col, text="Add column to selected table", command=self._add_column)
-        self.add_col_btn.grid(row=7, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
+        self.add_col_btn.grid(row=8, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
+
+        #Correlation stuff
+        ttk.Label(col, text="Depends on (comma):").grid(row=7, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(col, textvariable=self.col_depends_var).grid(row=7, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+        dep_s = self.col_depends_var.get().strip()
+        depends = [d.strip() for d in dep_s.split(",") if d.strip()] if dep_s else None
+
 
         # Columns table (pack inside cols_frame)
         cols_frame = ttk.LabelFrame(right, text="Columns", padding=8)

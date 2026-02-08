@@ -1,6 +1,7 @@
 from __future__ import annotations
 import random
 import re
+import math
 from dataclasses import dataclass
 from datetime import datetime, date, timezone, timedelta
 from typing import Any, Callable, Dict, Optional
@@ -125,6 +126,53 @@ def gen_normal(params, ctx: GenContext) -> float:
     if max_v is not None:
         x = min(float(max_v), x)
     return round(x, decimals)
+
+@register("uniform_int")
+def gen_uniform_int(params, ctx):
+    mn = int(params.get("min", 0))
+    mx = int(params.get("max", 100))
+    return ctx.rng.randint(mn, mx)
+
+@register("uniform_float")
+def gen_uniform_float(params, ctx):
+    mn = float(params.get("min", 0.0))
+    mx = float(params.get("max", 1.0))
+    decimals = int(params.get("decimals", 3))
+    return round(ctx.rng.uniform(mn, mx), decimals)
+
+
+@register("normal")
+def gen_normal(params, ctx):
+    mean = float(params.get("mean", 0.0))
+    stdev = float(params.get("stdev", 1.0))
+    decimals = int(params.get("decimals", 2))
+    x = ctx.rng.gauss(mean, stdev)
+    return round(x, decimals)
+
+
+@register("lognormal")
+def gen_lognormal(params, ctx):
+    # mu/sigma are log-space parameters; easier UX is median + sigma
+    median = float(params.get("median", 50000))
+    sigma = float(params.get("sigma", 0.5))
+    mu = math.log(max(median, 1e-9))
+    x = ctx.rng.lognormvariate(mu, sigma)
+    decimals = int(params.get("decimals", 2))
+    return round(x, decimals)
+
+@register("choice_weighted")
+def gen_choice_weighted(params, ctx):
+    choices = params.get("choices", None)
+    weights = params.get("weights", None)
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("choice_weighted requires params.choices = [...]")
+    if weights is None:
+        # equal weights
+        return ctx.rng.choice(choices)
+    if not isinstance(weights, list) or len(weights) != len(choices):
+        raise ValueError("choice_weighted requires params.weights same length as choices")
+    return ctx.rng.choices(choices, weights=weights, k=1)[0]
+
 
     ##----------------CORRELATIONS----------------##
 @register("salary_from_age")
