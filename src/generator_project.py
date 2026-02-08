@@ -309,6 +309,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 row: dict[str, object] = {}
                 for col in ordered_cols:
                     row[col.name] = _gen_value(col, rng, i, table_name, row)
+
                 rows.append(row)
 
             results[table_name] = rows
@@ -349,7 +350,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                         if col.name == fk.child_column:
                             row[col.name] = pid
                         else:
-                            row[col.name] = _gen_value(col, rng, next_pk)
+                            row[col.name] = _gen_value(col, rng, next_pk, table_name, row)
                     rows.append(row)
                     next_pk += 1
 
