@@ -3,6 +3,7 @@ from tkinter import ttk
 
 from src.config import AppConfig
 from src.gui_schema_project import SchemaProjectDesignerScreen
+from src.gui_schema_project_kit import SchemaProjectDesignerKitScreen
 
 
 class HomeScreen(ttk.Frame):
@@ -31,6 +32,12 @@ class HomeScreen(ttk.Frame):
             command=lambda: self.app.show_screen("schema_project"),
         ).pack(fill="x", pady=6)
 
+        ttk.Button(
+            card,
+            text="Schema Project Designer (Kit Preview) -> modular layout components",
+            command=lambda: self.app.show_screen("schema_project_kit"),
+        ).pack(fill="x", pady=6)
+
 
 class App(ttk.Frame):
     """
@@ -52,6 +59,7 @@ class App(ttk.Frame):
         self.screens: dict[str, ttk.Frame] = {}
         self.screens["home"] = HomeScreen(self.screen_container, self)
         self.screens["schema_project"] = SchemaProjectDesignerScreen(self.screen_container, self, cfg)
+        self.screens["schema_project_kit"] = SchemaProjectDesignerKitScreen(self.screen_container, self, cfg)
 
         for frame in self.screens.values():
             frame.grid(row=0, column=0, sticky="nsew")
