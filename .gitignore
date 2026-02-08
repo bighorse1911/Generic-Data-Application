@@ -4,3 +4,5 @@ __pycache__/
 synthetic.db
 *.db
 *.csv
+!tests/fixtures/*.csv
+.venv

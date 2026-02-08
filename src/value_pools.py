@@ -29,3 +29,4 @@ def load_csv_column(path: str, column_index: int, *, skip_header: bool = True) -
 
     _CACHE[key] = values
     return values
+

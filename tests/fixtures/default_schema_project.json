@@ -1,0 +1,454 @@
+{
+  "name": "default_schema_project_fixture",
+  "seed": 2026,
+  "tables": [
+    {
+      "table_name": "customers",
+      "row_count": 12,
+      "columns": [
+        {
+          "name": "customer_id",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "age",
+          "dtype": "int",
+          "nullable": false,
+          "generator": "uniform_int",
+          "params": {
+            "min": 18,
+            "max": 75
+          }
+        },
+        {
+          "name": "salary",
+          "dtype": "int",
+          "nullable": false,
+          "generator": "salary_from_age",
+          "depends_on": [
+            "age"
+          ],
+          "params": {
+            "age_col": "age",
+            "min": 25000,
+            "max": 200000
+          }
+        },
+        {
+          "name": "segment",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "A",
+              "B",
+              "C"
+            ],
+            "weights": [
+              0.2,
+              0.5,
+              0.3
+            ]
+          }
+        },
+        {
+          "name": "home_city",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "__CITY_COUNTRY_CSV__",
+            "column_index": 0
+          }
+        },
+        {
+          "name": "home_country",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "__CITY_COUNTRY_CSV__",
+            "column_index": 1
+          }
+        },
+        {
+          "name": "signup_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2023-01-01",
+            "end": "2025-12-31"
+          }
+        },
+        {
+          "name": "signup_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2025-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "active",
+          "dtype": "bool",
+          "nullable": false
+        },
+        {
+          "name": "latitude",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "latitude",
+          "params": {
+            "min": 37.0,
+            "max": 38.0,
+            "decimals": 4
+          }
+        },
+        {
+          "name": "longitude",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "longitude",
+          "params": {
+            "min": -123.0,
+            "max": -121.0,
+            "decimals": 4
+          }
+        },
+        {
+          "name": "score",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "normal",
+          "params": {
+            "mean": 70.0,
+            "stdev": 12.0,
+            "decimals": 2,
+            "clamp_min": 0.0,
+            "clamp_max": 100.0
+          }
+        },
+        {
+          "name": "lifetime_value",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "lognormal",
+          "params": {
+            "median": 1200.0,
+            "sigma": 0.35,
+            "decimals": 2,
+            "clamp_min": 100.0,
+            "clamp_max": 25000.0
+          }
+        },
+        {
+          "name": "note",
+          "dtype": "text",
+          "nullable": false,
+          "pattern": "^[a-z]{5,14}$"
+        },
+        {
+          "name": "optional_tag",
+          "dtype": "text",
+          "nullable": true,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "alpha",
+              "beta",
+              "gamma"
+            ],
+            "weights": [
+              1,
+              1,
+              1
+            ],
+            "null_rate": 0.25
+          }
+        },
+        {
+          "name": "outlier_metric",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 10.0,
+            "max": 20.0,
+            "decimals": 2,
+            "outlier_rate": 1.0,
+            "outlier_scale": 10.0,
+            "clamp_min": 0.0,
+            "clamp_max": 100.0
+          }
+        },
+        {
+          "name": "fallback_int",
+          "dtype": "int",
+          "nullable": false,
+          "min_value": 1,
+          "max_value": 5
+        },
+        {
+          "name": "fallback_float",
+          "dtype": "float",
+          "nullable": false,
+          "min_value": 0.5,
+          "max_value": 2.5
+        },
+        {
+          "name": "fallback_date",
+          "dtype": "date",
+          "nullable": false
+        },
+        {
+          "name": "fallback_datetime",
+          "dtype": "datetime",
+          "nullable": false
+        },
+        {
+          "name": "status_choice",
+          "dtype": "text",
+          "nullable": false,
+          "choices": [
+            "new",
+            "returning",
+            "vip"
+          ]
+        }
+      ]
+    },
+    {
+      "table_name": "campaigns",
+      "row_count": 5,
+      "columns": [
+        {
+          "name": "campaign_id",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "channel",
+          "dtype": "text",
+          "nullable": false,
+          "choices": [
+            "email",
+            "sms",
+            "push"
+          ]
+        },
+        {
+          "name": "budget",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 1000.0,
+            "max": 5000.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "started_on",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2023-01-01",
+            "end": "2024-12-31"
+          }
+        },
+        {
+          "name": "ended_on",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2024-01-01",
+            "end": "2025-12-31"
+          }
+        },
+        {
+          "name": "active",
+          "dtype": "bool",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "table_name": "orders",
+      "columns": [
+        {
+          "name": "order_id",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "customer_id",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "ordered_at",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2025-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "order_amount",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 1.0,
+            "max": 2000.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "order_status",
+          "dtype": "text",
+          "nullable": false,
+          "choices": [
+            "NEW",
+            "PAID",
+            "SHIPPED"
+          ]
+        }
+      ]
+    },
+    {
+      "table_name": "events",
+      "row_count": 20,
+      "columns": [
+        {
+          "name": "event_id",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "customer_id",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "campaign_id",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "event_time",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2024-01-01T00:00:00Z",
+            "end": "2025-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "event_type",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "impression",
+              "click",
+              "purchase"
+            ],
+            "weights": [
+              0.7,
+              0.2,
+              0.1
+            ]
+          }
+        },
+        {
+          "name": "event_amount",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 1.0,
+            "max": 500.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "event_lat",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "latitude",
+          "params": {
+            "min": 30.0,
+            "max": 50.0,
+            "decimals": 4
+          }
+        },
+        {
+          "name": "event_lon",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "longitude",
+          "params": {
+            "min": -130.0,
+            "max": -60.0,
+            "decimals": 4
+          }
+        },
+        {
+          "name": "quality_score",
+          "dtype": "float",
+          "nullable": false,
+          "generator": "normal",
+          "params": {
+            "mean": 0.6,
+            "stdev": 0.25,
+            "decimals": 3,
+            "clamp_min": 0.0,
+            "clamp_max": 1.0
+          }
+        }
+      ]
+    }
+  ],
+  "foreign_keys": [
+    {
+      "child_table": "orders",
+      "child_column": "customer_id",
+      "parent_table": "customers",
+      "parent_column": "customer_id",
+      "min_children": 1,
+      "max_children": 3
+    },
+    {
+      "child_table": "events",
+      "child_column": "customer_id",
+      "parent_table": "customers",
+      "parent_column": "customer_id",
+      "min_children": 1,
+      "max_children": 4
+    },
+    {
+      "child_table": "events",
+      "child_column": "campaign_id",
+      "parent_table": "campaigns",
+      "parent_column": "campaign_id",
+      "min_children": 2,
+      "max_children": 6
+    }
+  ]
+}

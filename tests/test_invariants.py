@@ -1,0 +1,262 @@
+import os
+import tempfile
+import tkinter as tk
+import unittest
+
+from src.config import AppConfig
+from src.generator_project import generate_project_rows
+from src.gui_home import App
+from src.schema_project_io import load_project_from_json, save_project_to_json
+from src.schema_project_model import ColumnSpec, ForeignKeySpec, SchemaProject, TableSpec, validate_project
+from src.storage_sqlite_project import create_tables, insert_project_rows
+
+
+class TestInvariants(unittest.TestCase):
+    def _project(self, seed: int = 42) -> SchemaProject:
+        return SchemaProject(
+            name="invariants",
+            seed=seed,
+            tables=[
+                TableSpec(
+                    table_name="customers",
+                    row_count=8,
+                    columns=[
+                        ColumnSpec("customer_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("name", "text", nullable=False),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_id", "int", nullable=False),
+                        ColumnSpec("status", "text", nullable=False, choices=["NEW", "PAID", "SHIPPED"]),
+                    ],
+                ),
+                TableSpec(
+                    table_name="order_items",
+                    columns=[
+                        ColumnSpec("order_item_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("order_id", "int", nullable=False),
+                        ColumnSpec("sku", "text", nullable=False),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec("orders", "customer_id", "customers", "customer_id", 1, 3),
+                ForeignKeySpec("order_items", "order_id", "orders", "order_id", 1, 4),
+            ],
+        )
+
+    def test_seed_is_deterministic_for_same_project(self):
+        project = self._project(seed=77)
+        a = generate_project_rows(project)
+        b = generate_project_rows(project)
+        self.assertEqual(a, b)
+
+    def test_different_seed_changes_output(self):
+        a = generate_project_rows(self._project(seed=77))
+        b = generate_project_rows(self._project(seed=78))
+        self.assertNotEqual(a, b)
+
+    def test_primary_keys_never_null_and_unique(self):
+        project = self._project(seed=13)
+        rows = generate_project_rows(project)
+
+        for table in project.tables:
+            pk_col = [c.name for c in table.columns if c.primary_key][0]
+            values = [r.get(pk_col) for r in rows[table.table_name]]
+
+            self.assertTrue(
+                all(v is not None for v in values),
+                f"Invariant failed: PK contains nulls in table '{table.table_name}'. "
+                "Fix: ensure primary_key columns are always generated with non-null values.",
+            )
+            self.assertEqual(
+                len(values),
+                len(set(values)),
+                f"Invariant failed: duplicate PK values in table '{table.table_name}'. "
+                "Fix: ensure PK generation stays unique per table.",
+            )
+
+    def test_foreign_keys_always_exist_in_parent(self):
+        project = self._project(seed=21)
+        rows = generate_project_rows(project)
+
+        for fk in project.foreign_keys:
+            parent_values = {r[fk.parent_column] for r in rows[fk.parent_table]}
+            for child_row in rows[fk.child_table]:
+                child_val = child_row[fk.child_column]
+                self.assertIn(
+                    child_val,
+                    parent_values,
+                    f"Invariant failed: FK value '{child_val}' missing from "
+                    f"parent '{fk.parent_table}.{fk.parent_column}'. "
+                    "Fix: keep parent rows generated before children and assign FKs from parent PK set.",
+                )
+
+    def test_single_fk_cardinality_bounds_hold_per_parent(self):
+        project = self._project(seed=31)
+        rows = generate_project_rows(project)
+
+        incoming_counts: dict[str, int] = {}
+        for fk in project.foreign_keys:
+            incoming_counts[fk.child_table] = incoming_counts.get(fk.child_table, 0) + 1
+
+        for fk in project.foreign_keys:
+            if incoming_counts.get(fk.child_table, 0) != 1:
+                continue
+
+            counts_by_parent: dict[int, int] = {
+                int(r[fk.parent_column]): 0 for r in rows[fk.parent_table]
+            }
+            for child_row in rows[fk.child_table]:
+                pid = int(child_row[fk.child_column])
+                counts_by_parent[pid] = counts_by_parent.get(pid, 0) + 1
+
+            for parent_id, count in counts_by_parent.items():
+                self.assertGreaterEqual(
+                    count,
+                    fk.min_children,
+                    f"Invariant failed: parent id {parent_id} has only {count} children in '{fk.child_table}'. "
+                    f"Expected at least {fk.min_children}. Fix: enforce min_children during FK assignment.",
+                )
+                self.assertLessEqual(
+                    count,
+                    fk.max_children,
+                    f"Invariant failed: parent id {parent_id} has {count} children in '{fk.child_table}'. "
+                    f"Expected at most {fk.max_children}. Fix: enforce max_children during FK assignment.",
+                )
+
+    def test_json_roundtrip_preserves_project(self):
+        project = self._project(seed=9)
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_json_loader_accepts_legacy_defaults(self):
+        legacy_project = {
+            "name": "legacy_project",
+            "tables": [
+                {
+                    "table_name": "customers",
+                    "columns": [
+                        {"name": "customer_id", "dtype": "int", "nullable": False, "primary_key": True},
+                        {"name": "name", "dtype": "text", "nullable": False},
+                    ],
+                },
+                {
+                    "table_name": "orders",
+                    "columns": [
+                        {"name": "order_id", "dtype": "int", "nullable": False, "primary_key": True},
+                        {"name": "customer_id", "dtype": "int", "nullable": False},
+                    ],
+                },
+            ],
+            "foreign_keys": [
+                {
+                    "child_table": "orders",
+                    "child_column": "customer_id",
+                    "parent_table": "customers",
+                    "parent_column": "customer_id",
+                }
+            ],
+        }
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                import json
+
+                json.dump(legacy_project, f)
+
+            loaded = load_project_from_json(path)
+            self.assertEqual(loaded.seed, 12345)
+            self.assertEqual(loaded.tables[0].row_count, 100)
+            self.assertEqual(loaded.foreign_keys[0].min_children, 1)
+            self.assertEqual(loaded.foreign_keys[0].max_children, 3)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_sqlite_insert_counts_match_generated_rows(self):
+        project = self._project(seed=11)
+        rows = generate_project_rows(project)
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        db_path = tmp.name
+        tmp.close()
+
+        try:
+            create_tables(db_path, project)
+            inserted = insert_project_rows(db_path, project, rows, chunk_size=500)
+            expected = {table_name: len(table_rows) for table_name, table_rows in rows.items()}
+            self.assertEqual(inserted, expected)
+        finally:
+            try:
+                os.remove(db_path)
+            except PermissionError:
+                pass
+
+    def test_validation_errors_include_location_and_hint(self):
+        bad = SchemaProject(
+            name="bad",
+            seed=1,
+            tables=[
+                TableSpec(
+                    table_name="people",
+                    row_count=1,
+                    columns=[
+                        ColumnSpec("id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("score", "float", nullable=False, min_value=10, max_value=2),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            validate_project(bad)
+
+        msg = str(ctx.exception)
+        self.assertIn("Table 'people'", msg)
+        self.assertIn("column 'score'", msg)
+        self.assertIn("min_value cannot exceed max_value", msg)
+
+    def test_gui_navigation_contract(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f"Tk GUI not available in this environment: {exc}")
+            return
+
+        root.withdraw()
+        try:
+            app = App(root, AppConfig())
+            self.assertIn("home", app.screens)
+            self.assertIn("schema_project", app.screens)
+
+            with self.assertRaisesRegex(KeyError, "Unknown screen 'missing'"):
+                app.show_screen("missing")
+        finally:
+            root.destroy()
+
+
+if __name__ == "__main__":
+    unittest.main()
