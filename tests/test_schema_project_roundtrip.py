@@ -1,16 +1,17 @@
 import unittest
 import tempfile
 import os
+import json
 
 from src.schema_project_model import (
     SchemaProject, TableSpec, ColumnSpec, ForeignKeySpec
 )
-from src.schema_project_io import save_project_to_json, load_project_from_json
+from src.schema_project_io import save_project_to_json, load_project_from_json, build_project_sql_ddl
 
 
 class TestSchemaProjectRoundtrip(unittest.TestCase):
-    def test_roundtrip_json(self):
-        project = SchemaProject(
+    def _project(self) -> SchemaProject:
+        return SchemaProject(
             name="demo",
             seed=7,
             tables=[
@@ -43,6 +44,9 @@ class TestSchemaProjectRoundtrip(unittest.TestCase):
             ],
         )
 
+    def test_roundtrip_json(self):
+        project = self._project()
+
         tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
         path = tmp.name
         tmp.close()
@@ -51,6 +55,70 @@ class TestSchemaProjectRoundtrip(unittest.TestCase):
             save_project_to_json(project, path)
             loaded = load_project_from_json(path)
             self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_save_json_appends_sql_ddl_string(self):
+        project = self._project()
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+
+        try:
+            save_project_to_json(project, path)
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+
+            self.assertIn("sql_ddl", raw)
+            self.assertIsInstance(raw["sql_ddl"], str)
+            self.assertEqual(raw["sql_ddl"], build_project_sql_ddl(project))
+            self.assertIn('CREATE TABLE "customers"', raw["sql_ddl"])
+            self.assertIn('CREATE TABLE "orders"', raw["sql_ddl"])
+            self.assertIn(
+                'FOREIGN KEY ("customer_id") REFERENCES "customers" ("customer_id")',
+                raw["sql_ddl"],
+            )
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_load_rejects_non_string_sql_ddl_with_fix_hint(self):
+        payload = {
+            "name": "demo",
+            "seed": 7,
+            "tables": [
+                {
+                    "table_name": "customers",
+                    "columns": [
+                        {"name": "customer_id", "dtype": "int", "nullable": False, "primary_key": True},
+                    ],
+                }
+            ],
+            "foreign_keys": [],
+            "sql_ddl": {"bad": "type"},
+        }
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+
+            with self.assertRaises(ValueError) as ctx:
+                load_project_from_json(path)
+
+            msg = str(ctx.exception)
+            self.assertIn("sql_ddl", msg)
+            self.assertIn("must be a string", msg)
+            self.assertIn("Fix:", msg)
         finally:
             try:
                 os.remove(path)
