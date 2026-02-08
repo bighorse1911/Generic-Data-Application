@@ -151,7 +151,17 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                     row[col.name] = _gen_value(col, rng, i)
                 rows.append(row)
             results[table_name] = rows
-            pk_values[table_name] = [int(r[pk_col]) for r in rows]
+
+            for r in rows:
+                if r.get(pk_col) is None:
+                    raise ValueError(f"PK is None in table={table_name}, pk_col={pk_col}. Check schema PK settings.")
+
+            # Ensure PK column is always populated (defensive)
+            for i, r in enumerate(rows, start=1):
+                if r.get(pk_col) is None:
+                    r[pk_col] = i
+
+            pk_values[table_name] = [int(r.get(pk_col)) for r in rows]
             logger.info("Generated root table '%s' rows=%d", table_name, n)
         else:
             # child table: generate based on parent cardinality

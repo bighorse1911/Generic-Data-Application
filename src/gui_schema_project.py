@@ -422,6 +422,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.db_path_var = tk.StringVar(value=os.path.join(os.getcwd(), "schema_project.db"))
         self.preview_table_var = tk.StringVar(value="")
 
+        #Validation state variables
+        self.last_validation_errors = 0
+        self.last_validation_warnings = 0
 
 
         self._build()
@@ -429,6 +432,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self._set_table_editor_enabled(False)
         self._refresh_fk_dropdowns()
         self._refresh_fks_tree()
+
+        #Final validation
+        self._run_validation()
+
 
     # ---------------- UI layout ----------------
     def _build(self) -> None:
@@ -692,6 +699,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         actions.columnconfigure(1, weight=1)
         actions.columnconfigure(2, weight=1)
         actions.columnconfigure(3, weight=1)
+        actions.columnconfigure(4, weight=1)
 
         self.generate_btn = ttk.Button(actions, text="Generate data (all tables)", command=self._on_generate_project)
         self.generate_btn.grid(row=0, column=0, sticky="ew", padx=4)
@@ -699,13 +707,17 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.export_btn = ttk.Button(actions, text="Export to CSV (folder)", command=self._on_export_csv)
         self.export_btn.grid(row=0, column=1, sticky="ew", padx=4)
 
+        self.sample_btn = ttk.Button(actions, text="Generate sample (10 rows/table)", command=self._on_generate_sample)
+        self.sample_btn.grid(row=0, column=2, sticky="ew", padx=4)
+
+
         self.create_insert_btn = ttk.Button(
             actions, text="Create tables + Insert into SQLite", command=self._on_create_insert_sqlite
         )
-        self.create_insert_btn.grid(row=0, column=2, sticky="ew", padx=4)
+        self.create_insert_btn.grid(row=0, column=3, sticky="ew", padx=4)
 
         self.clear_btn = ttk.Button(actions, text="Clear generated data", command=self._clear_generated)
-        self.clear_btn.grid(row=0, column=3, sticky="ew", padx=4)
+        self.clear_btn.grid(row=0, column=4, sticky="ew", padx=4)
 
         preview_area = ttk.Frame(bottom)
         preview_area.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=6, pady=6)
@@ -931,9 +943,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Added table '{name}'.")
         except Exception as exc:
             messagebox.showerror("Add table failed", str(exc))
+        self._run_validation()
 
 
-    def validate_project_detailed(project: SchemaProject) -> list[ValidationIssue]:
+    def _validate_project_detailed(self, project: SchemaProject) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
 
         # Use existing validator (throws on first error)
@@ -985,7 +998,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             messagebox.showerror("Project error", str(exc))
             return
 
-        issues = validate_project_detailed(self.project)
+        issues = self._validate_project_detailed(self.project)
 
         # Define checks (columns in the heatmap)
         checks = ["PK", "Columns", "FKs", "Generator"]
@@ -1018,13 +1031,23 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             else:
                 mark(iss.table, "Generator", iss.severity, iss.message)
 
+
         # Update heatmap
         self.heatmap.set_data(tables=tables, checks=checks, status=status, details=details)
 
         # Summary
         e = sum(1 for i in issues if i.severity == "error")
         w = sum(1 for i in issues if i.severity == "warn")
+        self.last_validation_errors = e
+        self.last_validation_warnings = w
         self.validation_summary_var.set(f"Validation: {e} errors, {w} warnings. Click cells for details.")
+        self._update_generate_enabled()
+
+    def _on_generate_project(self) -> None:
+        if self.last_validation_errors > 0:
+            messagebox.showerror("Cannot generate", "Schema has validation errors. Fix them first.")
+            return
+        ...
 
 
     def _remove_table(self) -> None:
@@ -1060,6 +1083,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Removed table '{removed}'.")
         except Exception as exc:
             messagebox.showerror("Remove table failed", str(exc))
+
+        self._run_validation()
+
 
     def _on_table_selected(self, _event=None) -> None:
         sel = self.tables_list.curselection()
@@ -1133,6 +1159,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set("Applied table changes.")
         except Exception as exc:
             messagebox.showerror("Apply failed", str(exc))
+
+        self._run_validation()
+
 
     # ---------------- Column actions ----------------
     def _add_column(self) -> None:
@@ -1215,6 +1244,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set("Column added.")
         except Exception as exc:
             messagebox.showerror("Add column failed", str(exc))
+        self._run_validation()
 
     def _remove_selected_column(self) -> None:
         if self.selected_table_index is None:
@@ -1256,6 +1286,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Removed column '{removed}'.")
         except Exception as exc:
             messagebox.showerror("Remove column failed", str(exc))
+        self._run_validation()
 
     def _move_selected_column(self, delta: int) -> None:
         if self.selected_table_index is None:
@@ -1296,6 +1327,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         except Exception as exc:
             messagebox.showerror("Move column failed", str(exc))
+        self._run_validation()
 
     # ---------------- Relationship actions ----------------
     def _add_fk(self) -> None:
@@ -1357,6 +1389,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set("Relationship added.")
         except Exception as exc:
             messagebox.showerror("Add relationship failed", str(exc))
+        self._run_validation()
 
     def _remove_selected_fk(self) -> None:
         idx = self._selected_fk_index()
@@ -1384,6 +1417,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             )
         except Exception as exc:
             messagebox.showerror("Remove relationship failed", str(exc))
+        self._run_validation()
 
     def _browse_db_path(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -1427,7 +1461,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 self.after(0, lambda: self._on_generated_ok(rows))
             except Exception as exc:
                 logger.exception("Generation failed: %s", exc)
-                self.after(0, lambda: self._on_job_failed(str(exc)))
+                msg = str(exc)
+                self.after(0, lambda m=msg: self._on_job_failed(m))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1446,6 +1481,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # quick summary
         summary = "\n".join([f"{t}: {len(r)} rows" for t, r in rows.items()])
         messagebox.showinfo("Generated", f"Generated data:\n{summary}")
+        self.status_var.set(f"Generated {sum(len(v) for v in rows.values())} rows across {len(rows)} tables.")
+
 
     def _refresh_preview(self) -> None:
         if not self.generated_rows:
@@ -1547,7 +1584,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 self.after(0, lambda: self._on_sqlite_ok(db_path, counts))
             except Exception as exc:
                 logger.exception("SQLite insert failed: %s", exc)
-                self.after(0, lambda: self._on_job_failed(str(exc)))
+                msg = str(exc)
+                self.after(0, lambda m=msg: self._on_job_failed(m))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1567,7 +1605,74 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self._set_running(False, "Failed.")
         messagebox.showerror("Error", msg)
 
+    def _update_generate_enabled(self) -> None:
+        """
+        Enable Generate buttons only when there are no validation errors.
+        Note: when is_running=True we still disable controls via _set_running().
+        """
+        if getattr(self, "is_running", False):
+            return  # _set_running handles it
 
+        ok = (self.last_validation_errors == 0)
+
+        # Your main generate button
+        if hasattr(self, "generate_btn"):
+            self.generate_btn.configure(state=(tk.NORMAL if ok else tk.DISABLED))
+
+        # Sample generate button (we'll add this in polish 4)
+        if hasattr(self, "sample_btn"):
+            self.sample_btn.configure(state=(tk.NORMAL if ok else tk.DISABLED))
+
+    def _make_sample_project(self, n: int = 10) -> SchemaProject:
+        """
+        Return a copy of the current project with root table row_counts set to n.
+        Child tables keep their existing row_count (generator typically ignores it for child tables anyway).
+        """
+        child_tables = {fk.child_table for fk in self.project.foreign_keys}
+
+        new_tables: list[TableSpec] = []
+        for t in self.project.tables:
+            rc = t.row_count
+            if t.table_name not in child_tables:
+                rc = n
+            new_tables.append(TableSpec(table_name=t.table_name, row_count=rc, columns=t.columns))
+
+        return SchemaProject(
+            name=self.project.name,
+            seed=self.project.seed,
+            tables=new_tables,
+            foreign_keys=self.project.foreign_keys,
+        )
+
+    def _on_generate_sample(self) -> None:
+        if self.is_running:
+            return
+
+        if self.last_validation_errors > 0:
+            messagebox.showerror("Cannot generate", "Schema has validation errors. Fix them first.")
+            return
+
+        try:
+            self._apply_project_vars_to_model()
+            validate_project(self.project)
+        except Exception as exc:
+            messagebox.showerror("Invalid project", str(exc))
+            return
+
+        sample_project = self._make_sample_project(10)
+
+        self._set_running(True, "Generating sample data (10 rows per root table)…")
+
+        def work():
+            try:
+                rows = generate_project_rows(sample_project)
+                self.after(0, lambda: self._on_generated_ok(rows))
+            except Exception as exc:
+                logger.exception("Sample generation failed: %s", exc)
+                msg = str(exc)  # capture for Python 3.13 (exception var lifetime)
+                self.after(0, lambda m=msg: self._on_job_failed(m))
+
+        threading.Thread(target=work, daemon=True).start()
 
 
 

@@ -7,7 +7,13 @@ print(name, age)
 name = input("What is your name? ")
 print("Hi", name)
 
-age = int(input("Age? "))
+while True:
+    try:
+        age = int(input("Age? "))
+        break
+    except ValueError:
+        print("Please enter a valid integer for age.")
+
 if age >= 18:
     print("Adult")
 else:
