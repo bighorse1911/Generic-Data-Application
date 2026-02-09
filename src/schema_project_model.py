@@ -3,7 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-DataType = Literal["int", "float", "text", "bool", "date", "datetime"]
+DataType = Literal["int", "float", "decimal", "text", "bool", "date", "datetime"]
+
+SUPPORTED_DTYPES: tuple[str, ...] = (
+    "int",
+    "float",
+    "decimal",
+    "text",
+    "bool",
+    "date",
+    "datetime",
+)
+SEMANTIC_NUMERIC_TYPES: tuple[str, ...] = ("latitude", "longitude", "money", "percent")
 
 
 @dataclass(frozen=True)
@@ -99,6 +110,18 @@ def validate_project(project: SchemaProject) -> None:
             raise ValueError(f"Table '{t.table_name}': primary key '{pk.name}' must be dtype=int in this MVP.")
 
         for c in t.columns:
+            if c.dtype not in SUPPORTED_DTYPES:
+                allowed = ", ".join(SUPPORTED_DTYPES)
+                if c.dtype in SEMANTIC_NUMERIC_TYPES:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': unsupported dtype '{c.dtype}'. "
+                        f"Fix: use dtype='decimal' (or legacy 'float') with generator='{c.dtype}'. "
+                        f"Allowed dtypes: {allowed}."
+                    )
+                raise ValueError(
+                    f"Table '{t.table_name}', column '{c.name}': unsupported dtype '{c.dtype}'. "
+                    f"Fix: use one of: {allowed}."
+                )
             if c.choices is not None and len(c.choices) == 0:
                 raise ValueError(
                     f"Table '{t.table_name}', column '{c.name}': choices cannot be empty."

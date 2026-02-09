@@ -11,6 +11,7 @@ logger = logging.getLogger("storage_sqlite_project")
 def _sqlite_type(dtype: str) -> str:
     return {
         "int": "INTEGER",
+        "decimal": "REAL",
         "float": "REAL",
         "text": "TEXT",
         "bool": "INTEGER",

@@ -39,11 +39,14 @@ relational, schema-driven datasets for analytics, testing, and demos.
 ## Data Generation
 - `ColumnSpec` drives generation
 - Generators selected by `dtype` / `generator_id`
-- Foundational dtypes: int, decimal, text, bool, date, datetime, bytes. All other semantics are generators. Refer to DATA_SEMANTICS.md for documentation. 
+- Runtime dtypes today: int, decimal, float, text, bool, date, datetime.
+- Direction 3 target dtypes: int, decimal, text, bool, date, datetime, bytes.
+- Backward compatibility policy: existing `float` schema JSON remains supported during migration to `decimal`.
+- All other semantics are generators. Refer to DATA_SEMANTICS.md for authoritative rules.
 - Supports:
   - CSV sampling
   - Distributions (uniform, normal, lognormal)
-  - Dates, timestamps, lat/long
+  - Dates, timestamps, semantic numeric generators (lat/lon/money/percent)
   - Correlated columns via `depends_on`
 - FK integrity enforced in-memory
 

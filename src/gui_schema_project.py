@@ -24,8 +24,8 @@ from src.schema_project_io import save_project_to_json, load_project_from_json
 
 logger = logging.getLogger("gui_schema_project")
 
-DTYPES = ["int", "float", "text", "bool", "date", "datetime"]
-GENERATORS = ["", "sample_csv", "date", "timestamp_utc", "latitude", "longitude"]
+DTYPES = ["int", "decimal", "float", "text", "bool", "date", "datetime"]
+GENERATORS = ["", "sample_csv", "date", "timestamp_utc", "latitude", "longitude", "money", "percent"]
 EXPORT_OPTION_CSV = "CSV (folder)"
 EXPORT_OPTION_SQLITE = "SQLite (database)"
 EXPORT_OPTIONS = [EXPORT_OPTION_CSV, EXPORT_OPTION_SQLITE]

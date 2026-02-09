@@ -7,6 +7,7 @@ from pathlib import Path
 
 _DEFAULT_SQL_TYPES: dict[str, str] = {
     "int": "INTEGER",
+    "decimal": "DECIMAL",
     "float": "DOUBLE PRECISION",
     "text": "TEXT",
     "bool": "BOOLEAN",

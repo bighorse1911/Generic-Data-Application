@@ -7,8 +7,10 @@ from src.config import AppConfig
 from src.generator_project import generate_project_rows
 from src.gui_home import App
 from src.gui_schema_project import (
+    DTYPES,
     EXPORT_OPTION_CSV,
     EXPORT_OPTION_SQLITE,
+    GENERATORS,
     validate_export_option,
 )
 from src.schema_project_io import load_project_from_json, save_project_to_json
@@ -258,6 +260,11 @@ class TestInvariants(unittest.TestCase):
         self.assertIn("Fix: choose one of", msg)
         self.assertIn(EXPORT_OPTION_CSV, msg)
         self.assertIn(EXPORT_OPTION_SQLITE, msg)
+
+    def test_direction3_gui_lists_decimal_and_semantic_numeric_generators(self):
+        self.assertIn("decimal", DTYPES)
+        self.assertIn("money", GENERATORS)
+        self.assertIn("percent", GENERATORS)
 
     def test_gui_navigation_contract(self):
         try:

@@ -11,11 +11,22 @@ project. It is authoritative for:
 - Invariant tests
 
 If behavior is unclear, this document overrides assumptions.
+If you make updates to any DATA_SEMANTICS in the project, update this file too.
+
+## Implementation status (2026-02-09)
+
+Direction 3 (float -> decimal) is in progress.
+
+- Runtime support today: `int`, `float`, `text`, `bool`, `date`, `datetime`
+- Target canonical dtypes: `int`, `decimal`, `text`, `bool`, `date`, `datetime`, `bytes`
+- Backward compatibility policy: existing JSON schemas using `float` remain supported
+  during migration.
 
 ## Core design principle
-**Dtypes are generic storage domains.**  
-All *meaning* (email, latitude, money, status, etc.) is implemented via
-**generators + params + constraints**.
+
+**Dtypes are storage domains.**
+All meaning (email, latitude, money, status, etc.) is implemented via
+**generator + params + constraints**.
 
 All generation must remain deterministic per `project.seed`.
 
@@ -26,12 +37,10 @@ All generation must remain deterministic per `project.seed`.
 Each `ColumnSpec` has a `dtype`. This defines its portable storage domain.
 Generators may refine behavior, but must respect dtype constraints.
 
-Supported foundational dtypes:
-
 ## 1.1 int
 
 Definition:
-- Whole number (Python `int`)
+- Whole number (`int`)
 - No fractional component
 
 Typical uses:
@@ -41,142 +50,115 @@ Typical uses:
 - Years
 
 Allowed constraints:
-- min_value, max_value
+- `min_value`, `max_value`
 
 Rules:
-- If `primary_key=true` → must be:
-  - `nullable=false`
-  - unique
-  - deterministic
+- If `primary_key=true`, column must be `nullable=false`, unique, and deterministic.
 
-Generator behavior:
-- Uniform by default unless a distribution/generator is specified
-- Bounds must be enforced if provided
-
----
-
-## 1.2 decimal
+## 1.2 decimal (target canonical numeric dtype)
 
 Definition:
-- Decimal numeric domain (non-integer values)
-- Implementation may be `decimal.Decimal` (preferred) or `float` (acceptable),
-  but exported semantics remain decimal.
+- Decimal numeric domain for non-integer values
+- Preferred implementation target is `decimal.Decimal`
 
 Typical uses:
 - Money, measurements, rates, percentages
 - Geographic coordinates (lat/lon)
-- Any numeric that may contain decimals
 
 Allowed constraints:
-- min_value, max_value
-- scale (optional, number of decimal places)
+- `min_value`, `max_value`
+- `scale` (optional decimal places)
 
-Generator behavior:
-- Clamp to bounds if provided
-- Apply scale rounding only if configured
+Rules:
+- Respect configured bounds
+- Apply rounding only if configured
 - Deterministic per seed
 
----
+## 1.3 float (legacy compatibility dtype)
 
-## 1.3 text
+Definition:
+- Transitional numeric dtype accepted for backward compatibility
+- Semantically equivalent to decimal-like numeric fields in existing projects
+
+Rules:
+- Existing schema JSON with `dtype="float"` must continue to load and generate.
+- New feature work should target decimal semantics, not expand float-only behavior.
+
+## 1.4 text
 
 Definition:
 - Arbitrary textual value
 
 Typical uses:
 - Names, labels, categories, codes
-- Emails, UUIDs, country codes (via generator semantics)
-- JSON stored as text (via generator semantics)
+- Emails, UUIDs, country codes (via generators)
 
 Allowed constraints:
-- min_length, max_length
-- pattern (regex)
-- choices (categorical)
-- weights (for weighted categorical selection)
-- ordered (bool, for ordered categories)
+- `min_length`, `max_length`
+- `pattern` (regex)
+- `choices`
+- `weights` (weighted choices)
+- `ordered` (ordered categories)
 
-Generator behavior:
-- If `choices` defined → categorical selection (uniform unless weights provided)
-- If `generator="sample_csv"` → empirical sampling (cached)
-- Regex constraints must be enforced
+Rules:
+- If `choices` is defined, select categorically (uniform unless `weights` provided).
+- If `generator="sample_csv"`, selection is empirical from source data.
+- Regex constraints must be enforced.
 
----
-
-## 1.4 bool
+## 1.5 bool
 
 Definition:
-- Boolean value (`True` / `False`)
+- Boolean (`True`/`False`)
 
 Allowed constraints:
-- probability_true (0.0–1.0)
+- `probability_true` (0.0 to 1.0)
 
-Generator behavior:
-- Bernoulli distribution
+Rules:
+- Bernoulli semantics
 - Deterministic per seed
 
----
-
-## 1.5 date
+## 1.6 date
 
 Definition:
 - Calendar date without time
-- Stored as ISO 8601 string: `YYYY-MM-DD`
+- Stored/exported as ISO 8601 `YYYY-MM-DD`
 
 Allowed constraints:
-- start_date, end_date
+- `start_date`, `end_date`
 
-Generator behavior:
-- Uniform random date in range unless specified otherwise
-- Deterministic per seed
-
----
-
-## 1.6 datetime
+## 1.7 datetime
 
 Definition:
-- Timestamp with date + time
-- Stored as ISO 8601 string
-- Timezone behavior is controlled by generator semantics/params (not dtype)
+- Timestamp with date and time
+- Stored/exported as ISO 8601 string
+- Timezone behavior is controlled by generator semantics/params
 
 Allowed constraints:
-- start_datetime, end_datetime
+- `start_datetime`, `end_datetime`
 
-Generator behavior:
-- Uniform random within range unless specified otherwise
-- Deterministic per seed
-
----
-
-## 1.7 bytes
+## 1.8 bytes (target canonical binary dtype)
 
 Definition:
-- Binary payload (`bytes`)
-
-Typical uses:
-- Rare in CSV, but useful for DB/blob export targets
-
-Export guidance:
-- CSV exports should encode bytes (e.g., base64) at export time
-
-Generator behavior:
-- Deterministic per seed
-- If a generator is used (e.g., random_bytes), it must accept length params
-
----
-
-# 2. Semantic Meaning: Generators + Params
-
-**Generators define meaning**, not dtype.
-
-Examples:
-- Email: dtype=text, generator="email", params={"domain": "example.com"}
-- Latitude: dtype=decimal, generator="latitude", params={"min": -90, "max": 90}
-- Status with weights: dtype=text, generator="weighted_choice", params={"choices":[...], "weights":[...]}
+- Binary payload (`bytes`) for blob-like data
 
 Rules:
-- Adding a new “type of data” should normally be done by adding a generator,
-  not adding a dtype.
-- New dtypes should be extremely rare and must represent a new storage domain.
+- CSV exports should encode bytes (for example base64) at export time.
+- Support is roadmap-level unless explicitly implemented in runtime.
+
+---
+
+# 2. Semantic Meaning via Generators
+
+Generators define meaning, not dtypes.
+
+Examples:
+- Email: `dtype=text`, `generator="email"`
+- Latitude: `dtype=decimal|float`, `generator="latitude"`
+- Weighted status: `dtype=text`, `generator="weighted_choice"`
+
+Rules:
+- Adding a new data meaning should usually add a generator, not a dtype.
+- New dtypes are rare and must represent a new storage domain.
 
 ---
 
@@ -186,41 +168,24 @@ Rules:
 
 Definition:
 - Surrogate identifier
-- dtype=int
-- primary_key=true
-- nullable=false
+- `dtype=int`
+- `primary_key=true`
+- `nullable=false`
 
 Rules:
-- Exactly one per table
-- Must be unique
-- Must never be null
-
-Generator behavior:
-- Sequential unless a PK generator explicitly overrides
-- Deterministic for given seed
-- Generated before dependent columns
-- PK cannot be correlated (must not depend_on other columns)
-
-Invariant:
-- PK is never null and is unique
-
----
+- Exactly one PK per table
+- PK must be unique and never null
+- PK must not depend on other columns
 
 ## 3.2 Business Key
 
 Definition:
-- Real-world unique identifier
-- May be natural (email) or synthetic (customer_number)
+- Real-world unique identifier (natural or synthetic)
 - Does not replace PK
 
 Rules:
-- If a column is declared as a business key (via flag/metadata):
-  - it must be unique (or composite uniqueness future)
-- May be nullable only if explicitly allowed (models incomplete records)
-
-Generator behavior:
-- Must enforce uniqueness constraint
-- Retry generation on collisions (with a safety limit + descriptive error)
+- If marked as business key (metadata/flag), enforce uniqueness.
+- Nullable only when explicitly allowed by model semantics.
 
 ---
 
@@ -229,200 +194,138 @@ Generator behavior:
 ## 4.1 Foreign Key (FK)
 
 Definition:
-- References parent table primary key
+- Child column references parent PK
 
 Rules:
-- child_column must be dtype=int
-- child_column must not equal child PK
-- parent_column must be parent PK
+- Child FK column must be `dtype=int`
+- Child FK column must not be child PK
+- Parent column must be parent PK
 - Multiple FKs per child table are allowed
 
 Cardinality:
-- min_children, max_children control child count per parent
-- min_children=0 allowed for optional relationship
+- `min_children`, `max_children` control child count per parent
+- `min_children=0` means optional relationship (future-ready policy)
 
-Generator behavior:
-- Parent tables generated first
-- Child rows generated per parent cardinality
+Invariants:
 - FK values must exist in parent PK set
-- No orphan rows unless explicitly allowed by a generator/param (future)
-
-Invariant:
-- FK integrity must pass in-memory test for all FK relationships
+- No orphan rows unless explicitly supported by future semantics
 
 ---
 
 # 5. Distribution Semantics
 
-Distributions apply via generator semantics or explicit distribution params.
+Distributions apply through generator semantics and params.
 
 ## 5.1 uniform
 Valid for:
-- int, decimal, date, datetime
+- `int`, `float|decimal`, `date`, `datetime`
 
 ## 5.2 normal
-Parameters:
-- mean, stddev
+Params:
+- `mean`, `stddev`
 Valid for:
-- decimal, int (rounded)
+- `float|decimal`, `int` (rounded)
 Rules:
-- Clamp to bounds
+- Clamp to bounds when bounds exist
 
 ## 5.3 lognormal
 Valid for:
-- decimal, int (rounded)
+- `float|decimal`, `int` (rounded)
 Rules:
-- Clamp to bounds
+- Clamp to bounds when bounds exist
 
 ## 5.4 categorical / weighted_choice
 Valid for:
-- text, int
+- `text`, `int`
 Rules:
-- If weights supplied, they must match choices length
+- If weights are provided, length must match choices
 
-## 5.5 empirical (CSV sampling)
+## 5.5 empirical (`sample_csv`)
 Valid for:
-- text, int (if parseable), decimal (if parseable)
+- `text`, parseable `int`, parseable `float|decimal`
 Rules:
 - Skip header row
 - Deterministic selection
-- Cache file contents per path+column
+- Cache source content by path + column
 Failure behavior:
-- Missing file → validation error
-- Empty pool → validation error
+- Missing file -> validation error
+- Empty pool -> validation error
 
 ---
 
-# 6. Correlation
+# 6. Correlation and Dependencies
 
 Definition:
-- Column value depends on other columns in same row
+- Column value depends on other columns in the same row
 
 Representation:
-- depends_on: [column_name]
+- `depends_on: [column_name]`
 
 Rules:
 - No circular dependencies
-- Dependencies must exist in the same table
-- Dependent columns must be generated after dependencies
-
-Generator behavior:
-- Row context passed to generator
-- Generator must not mutate other columns
-- Dependency order must be respected
-
-Example:
-- total_price depends_on quantity and unit_price
+- Dependencies must exist in same table
+- Dependent columns generate after dependencies
+- Generator must not mutate unrelated columns
 
 ---
 
 # 7. Nullability
 
-Definition:
-- Whether a column may be None/null
-
 Rules:
-- PK never nullable
-- FK nullable only if relationship optional and generator supports it
-- Business keys nullable only if explicitly allowed
+- PK is never nullable
+- FK nullable only for optional relationship semantics
+- Business key nullable only when explicitly allowed
 
 Generator behavior:
-- Default: no nulls unless explicitly configured
-- Optional: null_probability extension (future)
+- Default is non-null unless explicitly configured
+- Optional `null_rate`/`null_probability` behavior must be deterministic
 
 ---
 
-# 8. Temporal Modeling (Semantics via Generators)
+# 8. Validation Contract
 
-These are *concepts*, not dtypes. They should be implemented as generators on
-dtype=date/datetime/bool/text.
+Validation must fail fast with actionable messages containing:
+- table name
+- column name (when applicable)
+- what is wrong
+- how to fix
 
-Examples:
-- data_valid_from/to → dtype=date/datetime + generator="validity_range"
-- is_active → dtype=bool + generator="active_flag"
-- timestamps with UTC enforcement → dtype=datetime + generator="timestamp_utc"
-
-Rules:
-- End date/time must be >= start date/time
-- Historical records preserved when modeling SCD (future)
+Example shape:
+- `Table 'orders', column 'amount': min_value cannot exceed max_value. Fix: set min_value <= max_value.`
 
 ---
 
-# 9. Ordered Categories (Semantics via Constraints)
-
-Definition:
-- Categorical data with ranking
-
-Representation:
-- dtype=text
-- choices=[...]
-- ordered=true
-
-Rules:
-- Ordering affects progression logic only if a progression generator is used
-- By default, ordered categories behave like normal categorical choices
-
----
-
-# 10. Constraint Enforcement
-
-Constraints must be enforced by either:
-- validation (schema-time), or
-- generator runtime checks (value-time), or both.
-
-Rules:
-- Validation errors must be actionable:
-  - table name
-  - column name
-  - what is wrong
-  - how to fix
-
----
-
-# 11. Invariants (Must Always Hold)
+# 9. Invariants (Must Always Hold)
 
 1. Exactly one PK per table
 2. PK never null
-3. FK always references valid parent PK for all foreign keys
+3. Every FK value references a valid parent PK
 4. Deterministic output for identical seed + schema
-5. JSON schema roundtrip preserves semantics
-6. No column violates dtype domain (e.g., text values for int)
-7. No circular dependency in depends_on graph
+5. JSON roundtrip preserves semantics and backward-compatible float schemas
+6. Values remain inside dtype domain
+7. No circular dependency in `depends_on`
 
-These invariants must have unit tests.
-
----
-
-# 12. Implementation Contract
-
-Generator functions must:
-- Be deterministic given `rng` and `project.seed`
-- Respect dtype constraints
-- Respect nullability rules
-- Raise descriptive `ValueError` for invalid params
-
-Validation must:
-- Run before generation
-- Block invalid schemas
-- Provide actionable error messages
+These invariants require unit tests.
 
 ---
 
-# 13. Extension Policy
+# 10. Extension Policy
 
-## 13.1 Adding new “data meanings”
-Add a generator (preferred):
+## 10.1 Adding new data meanings
+
+Preferred path: add or extend a generator with:
 - generator name
 - valid dtypes
 - required params
 - deterministic behavior
 - tests
 
-## 13.2 Adding new dtypes
-Only allowed if representing a new storage domain not covered by:
-- int, decimal, text, bool, date, datetime, bytes
+## 10.2 Adding new dtypes
 
-New dtypes must:
-- be added to this document
-- define domain + constraints + export semantics
-- include invariant tests
+Allowed only when representing a new storage domain not covered by:
+- `int`, `float|decimal`, `text`, `bool`, `date`, `datetime`, `bytes`
+
+Required updates:
+- update this document
+- define domain, constraints, export semantics
+- add invariant tests

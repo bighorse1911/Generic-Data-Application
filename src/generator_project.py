@@ -25,8 +25,6 @@ def _iso_date(d: date) -> str:
 def _iso_datetime(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
-from src.generators import GenContext, get_generator
-
 def _maybe_null(col, ctx: GenContext) -> bool:
     # PKs cannot be null
     if getattr(col, "primary_key", False):
@@ -64,6 +62,12 @@ def _apply_numeric_post(col, v: object) -> object:
     # If dtype says int, keep int
     if getattr(col, "dtype", "") == "int":
         return int(round(x))
+
+    if getattr(col, "dtype", "") == "decimal":
+        scale = params.get("scale", None)
+        if scale is not None:
+            x = round(x, int(scale))
+        return float(x)
 
     return x
 
@@ -129,7 +133,7 @@ def _gen_value_fallback(col: ColumnSpec, rng: random.Random, row_index: int) -> 
         hi = int(col.max_value) if col.max_value is not None else 1000
         return rng.randint(lo, hi)
 
-    if col.dtype == "float":
+    if col.dtype in {"float", "decimal"}:
         lo = float(col.min_value) if col.min_value is not None else 0.0
         hi = float(col.max_value) if col.max_value is not None else 1000.0
         return round(rng.uniform(lo, hi), 2)

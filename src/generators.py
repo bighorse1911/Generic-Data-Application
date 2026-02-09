@@ -42,23 +42,79 @@ def get_generator(name: str) -> GeneratorFn:
         raise KeyError(f"Unknown generator '{name}'. Registered: {sorted(REGISTRY.keys())}")
     return REGISTRY[name]
 
+def _bounded_uniform_float(
+    params: Dict[str, Any],
+    ctx: GenContext,
+    *,
+    generator_name: str,
+    default_min: float,
+    default_max: float,
+    default_decimals: int,
+) -> float:
+    min_v = float(params.get("min", default_min))
+    max_v = float(params.get("max", default_max))
+    decimals = int(params.get("decimals", default_decimals))
+    if max_v < min_v:
+        raise ValueError(
+            f"{generator_name} generator: params.max ({max_v}) is less than params.min ({min_v}). "
+            f"Fix: set params.max >= params.min."
+        )
+    if decimals < 0:
+        raise ValueError(
+            f"{generator_name} generator: params.decimals must be >= 0, got {decimals}. "
+            "Fix: provide a non-negative integer for params.decimals."
+        )
+    return round(ctx.rng.uniform(min_v, max_v), decimals)
+
 
 ##----------------DATA TYPES----------------##
     ##---------------- LOCATIONS----------------##
 @register("latitude")
 def gen_latitude(params: Dict[str, Any], ctx: GenContext) -> float:
-    # default: global land-ish range is complex; keep simple but realistic
-    min_v = float(params.get("min", -90.0))
-    max_v = float(params.get("max", 90.0))
-    decimals = int(params.get("decimals", 6))
-    return round(ctx.rng.uniform(min_v, max_v), decimals)
+    # default: global land-ish range is complex; keep simple but realistic.
+    return _bounded_uniform_float(
+        params,
+        ctx,
+        generator_name="latitude",
+        default_min=-90.0,
+        default_max=90.0,
+        default_decimals=6,
+    )
 
 @register("longitude")
 def gen_longitude(params: Dict[str, Any], ctx: GenContext) -> float:
-    min_v = float(params.get("min", -180.0))
-    max_v = float(params.get("max", 180.0))
-    decimals = int(params.get("decimals", 6))
-    return round(ctx.rng.uniform(min_v, max_v), decimals)
+    return _bounded_uniform_float(
+        params,
+        ctx,
+        generator_name="longitude",
+        default_min=-180.0,
+        default_max=180.0,
+        default_decimals=6,
+    )
+
+
+@register("money")
+def gen_money(params: Dict[str, Any], ctx: GenContext) -> float:
+    return _bounded_uniform_float(
+        params,
+        ctx,
+        generator_name="money",
+        default_min=0.0,
+        default_max=10000.0,
+        default_decimals=2,
+    )
+
+
+@register("percent")
+def gen_percent(params: Dict[str, Any], ctx: GenContext) -> float:
+    return _bounded_uniform_float(
+        params,
+        ctx,
+        generator_name="percent",
+        default_min=0.0,
+        default_max=100.0,
+        default_decimals=2,
+    )
 
 
     ##----------------DATETIME----------------##
@@ -139,10 +195,14 @@ def gen_uniform_int(params, ctx):
 
 @register("uniform_float")
 def gen_uniform_float(params, ctx):
-    mn = float(params.get("min", 0.0))
-    mx = float(params.get("max", 1.0))
-    decimals = int(params.get("decimals", 3))
-    return round(ctx.rng.uniform(mn, mx), decimals)
+    return _bounded_uniform_float(
+        params,
+        ctx,
+        generator_name="uniform_float",
+        default_min=0.0,
+        default_max=1.0,
+        default_decimals=3,
+    )
 
 
 
