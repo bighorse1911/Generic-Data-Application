@@ -1,6 +1,7 @@
 ﻿## Active Direction
 Direction 1 - Smarter Data
 Direction 2 - Modular GUI Adoption (incremental, low-risk)
+Direction3 - Refactor float → decimal; move semantic numeric types (lat/lon/money/percent) into generators.
 
 ## In Progress
 - CSV column sampling

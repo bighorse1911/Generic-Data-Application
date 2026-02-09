@@ -1,12 +1,18 @@
+"""Table helpers and a Treeview wrapper with predictable row handling."""
+
 from collections.abc import Sequence
 import tkinter as tk
 from tkinter import ttk
+
+__all__ = ["TableView", "estimate_column_widths", "normalize_rows"]
 
 
 def normalize_rows(
     rows: list[dict[str, object]] | list[list[object]] | list[tuple[object, ...]],
     columns: list[str] | None = None,
 ) -> tuple[list[str], list[list[object]]]:
+    """Normalize dict/sequence/scalar rows to a (columns, rows) table shape."""
+
     if not rows:
         return (columns or []), []
 
@@ -50,6 +56,8 @@ def estimate_column_widths(
     pad_px: int = 24,
     char_px: int = 7,
 ) -> dict[str, int]:
+    """Estimate column widths in pixels from headers and sample rows."""
+
     widths: dict[str, int] = {}
     for col_idx, col in enumerate(columns):
         longest = len(col)
@@ -86,6 +94,8 @@ class TableView(ttk.Frame):
         self._columns: list[str] = []
 
     def set_columns(self, columns: list[str]) -> None:
+        """Set/replace displayed columns and reset headings/initial widths."""
+
         self._columns = list(columns)
         self.tree["columns"] = tuple(self._columns)
         for col in self._columns:
@@ -93,6 +103,8 @@ class TableView(ttk.Frame):
             self.tree.column(col, width=120, anchor="w", stretch=True)
 
     def clear(self) -> None:
+        """Remove all rows from the Treeview."""
+
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -100,6 +112,8 @@ class TableView(ttk.Frame):
         self,
         rows: list[dict[str, object]] | list[list[object]] | list[tuple[object, ...]],
     ) -> None:
+        """Load rows, normalizing shapes and auto-sizing existing columns."""
+
         cols, normalized = normalize_rows(rows, self._columns or None)
         if not self._columns and cols:
             self.set_columns(cols)
@@ -112,6 +126,8 @@ class TableView(ttk.Frame):
             self.auto_size_columns(normalized)
 
     def auto_size_columns(self, normalized_rows: list[list[object]] | None = None) -> None:
+        """Auto-size columns based on current headers and optional row samples."""
+
         if not self._columns:
             return
 

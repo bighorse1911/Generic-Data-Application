@@ -1,5 +1,9 @@
+"""Scrollable container helpers for Tkinter screens."""
+
 import tkinter as tk
 from tkinter import ttk
+
+__all__ = ["ScrollFrame", "wheel_units_from_delta"]
 
 
 def wheel_units_from_delta(delta: int) -> int:
@@ -58,6 +62,8 @@ class ScrollFrame(ttk.Frame):
         self.bind_all("<Shift-Button-5>", self._on_linux_shift_wheel_down, add="+")
 
     def refresh_scrollregion(self) -> None:
+        """Refresh canvas scroll bounds to match current content geometry."""
+
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_content_configure(self, _event=None) -> None:

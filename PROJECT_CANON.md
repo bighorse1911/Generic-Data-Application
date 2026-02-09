@@ -39,6 +39,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 ## Data Generation
 - `ColumnSpec` drives generation
 - Generators selected by `dtype` / `generator_id`
+- Foundational dtypes: int, decimal, text, bool, date, datetime, bytes. All other semantics are generators. Refer to DATA_SEMANTICS.md for documentation. 
 - Supports:
   - CSV sampling
   - Distributions (uniform, normal, lognormal)

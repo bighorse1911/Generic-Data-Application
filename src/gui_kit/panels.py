@@ -1,5 +1,9 @@
+"""Panel and tab widgets used by modular gui_kit screens."""
+
 import tkinter as tk
 from tkinter import ttk
+
+__all__ = ["CollapsiblePanel", "Tabs"]
 
 
 class CollapsiblePanel(ttk.Frame):
@@ -37,18 +41,24 @@ class CollapsiblePanel(ttk.Frame):
         self._sync_toggle_text()
 
     def _on_header_click(self, _event=None) -> None:
+        """Toggle from header clicks for larger click-target behavior."""
+
         self.toggle()
 
     def _sync_toggle_text(self) -> None:
         self.toggle_button.configure(text="▸" if self._collapsed else "▾")
 
     def toggle(self) -> None:
+        """Toggle panel state between collapsed and expanded."""
+
         if self._collapsed:
             self.expand()
             return
         self.collapse()
 
     def collapse(self) -> None:
+        """Hide panel body if currently expanded."""
+
         if self._collapsed:
             return
         self._collapsed = True
@@ -56,6 +66,8 @@ class CollapsiblePanel(ttk.Frame):
         self._sync_toggle_text()
 
     def expand(self) -> None:
+        """Show panel body if currently collapsed."""
+
         if not self._collapsed:
             return
         self._collapsed = False

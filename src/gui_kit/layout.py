@@ -1,8 +1,12 @@
+"""Shared screen composition helpers for Tkinter views."""
+
 from collections.abc import Callable
 from queue import Empty, Queue
 from threading import Thread
 import tkinter as tk
 from tkinter import ttk
+
+__all__ = ["BaseScreen"]
 
 
 class BaseScreen(ttk.Frame):
@@ -34,6 +38,8 @@ class BaseScreen(ttk.Frame):
         return frame
 
     def build_status_bar(self, parent: ttk.Frame, *, include_progress: bool = True) -> ttk.Frame:
+        """Build a status line with optional indeterminate progress indicator."""
+
         frame = ttk.Frame(parent)
         frame.pack(fill="x", pady=(10, 0))
 
@@ -45,12 +51,18 @@ class BaseScreen(ttk.Frame):
         return frame
 
     def register_busy_indicator(self, progress: ttk.Progressbar) -> None:
+        """Register a progress widget controlled by set_busy()."""
+
         self._busy_widgets.append(progress)
 
     def set_status(self, text: str) -> None:
+        """Set user-visible status text."""
+
         self.status_var.set(text)
 
     def set_busy(self, busy: bool) -> None:
+        """Start/stop all registered busy indicators."""
+
         for progress in self._busy_widgets:
             if busy:
                 progress.start(10)
@@ -63,6 +75,8 @@ class BaseScreen(ttk.Frame):
         on_ok: Callable[[object], None],
         on_err: Callable[[Exception], None] | None = None,
     ) -> None:
+        """Run work in a background thread and marshal result callbacks to Tk."""
+
         queue: Queue[tuple[str, object]] = Queue(maxsize=1)
         Thread(target=self._run_job, args=(queue, fn), daemon=True).start()
         self.after(25, self._poll_job_queue, queue, on_ok, on_err)
