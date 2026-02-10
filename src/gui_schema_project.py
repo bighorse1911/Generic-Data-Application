@@ -24,7 +24,7 @@ from src.schema_project_io import save_project_to_json, load_project_from_json
 
 logger = logging.getLogger("gui_schema_project")
 
-DTYPES = ["int", "decimal", "float", "text", "bool", "date", "datetime"]
+DTYPES = ["int", "decimal", "text", "bool", "date", "datetime"]
 GENERATORS = ["", "sample_csv", "date", "timestamp_utc", "latitude", "longitude", "money", "percent"]
 EXPORT_OPTION_CSV = "CSV (folder)"
 EXPORT_OPTION_SQLITE = "SQLite (database)"
@@ -1019,6 +1019,19 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 if c.primary_key and c.dtype != "int":
                     issues.append(ValidationIssue("warn", "column", t.table_name, c.name, "Primary key is not int (recommended int)."))
 
+            # Direction 3 compatibility warning: float is still supported but deprecated for new authoring.
+            for c in t.columns:
+                if c.dtype == "float":
+                    issues.append(
+                        ValidationIssue(
+                            "warn",
+                            "column",
+                            t.table_name,
+                            c.name,
+                            "Column uses legacy dtype 'float'. Fix: prefer dtype='decimal' for new columns.",
+                        )
+                    )
+
         # FK checks
         for fk in project.foreign_keys:
             # parent must exist
@@ -1219,6 +1232,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
             name = self.col_name_var.get().strip()
             dtype = self.col_dtype_var.get().strip()
+
+            if dtype == "float":
+                raise ValueError(
+                    "Add column / Type: dtype 'float' is deprecated for new GUI columns. "
+                    "Fix: choose dtype='decimal' for new columns; keep legacy float only in loaded JSON."
+                )
+            if dtype not in DTYPES:
+                allowed = ", ".join(DTYPES)
+                raise ValueError(
+                    f"Add column / Type: unsupported dtype '{dtype}'. "
+                    f"Fix: choose one of: {allowed}."
+                )
 
             gen_name = self.col_generator_var.get().strip() or None
 

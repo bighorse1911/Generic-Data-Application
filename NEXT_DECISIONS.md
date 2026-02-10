@@ -10,14 +10,15 @@ Direction 3 - Refactor float -> decimal; move semantic numeric types (lat/lon/mo
 - Reusable `gui_kit` layer for screen composition
 - Kit-based Schema Project preview screen (additive navigation path from Home)
 - DATA_SEMANTICS canonical spec adopted with migration notes for float compatibility
-- Direction 3 phase slice completed: first-class `decimal` in validation/generation/GUI/SQL IO with legacy `float` compatibility
-- Semantic numeric generators expanded (`money`, `percent`) alongside `latitude`/`longitude`
+- GUI_WIREFRAME_SCHEMA canonical spec adopted for library-agnostic GUI design decisions and change tracking
+- Direction 3 completed:
+- first-class `decimal` in validation/generation/GUI/SQL IO with legacy `float` compatibility,
+- semantic numeric generators expanded (`money`, `percent`) alongside `latitude`/`longitude`,
+- default fixture/template schemas migrated from `float` to `decimal`,
+- GUI now deprecates new `float` authoring while preserving legacy JSON load/generate/export compatibility.
 
 ## Next Candidates
 - Align validator/runtime error wording to DATA_SEMANTICS actionable format (table, column, issue, fix hint)
-- Direction 3 follow-on phases:
-- Phase 3: migrate default fixtures/templates from `float` to `decimal`
-- Phase 4: deprecate `float` authoring in GUI while preserving JSON load compatibility
 - Migrate additional screens to `gui_kit` components in small slices
 - Standardize all form-heavy panels on `FormBuilder`
 - Standardize all Treeview panels on `TableView`

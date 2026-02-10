@@ -2,6 +2,7 @@ import os
 import tempfile
 import tkinter as tk
 import unittest
+from unittest import mock
 
 from src.config import AppConfig
 from src.generator_project import generate_project_rows
@@ -263,6 +264,7 @@ class TestInvariants(unittest.TestCase):
 
     def test_direction3_gui_lists_decimal_and_semantic_numeric_generators(self):
         self.assertIn("decimal", DTYPES)
+        self.assertNotIn("float", DTYPES)
         self.assertIn("money", GENERATORS)
         self.assertIn("percent", GENERATORS)
 
@@ -295,6 +297,43 @@ class TestInvariants(unittest.TestCase):
             schema_screen.export_option_var.set(EXPORT_OPTION_SQLITE)
             schema_screen._on_export_data()
             self.assertEqual(called, ["csv", "sqlite"])
+
+            schema_screen._add_table()
+            before_columns = len(schema_screen.project.tables[0].columns)
+            schema_screen.col_name_var.set("legacy_score")
+            schema_screen.col_dtype_var.set("float")
+            with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
+                schema_screen._add_column()
+                showerror.assert_called_once()
+                title, message = showerror.call_args.args
+            self.assertEqual(title, "Add column failed")
+            self.assertIn("Add column / Type", message)
+            self.assertIn("dtype 'float' is deprecated", message)
+            self.assertIn("dtype='decimal'", message)
+            self.assertEqual(len(schema_screen.project.tables[0].columns), before_columns)
+
+            float_warning_project = SchemaProject(
+                name="float_warning",
+                seed=2,
+                tables=[
+                    TableSpec(
+                        table_name="legacy",
+                        row_count=1,
+                        columns=[
+                            ColumnSpec("id", "int", nullable=False, primary_key=True),
+                            ColumnSpec("score", "float", nullable=False, min_value=0.0, max_value=1.0),
+                        ],
+                    )
+                ],
+                foreign_keys=[],
+            )
+            issues = schema_screen._validate_project_detailed(float_warning_project)
+            warning_messages = [i.message for i in issues if i.severity == "warn"]
+            self.assertTrue(
+                any("legacy dtype 'float'" in m and "prefer dtype='decimal'" in m for m in warning_messages),
+                "GUI validation should warn when legacy float dtype is used. "
+                "Fix: surface a warning with a decimal migration hint for float columns.",
+            )
 
             with self.assertRaisesRegex(KeyError, "Unknown screen 'missing'"):
                 app.show_screen("missing")

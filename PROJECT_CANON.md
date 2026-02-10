@@ -16,6 +16,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Pure-Python backend (no external deps)
 - Schema-first design
 - Generator registry pattern
+- GUI wireframe/design decision canon: `GUI_WIREFRAME_SCHEMA.md` (library-agnostic contract)
 - Reusable GUI kit layer (`src/gui_kit`) for modular screens:
   - `BaseScreen`: common screen behavior (`set_status`, `set_busy`, `safe_threaded_job`)
   - `ScrollFrame`: two-axis scrolling + mousewheel support
@@ -35,13 +36,16 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `build_generate_panel()`
   - `build_status_bar()`
 - Kit-based preview screen is additive and reachable from Home; legacy screen remains intact.
+- GUI design changes must be recorded in `GUI_WIREFRAME_SCHEMA.md` and `docs/decisions/`.
 
 ## Data Generation
 - `ColumnSpec` drives generation
 - Generators selected by `dtype` / `generator_id`
 - Runtime dtypes today: int, decimal, float, text, bool, date, datetime.
+- GUI authoring dtypes today: int, decimal, text, bool, date, datetime (`float` is deprecated for new columns).
 - Direction 3 target dtypes: int, decimal, text, bool, date, datetime, bytes.
-- Backward compatibility policy: existing `float` schema JSON remains supported during migration to `decimal`.
+- Backward compatibility policy: existing `float` schema JSON remains load/generate/export compatible during migration to `decimal`.
+- Default fixture/template schemas are now authored with `decimal` for numeric non-integer fields.
 - All other semantics are generators. Refer to DATA_SEMANTICS.md for authoritative rules.
 - Supports:
   - CSV sampling

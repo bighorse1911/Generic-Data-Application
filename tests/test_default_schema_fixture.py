@@ -61,6 +61,20 @@ class TestDefaultSchemaFixture(unittest.TestCase):
     def test_fixture_generates_deterministically_and_covers_behaviors(self):
         project = self._load_fixture_project()
 
+        fixture_dtypes = {c.dtype for t in project.tables for c in t.columns}
+        self.assertIn(
+            "decimal",
+            fixture_dtypes,
+            "Fixture should exercise Direction 3 decimal dtype paths. "
+            "Fix: keep decimal columns in tests/fixtures/default_schema_project.json.",
+        )
+        self.assertNotIn(
+            "float",
+            fixture_dtypes,
+            "Fixture still uses legacy float dtype. "
+            "Fix: migrate fixture/template columns to decimal for Direction 3.",
+        )
+
         rows_a = generate_project_rows(project)
         rows_b = generate_project_rows(project)
 
