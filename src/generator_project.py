@@ -84,8 +84,14 @@ def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: 
     if getattr(col, "generator", None):
         fn = get_generator(col.generator)  # type: ignore[arg-type]
         params = col.params or {}
-
-        v = fn(params, ctx)
+        try:
+            v = fn(params, ctx)
+        except KeyError as exc:
+            missing = str(exc.args[0]) if exc.args else "unknown"
+            raise ValueError(
+                f"Table '{table_name}', column '{col.name}': generator '{col.generator}' is missing required params key '{missing}'. "
+                "Fix: set the required key in params before generation."
+            ) from exc
 
         # Optional numeric outliers (only when numeric)
         out_rate = float(params.get("outlier_rate", 0.0) or 0.0)
@@ -208,6 +214,179 @@ def _dependency_order(project: SchemaProject) -> list[str]:
     return out
 
 
+def _table_pk_col_name(table: TableSpec) -> str:
+    return [c.name for c in table.columns if c.primary_key][0]
+
+
+def _table_col_map(table: TableSpec) -> dict[str, ColumnSpec]:
+    return {c.name: c for c in table.columns}
+
+
+def _normalize_scd_mode(table: TableSpec) -> str | None:
+    if not isinstance(table.scd_mode, str):
+        return None
+    mode = table.scd_mode.strip().lower()
+    return mode or None
+
+
+def _business_key_is_already_unique(rows: list[dict[str, object]], key_cols: list[str]) -> bool:
+    if not rows:
+        return True
+    tuples = [tuple(r.get(k) for k in key_cols) for r in rows]
+    if any(any(v is None for v in t) for t in tuples):
+        return False
+    return len(set(tuples)) == len(tuples)
+
+
+def _business_key_value_for_row(col: ColumnSpec, *, table_name: str, row_num: int) -> object:
+    if col.dtype == "int":
+        return row_num
+    if col.dtype in {"float", "decimal"}:
+        return float(row_num)
+    if col.dtype == "text":
+        return f"{table_name}_{col.name}_{row_num}"
+    if col.dtype == "date":
+        return _iso_date(date(2020, 1, 1) + timedelta(days=row_num))
+    if col.dtype == "datetime":
+        return _iso_datetime(datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=row_num))
+    raise ValueError(
+        f"Table '{table_name}', column '{col.name}': unsupported business key dtype '{col.dtype}'. "
+        "Fix: use int/text/decimal/date/datetime business_key columns."
+    )
+
+
+def _enforce_business_key_uniqueness(table: TableSpec, rows: list[dict[str, object]]) -> None:
+    key_cols = list(table.business_key or [])
+    if not key_cols or not rows:
+        return
+    if _business_key_is_already_unique(rows, key_cols):
+        return
+
+    col_map = _table_col_map(table)
+    for row_num, row in enumerate(rows, start=1):
+        for key_col in key_cols:
+            row[key_col] = _business_key_value_for_row(
+                col_map[key_col],
+                table_name=table.table_name,
+                row_num=row_num,
+            )
+
+
+def _mutate_scd_tracked_value(
+    col: ColumnSpec,
+    value: object,
+    *,
+    version_idx: int,
+    rng: random.Random,
+) -> object:
+    if col.dtype == "int":
+        base = int(value) if isinstance(value, int) else 0
+        return base + version_idx
+    if col.dtype in {"float", "decimal"}:
+        base = float(value) if isinstance(value, (int, float)) else 0.0
+        return round(base + (0.1 * version_idx), 6)
+    if col.dtype == "text":
+        base = str(value) if value is not None else "value"
+        return f"{base}_v{version_idx}"
+    if col.dtype == "bool":
+        if value in {0, False}:
+            return 1
+        return 0
+    if col.dtype == "date":
+        try:
+            d = date.fromisoformat(str(value))
+        except Exception:
+            d = date(2020, 1, 1)
+        return _iso_date(d + timedelta(days=version_idx))
+    if col.dtype == "datetime":
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            dt = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        return _iso_datetime(dt + timedelta(hours=version_idx))
+    # Fallback for unsupported/rare types under tracking.
+    return value
+
+
+def _apply_scd2_history(table: TableSpec, rows: list[dict[str, object]], rng: random.Random) -> list[dict[str, object]]:
+    if not rows:
+        return rows
+
+    if not table.scd_active_from_column or not table.scd_active_to_column:
+        raise ValueError(
+            f"Table '{table.table_name}': scd2 generation requires scd_active_from_column and scd_active_to_column. "
+            "Fix: set both active period columns in table config."
+        )
+
+    col_map = _table_col_map(table)
+    pk_col = _table_pk_col_name(table)
+    tracked_cols = list(table.scd_tracked_columns or [])
+    start_col = table.scd_active_from_column
+    end_col = table.scd_active_to_column
+    active_dtype = col_map[start_col].dtype
+
+    expanded: list[dict[str, object]] = []
+
+    for row_idx, base_row in enumerate(rows, start=1):
+        # Deterministic phase-1 behavior: every even business key gets a second version.
+        version_count = 2 if (row_idx % 2 == 0) else 1
+        base_offset_days = row_idx * 90
+
+        for version_idx in range(version_count):
+            out_row = dict(base_row)
+            if version_idx > 0:
+                for tracked_col in tracked_cols:
+                    out_row[tracked_col] = _mutate_scd_tracked_value(
+                        col_map[tracked_col],
+                        out_row.get(tracked_col),
+                        version_idx=version_idx,
+                        rng=rng,
+                    )
+
+            if active_dtype == "date":
+                period_start = date(2020, 1, 1) + timedelta(days=base_offset_days + (version_idx * 30))
+                if version_idx < version_count - 1:
+                    next_start = date(2020, 1, 1) + timedelta(days=base_offset_days + ((version_idx + 1) * 30))
+                    period_end = next_start - timedelta(days=1)
+                    out_row[end_col] = _iso_date(period_end)
+                else:
+                    out_row[end_col] = "9999-12-31"
+                out_row[start_col] = _iso_date(period_start)
+            else:
+                period_start_dt = datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(
+                    days=base_offset_days + (version_idx * 30)
+                )
+                if version_idx < version_count - 1:
+                    next_start_dt = datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(
+                        days=base_offset_days + ((version_idx + 1) * 30)
+                    )
+                    period_end_dt = next_start_dt - timedelta(seconds=1)
+                    out_row[end_col] = _iso_datetime(period_end_dt)
+                else:
+                    out_row[end_col] = "9999-12-31T23:59:59Z"
+                out_row[start_col] = _iso_datetime(period_start_dt)
+
+            expanded.append(out_row)
+
+    for i, row in enumerate(expanded, start=1):
+        row[pk_col] = i
+
+    return expanded
+
+
+def _apply_business_key_and_scd(table: TableSpec, rows: list[dict[str, object]], rng: random.Random) -> list[dict[str, object]]:
+    if not rows:
+        return rows
+
+    _enforce_business_key_uniqueness(table, rows)
+    scd_mode = _normalize_scd_mode(table)
+    if scd_mode == "scd2":
+        return _apply_scd2_history(table, rows, rng)
+    return rows
+
+
 def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, object]]]:
     """
     Generates rows for all tables with valid PK/FK according to the project's foreign key rules.
@@ -227,10 +406,6 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
     results: dict[str, list[dict[str, object]]] = {}
     pk_values: dict[str, list[int]] = {}  # table -> list of PK values
-
-    # Helper: find PK column name for a table
-    def pk_col_name(table: TableSpec) -> str:
-        return [c.name for c in table.columns if c.primary_key][0]
 
     # Helper: assign a FK column across rows while enforcing per-parent min/max constraints
     def _assign_fk_column(
@@ -298,7 +473,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         t = table_map[table_name]
         rng = random.Random(_stable_subseed(project.seed, f"table:{table_name}"))
 
-        pk_col = pk_col_name(t)
+        pk_col = _table_pk_col_name(t)
         incoming_fks = fks_by_child.get(table_name, [])
         ordered_cols = _order_columns_by_dependencies(t.columns)
 
@@ -316,7 +491,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
                 rows.append(row)
 
-            results[table_name] = rows
+            rows = _apply_business_key_and_scd(t, rows, rng)
 
             # Defensive: ensure PK exists
             for r in rows:
@@ -330,8 +505,9 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 if r.get(pk_col) is None:
                     r[pk_col] = i
 
+            results[table_name] = rows
             pk_values[table_name] = [int(r.get(pk_col)) for r in rows]
-            logger.info("Generated root table '%s' rows=%d", table_name, n)
+            logger.info("Generated root table '%s' rows=%d", table_name, len(rows))
             continue
 
         # -----------------------------------------
@@ -358,6 +534,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                     rows.append(row)
                     next_pk += 1
 
+            rows = _apply_business_key_and_scd(t, rows, rng)
             results[table_name] = rows
             pk_values[table_name] = [int(r[pk_col]) for r in rows]
             logger.info(
@@ -436,6 +613,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 parent_table=fk.parent_table,
             )
 
+        rows = _apply_business_key_and_scd(t, rows, rng)
         results[table_name] = rows
         pk_values[table_name] = [int(r[pk_col]) for r in rows]
 

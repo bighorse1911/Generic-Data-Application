@@ -26,6 +26,7 @@ logger = logging.getLogger("gui_schema_project")
 
 DTYPES = ["int", "decimal", "text", "bool", "date", "datetime"]
 GENERATORS = ["", "sample_csv", "date", "timestamp_utc", "latitude", "longitude", "money", "percent"]
+SCD_MODES = ["", "scd1", "scd2"]
 EXPORT_OPTION_CSV = "CSV (folder)"
 EXPORT_OPTION_SQLITE = "SQLite (database)"
 EXPORT_OPTIONS = [EXPORT_OPTION_CSV, EXPORT_OPTION_SQLITE]
@@ -120,19 +121,21 @@ class ScrollableFrame(ttk.Frame):
 
     def _on_mousewheel(self, event) -> None:
         # Vertical scroll
-        if event.delta:
+        if event.delta and self.canvas.winfo_exists():
             self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _on_shift_mousewheel(self, event) -> None:
         # Horizontal scroll (hold Shift)
-        if event.delta:
+        if event.delta and self.canvas.winfo_exists():
             self.canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _on_linux_wheel_up(self, _event) -> None:
-        self.canvas.yview_scroll(-1, "units")
+        if self.canvas.winfo_exists():
+            self.canvas.yview_scroll(-1, "units")
 
     def _on_linux_wheel_down(self, _event) -> None:
-        self.canvas.yview_scroll(1, "units")
+        if self.canvas.winfo_exists():
+            self.canvas.yview_scroll(1, "units")
     # Zooming methods
     def zoom_in(self) -> None:
         self._apply_zoom(self.zoom + self.zoom_step)
@@ -143,6 +146,8 @@ class ScrollableFrame(ttk.Frame):
     def reset_zoom(self) -> None:
         self._apply_zoom(1.0)
     def _apply_zoom(self, new_zoom: float) -> None:
+        if not self.canvas.winfo_exists():
+            return
         new_zoom = max(self.min_zoom, min(self.max_zoom, new_zoom))
         if abs(new_zoom - self.zoom) < 0.001:
             return
@@ -407,6 +412,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # Table editor vars
         self.table_name_var = tk.StringVar(value="")
         self.row_count_var = tk.StringVar(value="100")
+        self.table_business_key_var = tk.StringVar(value="")
+        self.table_scd_mode_var = tk.StringVar(value="")
+        self.table_scd_tracked_columns_var = tk.StringVar(value="")
+        self.table_scd_active_from_var = tk.StringVar(value="")
+        self.table_scd_active_to_var = tk.StringVar(value="")
 
         # Column form vars
         self.col_name_var = tk.StringVar(value="")
@@ -570,8 +580,34 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.row_count_entry = ttk.Entry(props, textvariable=self.row_count_var)
         self.row_count_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
 
+        ttk.Label(props, text="Business key columns (comma):").grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        self.table_business_key_entry = ttk.Entry(props, textvariable=self.table_business_key_var)
+        self.table_business_key_entry.grid(row=2, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(props, text="SCD mode:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        self.table_scd_mode_combo = ttk.Combobox(
+            props,
+            values=SCD_MODES,
+            textvariable=self.table_scd_mode_var,
+            state="readonly",
+            width=12,
+        )
+        self.table_scd_mode_combo.grid(row=3, column=1, sticky="w", padx=6, pady=6)
+
+        ttk.Label(props, text="SCD tracked columns (comma):").grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        self.table_scd_tracked_entry = ttk.Entry(props, textvariable=self.table_scd_tracked_columns_var)
+        self.table_scd_tracked_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(props, text="SCD active from column:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        self.table_scd_active_from_entry = ttk.Entry(props, textvariable=self.table_scd_active_from_var)
+        self.table_scd_active_from_entry.grid(row=5, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(props, text="SCD active to column:").grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        self.table_scd_active_to_entry = ttk.Entry(props, textvariable=self.table_scd_active_to_var)
+        self.table_scd_active_to_entry.grid(row=6, column=1, sticky="ew", padx=6, pady=6)
+
         self.apply_table_btn = ttk.Button(props, text="Apply table changes", command=self._apply_table_changes)
-        self.apply_table_btn.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
+        self.apply_table_btn.grid(row=7, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
 
         # Column editor (grid inside col)
         col = ttk.LabelFrame(right, text="Add column", padding=10)
@@ -810,6 +846,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         self.table_name_entry.configure(state=state)
         self.row_count_entry.configure(state=state)
+        self.table_business_key_entry.configure(state=state)
+        self.table_scd_mode_combo.configure(state=("readonly" if enabled else tk.DISABLED))
+        self.table_scd_tracked_entry.configure(state=state)
+        self.table_scd_active_from_entry.configure(state=state)
+        self.table_scd_active_to_entry.configure(state=state)
         self.apply_table_btn.configure(state=state)
 
         self.col_name_entry.configure(state=state)
@@ -854,6 +895,46 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         if not sel:
             return None
         return int(self.columns_tree.item(sel[0], "tags")[0])
+
+    def _parse_column_name_csv(
+        self,
+        raw_value: str,
+        *,
+        location: str,
+        field_name: str,
+    ) -> list[str] | None:
+        value = raw_value.strip()
+        if value == "":
+            return None
+        names = [part.strip() for part in value.split(",")]
+        if any(name == "" for name in names):
+            raise ValueError(
+                f"{location}: {field_name} contains an empty column name. "
+                "Fix: remove extra commas and provide comma-separated column names."
+            )
+        if len(set(names)) != len(names):
+            raise ValueError(
+                f"{location}: {field_name} contains duplicate column names. "
+                "Fix: list each column only once."
+            )
+        return names
+
+    def _parse_optional_column_name(
+        self,
+        raw_value: str,
+        *,
+        location: str,
+        field_name: str,
+    ) -> str | None:
+        value = raw_value.strip()
+        if value == "":
+            return None
+        if "," in value:
+            raise ValueError(
+                f"{location}: {field_name} must contain exactly one column name. "
+                f"Fix: provide one name or leave {field_name} empty."
+            )
+        return value
 
     def _apply_project_vars_to_model(self) -> None:
         name = self.project_name_var.get().strip()
@@ -1159,6 +1240,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         t = self.project.tables[self.selected_table_index]
         self.table_name_var.set(t.table_name)
         self.row_count_var.set(str(t.row_count))
+        self.table_business_key_var.set(", ".join(t.business_key) if t.business_key else "")
+        self.table_scd_mode_var.set((t.scd_mode or "").strip().lower())
+        self.table_scd_tracked_columns_var.set(", ".join(t.scd_tracked_columns) if t.scd_tracked_columns else "")
+        self.table_scd_active_from_var.set(t.scd_active_from_column or "")
+        self.table_scd_active_to_var.set(t.scd_active_to_column or "")
         self._set_table_editor_enabled(True)
         self._refresh_columns_tree()
 
@@ -1176,6 +1262,34 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 raise ValueError("Table name cannot be empty.")
 
             row_count = int(self.row_count_var.get().strip())
+            location = f"Table '{new_name}' / Table editor"
+            business_key = self._parse_column_name_csv(
+                self.table_business_key_var.get(),
+                location=location,
+                field_name="business_key",
+            )
+            scd_mode_raw = self.table_scd_mode_var.get().strip().lower()
+            if scd_mode_raw not in {"", "scd1", "scd2"}:
+                raise ValueError(
+                    f"{location}: unsupported scd_mode '{self.table_scd_mode_var.get()}'. "
+                    "Fix: choose 'scd1', 'scd2', or leave it empty."
+                )
+            scd_mode = scd_mode_raw or None
+            scd_tracked_columns = self._parse_column_name_csv(
+                self.table_scd_tracked_columns_var.get(),
+                location=location,
+                field_name="scd_tracked_columns",
+            )
+            scd_active_from_column = self._parse_optional_column_name(
+                self.table_scd_active_from_var.get(),
+                location=location,
+                field_name="scd_active_from_column",
+            )
+            scd_active_to_column = self._parse_optional_column_name(
+                self.table_scd_active_to_var.get(),
+                location=location,
+                field_name="scd_active_to_column",
+            )
             
             ## We now allow for auto-sizing of children
             # if row_count <= 0:
@@ -1196,7 +1310,16 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 )
 
             tables = list(self.project.tables)
-            tables[idx] = TableSpec(table_name=new_name, columns=old.columns, row_count=row_count)
+            tables[idx] = TableSpec(
+                table_name=new_name,
+                columns=old.columns,
+                row_count=row_count,
+                business_key=business_key,
+                scd_mode=scd_mode,
+                scd_tracked_columns=scd_tracked_columns,
+                scd_active_from_column=scd_active_from_column,
+                scd_active_to_column=scd_active_to_column,
+            )
 
             new_project = SchemaProject(
                 name=self.project.name,
@@ -1309,7 +1432,16 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             cols.append(new_col)
 
             tables = list(self.project.tables)
-            tables[idx] = TableSpec(table_name=t.table_name, columns=cols, row_count=t.row_count)
+            tables[idx] = TableSpec(
+                table_name=t.table_name,
+                columns=cols,
+                row_count=t.row_count,
+                business_key=t.business_key,
+                scd_mode=t.scd_mode,
+                scd_tracked_columns=t.scd_tracked_columns,
+                scd_active_from_column=t.scd_active_from_column,
+                scd_active_to_column=t.scd_active_to_column,
+            )
 
             new_project = SchemaProject(
                 name=self.project.name,
@@ -1361,7 +1493,16 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             cols.pop(col_idx)
 
             tables = list(self.project.tables)
-            tables[t_idx] = TableSpec(table_name=t.table_name, columns=cols, row_count=t.row_count)
+            tables[t_idx] = TableSpec(
+                table_name=t.table_name,
+                columns=cols,
+                row_count=t.row_count,
+                business_key=t.business_key,
+                scd_mode=t.scd_mode,
+                scd_tracked_columns=t.scd_tracked_columns,
+                scd_active_from_column=t.scd_active_from_column,
+                scd_active_to_column=t.scd_active_to_column,
+            )
 
             new_project = SchemaProject(
                 name=self.project.name,
@@ -1398,7 +1539,16 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             cols[col_idx], cols[new_idx] = cols[new_idx], cols[col_idx]
 
             tables = list(self.project.tables)
-            tables[t_idx] = TableSpec(table_name=t.table_name, columns=cols, row_count=t.row_count)
+            tables[t_idx] = TableSpec(
+                table_name=t.table_name,
+                columns=cols,
+                row_count=t.row_count,
+                business_key=t.business_key,
+                scd_mode=t.scd_mode,
+                scd_tracked_columns=t.scd_tracked_columns,
+                scd_active_from_column=t.scd_active_from_column,
+                scd_active_to_column=t.scd_active_to_column,
+            )
 
             new_project = SchemaProject(
                 name=self.project.name,
@@ -1754,7 +1904,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             rc = t.row_count
             if t.table_name not in child_tables:
                 rc = n
-            new_tables.append(TableSpec(table_name=t.table_name, row_count=rc, columns=t.columns))
+            new_tables.append(
+                TableSpec(
+                    table_name=t.table_name,
+                    row_count=rc,
+                    columns=t.columns,
+                    business_key=t.business_key,
+                    scd_mode=t.scd_mode,
+                    scd_tracked_columns=t.scd_tracked_columns,
+                    scd_active_from_column=t.scd_active_from_column,
+                    scd_active_to_column=t.scd_active_to_column,
+                )
+            )
 
         return SchemaProject(
             name=self.project.name,

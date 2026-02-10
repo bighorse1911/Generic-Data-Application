@@ -18,6 +18,8 @@ ad-hoc assumptions.
 
 - Current runtime GUI: Tkinter (`src/gui_home.py`, `src/gui_schema_project.py`)
 - Incremental modular path: `src/gui_schema_project_kit.py` using `src/gui_kit`
+- Direction 3 status: completed (`float` -> `decimal` migration and semantic numeric generator migration).
+- SCD1/SCD2 support is implemented end-to-end (generator + validator + JSON IO + GUI authoring controls in both schema designer screens).
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -85,16 +87,41 @@ All GUI decisions should be captured using the following schema concepts.
 - `ui_effects` (required): controls disabled/enabled, progress behavior
 - `exit_conditions` (required): completion/failure transitions
 
-## 3. Canonical Error Message Contract (GUI)
+## 3. Canonical Data Types and Validation Error Contract
 
-All GUI-surfaced validation errors should use this shape:
+### 3.1 Canonical GUI Data Types (Authoritative Dtype List)
+
+These dtypes are valid for new column creation in the GUI:
+- `int`: whole numbers (signed)
+- `decimal`: decimal numeric domain (non-integer, money, coordinates, rates)
+- `text`: arbitrary text (names, labels, emails, UUIDs, etc. via generators)
+- `bool`: boolean (true/false)
+- `date`: calendar date (YYYY-MM-DD)
+- `datetime`: timestamp with date+time (ISO 8601 string)
+
+Legacy compatibility:
+- `float`: accepted at JSON schema load for backward compatibility; maps to decimal semantics at runtime.
+  GUI validation **blocks** new columns with `dtype=float`; users must choose `decimal` instead.
+
+Roadmap:
+- `bytes`: binary payload (not yet implemented for GUI column creation; outside Direction 3 scope).
+
+### 3.2 Error Format Contract
+
+All GUI-surfaced validation errors must use this canonical shape:
 
 - `<Location>: <issue>. Fix: <hint>.`
+
+Where:
+- `<Location>`: scope (table name / column name / panel name / etc.)
+- `<issue>`: what is wrong
+- `<hint>`: actionable fix
 
 Examples:
 
 - `Add column / Type: unsupported dtype 'foo'. Fix: choose one of: int, decimal, text, bool, date, datetime.`
-- `Add column / Type: dtype 'float' is deprecated for new GUI columns. Fix: choose dtype='decimal' for new columns; keep legacy float only in loaded JSON.`
+- `Add column / Type: dtype 'float' is deprecated for new GUI columns. Fix: choose dtype='decimal' for new numeric columns; keep legacy float only in loaded JSON schemas.`
+- `Table 'orders', column 'amount': min_value cannot exceed max_value. Fix: set min_value <= max_value.`
 
 ## 4. Current Screen Inventory (Authoritative Baseline)
 
@@ -127,6 +154,9 @@ Examples:
 - validation gating for generation buttons
 - busy/progress during generation/export tasks
 - actionable error dialogs for invalid actions
+- SCD configuration flow with mode selection (`scd1` or `scd2`) and business-key linkage.
+- SCD1 controls: tracked slowly-changing column selection.
+- SCD2 controls: active period boundary columns (`from`/`to`, using `date` or `datetime`) plus tracked slowly-changing column selection.
 
 ### 4.3 `schema_project_kit` (modular preview path)
 

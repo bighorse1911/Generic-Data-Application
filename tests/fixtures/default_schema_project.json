@@ -4,42 +4,68 @@
   "tables": [
     {
       "table_name": "customers",
-      "row_count": 12,
       "columns": [
         {
           "name": "customer_id",
           "dtype": "int",
           "nullable": false,
-          "primary_key": true
+          "primary_key": true,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "age",
           "dtype": "int",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "uniform_int",
           "params": {
             "min": 18,
             "max": 75
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "salary",
           "dtype": "int",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "salary_from_age",
-          "depends_on": [
-            "age"
-          ],
           "params": {
             "age_col": "age",
             "min": 25000,
             "max": 200000
-          }
+          },
+          "depends_on": [
+            "age"
+          ]
         },
         {
           "name": "segment",
           "dtype": "text",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "choice_weighted",
           "params": {
             "choices": [
@@ -52,79 +78,137 @@
               0.5,
               0.3
             ]
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "home_city",
           "dtype": "text",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "sample_csv",
           "params": {
-            "path": "__CITY_COUNTRY_CSV__",
+            "path": "C:\\Users\\david\\OneDrive\\Documents\\Code Development\\Generic Data Application\\tests\\fixtures\\city_country_pool.csv",
             "column_index": 0
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "home_country",
           "dtype": "text",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "sample_csv",
           "params": {
-            "path": "__CITY_COUNTRY_CSV__",
+            "path": "C:\\Users\\david\\OneDrive\\Documents\\Code Development\\Generic Data Application\\tests\\fixtures\\city_country_pool.csv",
             "column_index": 1
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "signup_date",
           "dtype": "date",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "date",
           "params": {
             "start": "2023-01-01",
             "end": "2025-12-31"
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "signup_ts",
           "dtype": "datetime",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "timestamp_utc",
           "params": {
             "start": "2023-01-01T00:00:00Z",
             "end": "2025-12-31T23:59:59Z"
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "active",
           "dtype": "bool",
-          "nullable": false
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "latitude",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "latitude",
           "params": {
             "min": 37.0,
             "max": 38.0,
             "decimals": 4
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "longitude",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "longitude",
           "params": {
             "min": -123.0,
             "max": -121.0,
             "decimals": 4
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "score",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "normal",
           "params": {
             "mean": 70.0,
@@ -132,12 +216,19 @@
             "decimals": 2,
             "clamp_min": 0.0,
             "clamp_max": 100.0
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "lifetime_value",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "lognormal",
           "params": {
             "median": 1200.0,
@@ -145,18 +236,33 @@
             "decimals": 2,
             "clamp_min": 100.0,
             "clamp_max": 25000.0
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "note",
           "dtype": "text",
           "nullable": false,
-          "pattern": "^[a-z]{5,14}$"
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": "^[a-z]{5,14}$",
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "optional_tag",
           "dtype": "text",
           "nullable": true,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "choice_weighted",
           "params": {
             "choices": [
@@ -170,12 +276,19 @@
               1
             ],
             "null_rate": 0.25
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "outlier_metric",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "uniform_float",
           "params": {
             "min": 10.0,
@@ -185,101 +298,203 @@
             "outlier_scale": 10.0,
             "clamp_min": 0.0,
             "clamp_max": 100.0
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "fallback_int",
           "dtype": "int",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
           "min_value": 1,
-          "max_value": 5
+          "max_value": 5,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "fallback_float",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
           "min_value": 0.5,
-          "max_value": 2.5
+          "max_value": 2.5,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "fallback_date",
           "dtype": "date",
-          "nullable": false
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "fallback_datetime",
           "dtype": "datetime",
-          "nullable": false
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "status_choice",
           "dtype": "text",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
           "choices": [
             "new",
             "returning",
             "vip"
-          ]
+          ],
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         }
-      ]
+      ],
+      "row_count": 12,
+      "business_key": [
+        "customer_id"
+      ],
+      "scd_mode": "scd1",
+      "scd_tracked_columns": [
+        "segment"
+      ],
+      "scd_active_from_column": null,
+      "scd_active_to_column": null
     },
     {
       "table_name": "campaigns",
-      "row_count": 5,
       "columns": [
         {
           "name": "campaign_id",
           "dtype": "int",
           "nullable": false,
-          "primary_key": true
+          "primary_key": true,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "channel",
           "dtype": "text",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
           "choices": [
             "email",
             "sms",
             "push"
-          ]
+          ],
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "budget",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "uniform_float",
           "params": {
             "min": 1000.0,
             "max": 5000.0,
             "decimals": 2
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "started_on",
           "dtype": "date",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "date",
           "params": {
             "start": "2023-01-01",
             "end": "2024-12-31"
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "ended_on",
           "dtype": "date",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "date",
           "params": {
             "start": "2024-01-01",
             "end": "2025-12-31"
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "active",
           "dtype": "bool",
-          "nullable": false
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         }
-      ]
+      ],
+      "row_count": 5,
+      "business_key": null,
+      "scd_mode": null,
+      "scd_tracked_columns": null,
+      "scd_active_from_column": null,
+      "scd_active_to_column": null
     },
     {
       "table_name": "orders",
@@ -288,80 +503,163 @@
           "name": "order_id",
           "dtype": "int",
           "nullable": false,
-          "primary_key": true
+          "primary_key": true,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "customer_id",
           "dtype": "int",
-          "nullable": false
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "ordered_at",
           "dtype": "datetime",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "timestamp_utc",
           "params": {
             "start": "2023-01-01T00:00:00Z",
             "end": "2025-12-31T23:59:59Z"
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "order_amount",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "uniform_float",
           "params": {
             "min": 1.0,
             "max": 2000.0,
             "decimals": 2
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "order_status",
           "dtype": "text",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
           "choices": [
             "NEW",
             "PAID",
             "SHIPPED"
-          ]
+          ],
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         }
-      ]
+      ],
+      "row_count": 100,
+      "business_key": null,
+      "scd_mode": null,
+      "scd_tracked_columns": null,
+      "scd_active_from_column": null,
+      "scd_active_to_column": null
     },
     {
       "table_name": "events",
-      "row_count": 20,
       "columns": [
         {
           "name": "event_id",
           "dtype": "int",
           "nullable": false,
-          "primary_key": true
+          "primary_key": true,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "customer_id",
           "dtype": "int",
-          "nullable": false
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "campaign_id",
           "dtype": "int",
-          "nullable": false
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
         },
         {
           "name": "event_time",
           "dtype": "datetime",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "timestamp_utc",
           "params": {
             "start": "2024-01-01T00:00:00Z",
             "end": "2025-12-31T23:59:59Z"
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "event_type",
           "dtype": "text",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "choice_weighted",
           "params": {
             "choices": [
@@ -374,45 +672,73 @@
               0.2,
               0.1
             ]
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "event_amount",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "uniform_float",
           "params": {
             "min": 1.0,
             "max": 500.0,
             "decimals": 2
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "event_lat",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "latitude",
           "params": {
             "min": 30.0,
             "max": 50.0,
             "decimals": 4
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "event_lon",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "longitude",
           "params": {
             "min": -130.0,
             "max": -60.0,
             "decimals": 4
-          }
+          },
+          "depends_on": null
         },
         {
           "name": "quality_score",
           "dtype": "decimal",
           "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
           "generator": "normal",
           "params": {
             "mean": 0.6,
@@ -420,9 +746,130 @@
             "decimals": 3,
             "clamp_min": 0.0,
             "clamp_max": 1.0
-          }
+          },
+          "depends_on": null
         }
-      ]
+      ],
+      "row_count": 20,
+      "business_key": null,
+      "scd_mode": null,
+      "scd_tracked_columns": null,
+      "scd_active_from_column": null,
+      "scd_active_to_column": null
+    },
+    {
+      "table_name": "SCD_TEST",
+      "columns": [
+        {
+          "name": "new_table_id",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        },
+        {
+          "name": "PK",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true,
+          "unique": true,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        },
+        {
+          "name": "BK",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": 1000.0,
+          "max_value": 2000.0,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        },
+        {
+          "name": "Name",
+          "dtype": "text",
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        },
+        {
+          "name": "Org",
+          "dtype": "text",
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        },
+        {
+          "name": "EFFECTIVE_FROM",
+          "dtype": "date",
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        },
+        {
+          "name": "EFFECTIVE_TO",
+          "dtype": "date",
+          "nullable": false,
+          "primary_key": false,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        }
+      ],
+      "row_count": 100,
+      "business_key": [
+        "BK"
+      ],
+      "scd_mode": "scd2",
+      "scd_tracked_columns": [
+        "Name",
+        "Org"
+      ],
+      "scd_active_from_column": "EFFECTIVE_FROM",
+      "scd_active_to_column": "EFFECTIVE_TO"
     }
   ],
   "foreign_keys": [
@@ -451,5 +898,5 @@
       "max_children": 6
     }
   ],
-  "sql_ddl": "CREATE TABLE \"customers\" (\n  \"customer_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"age\" INTEGER NOT NULL,\n  \"salary\" INTEGER NOT NULL,\n  \"segment\" TEXT NOT NULL,\n  \"home_city\" TEXT NOT NULL,\n  \"home_country\" TEXT NOT NULL,\n  \"signup_date\" DATE NOT NULL,\n  \"signup_ts\" TIMESTAMP NOT NULL,\n  \"active\" BOOLEAN NOT NULL,\n  \"latitude\" DECIMAL NOT NULL,\n  \"longitude\" DECIMAL NOT NULL,\n  \"score\" DECIMAL NOT NULL,\n  \"lifetime_value\" DECIMAL NOT NULL,\n  \"note\" TEXT NOT NULL,\n  \"optional_tag\" TEXT,\n  \"outlier_metric\" DECIMAL NOT NULL,\n  \"fallback_int\" INTEGER NOT NULL,\n  \"fallback_float\" DECIMAL NOT NULL,\n  \"fallback_date\" DATE NOT NULL,\n  \"fallback_datetime\" TIMESTAMP NOT NULL,\n  \"status_choice\" TEXT NOT NULL\n);\n\nCREATE TABLE \"campaigns\" (\n  \"campaign_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"channel\" TEXT NOT NULL,\n  \"budget\" DECIMAL NOT NULL,\n  \"started_on\" DATE NOT NULL,\n  \"ended_on\" DATE NOT NULL,\n  \"active\" BOOLEAN NOT NULL\n);\n\nCREATE TABLE \"orders\" (\n  \"order_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"customer_id\" INTEGER NOT NULL,\n  \"ordered_at\" TIMESTAMP NOT NULL,\n  \"order_amount\" DECIMAL NOT NULL,\n  \"order_status\" TEXT NOT NULL,\n  FOREIGN KEY (\"customer_id\") REFERENCES \"customers\" (\"customer_id\")\n);\n\nCREATE TABLE \"events\" (\n  \"event_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"customer_id\" INTEGER NOT NULL,\n  \"campaign_id\" INTEGER NOT NULL,\n  \"event_time\" TIMESTAMP NOT NULL,\n  \"event_type\" TEXT NOT NULL,\n  \"event_amount\" DECIMAL NOT NULL,\n  \"event_lat\" DECIMAL NOT NULL,\n  \"event_lon\" DECIMAL NOT NULL,\n  \"quality_score\" DECIMAL NOT NULL,\n  FOREIGN KEY (\"customer_id\") REFERENCES \"customers\" (\"customer_id\"),\n  FOREIGN KEY (\"campaign_id\") REFERENCES \"campaigns\" (\"campaign_id\")\n);"
+  "sql_ddl": "CREATE TABLE \"customers\" (\n  \"customer_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"age\" INTEGER NOT NULL,\n  \"salary\" INTEGER NOT NULL,\n  \"segment\" TEXT NOT NULL,\n  \"home_city\" TEXT NOT NULL,\n  \"home_country\" TEXT NOT NULL,\n  \"signup_date\" DATE NOT NULL,\n  \"signup_ts\" TIMESTAMP NOT NULL,\n  \"active\" BOOLEAN NOT NULL,\n  \"latitude\" DECIMAL NOT NULL,\n  \"longitude\" DECIMAL NOT NULL,\n  \"score\" DECIMAL NOT NULL,\n  \"lifetime_value\" DECIMAL NOT NULL,\n  \"note\" TEXT NOT NULL,\n  \"optional_tag\" TEXT,\n  \"outlier_metric\" DECIMAL NOT NULL,\n  \"fallback_int\" INTEGER NOT NULL,\n  \"fallback_float\" DECIMAL NOT NULL,\n  \"fallback_date\" DATE NOT NULL,\n  \"fallback_datetime\" TIMESTAMP NOT NULL,\n  \"status_choice\" TEXT NOT NULL\n);\n\nCREATE TABLE \"campaigns\" (\n  \"campaign_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"channel\" TEXT NOT NULL,\n  \"budget\" DECIMAL NOT NULL,\n  \"started_on\" DATE NOT NULL,\n  \"ended_on\" DATE NOT NULL,\n  \"active\" BOOLEAN NOT NULL\n);\n\nCREATE TABLE \"orders\" (\n  \"order_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"customer_id\" INTEGER NOT NULL,\n  \"ordered_at\" TIMESTAMP NOT NULL,\n  \"order_amount\" DECIMAL NOT NULL,\n  \"order_status\" TEXT NOT NULL,\n  FOREIGN KEY (\"customer_id\") REFERENCES \"customers\" (\"customer_id\")\n);\n\nCREATE TABLE \"events\" (\n  \"event_id\" INTEGER NOT NULL PRIMARY KEY,\n  \"customer_id\" INTEGER NOT NULL,\n  \"campaign_id\" INTEGER NOT NULL,\n  \"event_time\" TIMESTAMP NOT NULL,\n  \"event_type\" TEXT NOT NULL,\n  \"event_amount\" DECIMAL NOT NULL,\n  \"event_lat\" DECIMAL NOT NULL,\n  \"event_lon\" DECIMAL NOT NULL,\n  \"quality_score\" DECIMAL NOT NULL,\n  FOREIGN KEY (\"customer_id\") REFERENCES \"customers\" (\"customer_id\"),\n  FOREIGN KEY (\"campaign_id\") REFERENCES \"campaigns\" (\"campaign_id\")\n);\n\nCREATE TABLE \"SCD_TEST\" (\n  \"new_table_id\" INTEGER NOT NULL,\n  \"PK\" INTEGER NOT NULL PRIMARY KEY UNIQUE,\n  \"BK\" INTEGER NOT NULL,\n  \"Name\" TEXT NOT NULL,\n  \"Org\" TEXT NOT NULL,\n  \"EFFECTIVE_FROM\" DATE NOT NULL,\n  \"EFFECTIVE_TO\" DATE NOT NULL\n);"
 }

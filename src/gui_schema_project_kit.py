@@ -10,6 +10,7 @@ from src.gui_schema_project import (
     DTYPES,
     EXPORT_OPTIONS,
     GENERATORS,
+    SCD_MODES,
     SchemaProjectDesignerScreen,
     ValidationHeatmap,
 )
@@ -146,6 +147,28 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         table_form = FormBuilder(table_form_frame)
         self.table_name_entry = table_form.add_entry("Table name", self.table_name_var)
         self.row_count_entry = table_form.add_entry("Root row count", self.row_count_var, width=12)
+        self.table_business_key_entry = table_form.add_entry(
+            "Business key columns (comma)",
+            self.table_business_key_var,
+        )
+        self.table_scd_mode_combo = table_form.add_combo(
+            "SCD mode",
+            self.table_scd_mode_var,
+            SCD_MODES,
+            readonly=True,
+        )
+        self.table_scd_tracked_entry = table_form.add_entry(
+            "SCD tracked columns (comma)",
+            self.table_scd_tracked_columns_var,
+        )
+        self.table_scd_active_from_entry = table_form.add_entry(
+            "SCD active from column",
+            self.table_scd_active_from_var,
+        )
+        self.table_scd_active_to_entry = table_form.add_entry(
+            "SCD active to column",
+            self.table_scd_active_to_var,
+        )
 
         self.apply_table_btn = ttk.Button(right_box, text="Apply table changes", command=self._apply_table_changes)
         self.apply_table_btn.grid(row=1, column=0, sticky="ew", pady=(8, 0))

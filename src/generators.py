@@ -164,8 +164,28 @@ def gen_timestamp_utc(params: Dict[str, Any], ctx: GenContext) -> str:
     ##----------------CSV SAMPLING----------------##
 @register("sample_csv")
 def gen_sample_csv(params: Dict[str, Any], ctx: GenContext) -> str:
-    path = str(params["path"])
-    col = int(params.get("column_index", 0))
+    path_value = params.get("path")
+    if not isinstance(path_value, str) or path_value.strip() == "":
+        raise ValueError(
+            f"Table '{ctx.table}': generator 'sample_csv' requires params.path. "
+            "Fix: set params.path to a CSV file path."
+        )
+    path = path_value.strip()
+
+    col_value = params.get("column_index", 0)
+    try:
+        col = int(col_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Table '{ctx.table}': generator 'sample_csv' params.column_index must be an integer. "
+            "Fix: set params.column_index to 0 or greater."
+        ) from exc
+    if col < 0:
+        raise ValueError(
+            f"Table '{ctx.table}': generator 'sample_csv' params.column_index cannot be negative. "
+            "Fix: set params.column_index to 0 or greater."
+        )
+
     values = load_csv_column(path, col, skip_header=True)
     return ctx.rng.choice(values)
 

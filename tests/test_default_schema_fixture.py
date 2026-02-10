@@ -108,7 +108,12 @@ class TestDefaultSchemaFixture(unittest.TestCase):
             "Fix: ensure generated rows are serialized to CSV rows.",
         )
 
-        self.assertEqual(set(rows_a.keys()), {"customers", "campaigns", "orders", "events"})
+        expected_core_tables = {"customers", "campaigns", "orders", "events"}
+        self.assertTrue(
+            expected_core_tables.issubset(set(rows_a.keys())),
+            "Fixture is missing one or more core tables. "
+            "Fix: keep customers/campaigns/orders/events in tests/fixtures/default_schema_project.json.",
+        )
         self.assertEqual(len(rows_a["customers"]), 12)
         self.assertEqual(len(rows_a["campaigns"]), 5)
         self.assertGreaterEqual(len(rows_a["orders"]), 12)

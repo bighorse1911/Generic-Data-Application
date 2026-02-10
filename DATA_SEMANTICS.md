@@ -13,14 +13,17 @@ project. It is authoritative for:
 If behavior is unclear, this document overrides assumptions.
 If you make updates to any DATA_SEMANTICS in the project, update this file too.
 
-## Implementation status (2026-02-09)
+## Implementation status (2026-02-10)
 
-Direction 3 (float -> decimal) is in progress.
+Direction 3 (float -> decimal) is completed.
 
-- Runtime support today: `int`, `float`, `text`, `bool`, `date`, `datetime`
-- Target canonical dtypes: `int`, `decimal`, `text`, `bool`, `date`, `datetime`, `bytes`
-- Backward compatibility policy: existing JSON schemas using `float` remain supported
-  during migration.
+- Runtime support today: `int`, `decimal`, legacy `float`, `text`, `bool`, `date`, `datetime`
+- Canonical authoring dtypes: `int`, `decimal`, `text`, `bool`, `date`, `datetime`
+- Future extension candidate: `bytes` (outside Direction 3 scope)
+- Backward compatibility policy: existing JSON schemas using `float` remain supported.
+- GUI authoring policy: new columns use `decimal`; GUI blocks new `float` column creation.
+- SCD Type 1 and Type 2 are implemented in generator + validator + JSON IO + GUI authoring controls (business-key linkage, tracked slowly-changing columns, and SCD2 active periods).
+- SCD current limitation: `scd2` is validated for root tables only (no incoming FKs) in phase 1.
 
 ## Core design principle
 
@@ -55,7 +58,7 @@ Allowed constraints:
 Rules:
 - If `primary_key=true`, column must be `nullable=false`, unique, and deterministic.
 
-## 1.2 decimal (target canonical numeric dtype)
+## 1.2 decimal (canonical numeric dtype)
 
 Definition:
 - Decimal numeric domain for non-integer values
@@ -136,14 +139,14 @@ Definition:
 Allowed constraints:
 - `start_datetime`, `end_datetime`
 
-## 1.8 bytes (target canonical binary dtype)
+## 1.8 bytes (future extension binary dtype)
 
 Definition:
 - Binary payload (`bytes`) for blob-like data
 
 Rules:
 - CSV exports should encode bytes (for example base64) at export time.
-- Support is roadmap-level unless explicitly implemented in runtime.
+- Support is future roadmap-level and not part of Direction 3 completion.
 
 ---
 
@@ -184,8 +187,60 @@ Definition:
 - Does not replace PK
 
 Rules:
-- If marked as business key (metadata/flag), enforce uniqueness.
 - Nullable only when explicitly allowed by model semantics.
+
+## 3.3 Slowly Changing Dimension Type 1 (SCD1) (phase 1 implemented)
+
+Definition:
+- Overwrite-in-place dimension pattern linked to a business key.
+- Tracked slowly-changing columns are updated on the current row only.
+- No historical row versions are created.
+
+Phase 1 schema contract (implemented):
+- SCD1 links to a business key definition for the table.
+- SCD1 defines which columns are "slowly changing" (`tracked_columns`).
+- Changes to tracked columns overwrite values in the existing row for the same business key.
+
+Rules:
+- Exactly one row should exist per business key in SCD1-enabled tables.
+- Duplicate rows for the same business key are invalid for SCD1.
+- Active-period tracking is optional and does not imply version history when SCD1 is selected.
+
+Future validation error examples:
+- `Table 'customer_dim': SCD1 requires a business key. Fix: configure a business key before enabling SCD1.`
+- `Table 'customer_dim': duplicate rows found for business key 'customer_code' under SCD1. Fix: keep one row per business key or use SCD2.`
+- `Table 'customer_dim': SCD1 tracked column 'tier_old' not found. Fix: use existing column names in tracked columns.`
+
+Implementation status:
+- Runtime generation, validator enforcement, JSON IO shape, and GUI authoring controls are implemented.
+
+## 3.4 Slowly Changing Dimension Type 2 (SCD2) (phase 1 implemented)
+
+Definition:
+- Historical versioning pattern linked to a business key.
+- One business key may have multiple rows in the same table over time.
+- Each version row has an active period tracked as `date` or `datetime`.
+
+Phase 1 schema contract (implemented):
+- SCD2 links to a business key definition for the table.
+- SCD2 defines active-period tracking using `date` or `datetime` at table scope.
+- SCD2 defines which columns are "slowly changing" (`tracked_columns`).
+- Changes to tracked columns create a new version row for the same business key.
+
+Rules:
+- Multiple rows per business key are allowed only for SCD2-enabled tables.
+- Active periods must not overlap for the same business key.
+- Exactly one current version should exist per business key (open-ended end time or equivalent current marker).
+- All versions for the same business key must use the table's configured active-period dtype (`date` or `datetime`).
+
+Future validation error examples:
+- `Table 'customer_dim': SCD2 active period dtype must be 'date' or 'datetime'. Fix: choose one supported period dtype.`
+- `Table 'customer_dim', business key 'customer_code': overlapping SCD2 active periods. Fix: ensure active periods do not overlap.`
+- `Table 'customer_dim': SCD2 tracked column 'tier_old' not found. Fix: use existing column names in tracked columns.`
+
+Implementation status:
+- Runtime generation, validator enforcement, JSON IO shape, and GUI authoring controls are implemented.
+- Phase 1 scope: `scd2` currently supports root tables only (no incoming FKs).
 
 ---
 
@@ -304,6 +359,8 @@ Example shape:
 5. JSON roundtrip preserves semantics and backward-compatible float schemas
 6. Values remain inside dtype domain
 7. No circular dependency in `depends_on`
+8. When SCD1 is enabled, exactly one row exists per business key.
+9. When SCD2 is enabled, no overlapping active periods for the same business key and exactly one current version per business key.
 
 These invariants require unit tests.
 
