@@ -14,12 +14,16 @@ this project. It is authoritative for:
 If GUI behavior is unclear, this document and `PROJECT_CANON.md` override
 ad-hoc assumptions.
 
-## Implementation Status (2026-02-10)
+## Implementation Status (2026-02-12)
 
-- Current runtime GUI: Tkinter (`src/gui_home.py`, `src/gui_schema_project.py`)
-- Incremental modular path: `src/gui_schema_project_kit.py` using `src/gui_kit`
+- Current runtime GUI: Tkinter (`src/gui_home.py`)
+- Production modular route: `schema_project` uses `src/gui_schema_project_kit.py` with `src/gui_kit`.
+- Legacy fallback route: `schema_project_legacy` uses `src/gui_schema_project.py`.
 - Direction 3 status: completed (`float` -> `decimal` migration and semantic numeric generator migration).
 - SCD1/SCD2 support is implemented end-to-end (generator + validator + JSON IO + GUI authoring controls in both schema designer screens).
+- Business-key behavior controls are implemented in both schema designer screens:
+  - `business_key_static_columns` (stable attributes),
+  - `business_key_changing_columns` (changing attributes).
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -129,10 +133,11 @@ Examples:
 
 - Purpose: entry navigation to available tools/screens.
 - Required actions:
-- open schema project designer (legacy)
-- open schema project designer kit preview (additive path, if enabled)
+- open schema project designer (production modular route)
+- open schema project designer kit route (modular parity reference path)
+- open schema project designer legacy fallback route
 
-### 4.2 `schema_project` (legacy, production path)
+### 4.2 `schema_project` (production modular path)
 
 - Composition standard:
 - `build_header()`
@@ -152,18 +157,27 @@ Examples:
 - status line
 - Required behavior:
 - validation gating for generation buttons
-- busy/progress during generation/export tasks
+- busy/progress during generation/export tasks via `BaseScreen.safe_threaded_job`
 - actionable error dialogs for invalid actions
 - SCD configuration flow with mode selection (`scd1` or `scd2`) and business-key linkage.
+- Business-key behavior controls: comma-separated static columns and changing columns, validated against existing table columns.
 - SCD1 controls: tracked slowly-changing column selection.
 - SCD2 controls: active period boundary columns (`from`/`to`, using `date` or `datetime`) plus tracked slowly-changing column selection.
+- Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`, `Tabs`, `FormBuilder`, `TableView`).
 
-### 4.3 `schema_project_kit` (modular preview path)
+### 4.3 `schema_project_kit` (modular parity reference path)
 
-- Must preserve business logic parity with `schema_project`.
+- Mirrors modular production behavior for parity/regression checks.
 - Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`,
   `Tabs`, `FormBuilder`, `TableView`).
-- Additive navigation path from Home; legacy screen remains intact.
+- Additive navigation path from Home.
+- Long-running actions on this screen (`Generate data`, `Generate sample`, `SQLite insert`) run via `BaseScreen.safe_threaded_job` to preserve busy/progress behavior and avoid duplicate-trigger races.
+
+### 4.4 `schema_project_legacy` (fallback path)
+
+- Purpose: low-risk fallback route while modular production path is adopted.
+- Must preserve business-logic compatibility with modular production path for validation/generation/export/JSON IO flows.
+- Uses pre-modular UI implementation from `src/gui_schema_project.py`.
 
 ## 5. Library-Agnostic Mapping Guide
 

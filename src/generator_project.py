@@ -9,6 +9,10 @@ from src.schema_project_model import SchemaProject, TableSpec, ColumnSpec, Forei
 logger = logging.getLogger("generator_project")
 
 
+def _runtime_error(location: str, issue: str, hint: str) -> str:
+    return f"{location}: {issue}. Fix: {hint}."
+
+
 def _stable_subseed(base_seed: int, name: str) -> int:
     """
     Deterministically derive a per-table/per-feature seed from base_seed and a string name.
@@ -82,7 +86,16 @@ def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: 
 
     # Generate
     if getattr(col, "generator", None):
-        fn = get_generator(col.generator)  # type: ignore[arg-type]
+        try:
+            fn = get_generator(col.generator)  # type: ignore[arg-type]
+        except KeyError as exc:
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{table_name}', column '{col.name}'",
+                    f"unknown generator '{col.generator}'",
+                    "choose a registered generator name in column.generator",
+                )
+            ) from exc
         params = col.params or {}
         try:
             v = fn(params, ctx)
@@ -113,7 +126,13 @@ def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: 
     if col.pattern and v is not None:
         import re
         if not re.fullmatch(col.pattern, str(v)):
-            raise ValueError(f"Value '{v}' does not match pattern '{col.pattern}' for {table_name}.{col.name}")
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{table_name}', column '{col.name}'",
+                    f"value '{v}' does not match pattern '{col.pattern}'",
+                    "adjust the generator output or update the regex pattern",
+                )
+            )
 
     return v
 
@@ -171,7 +190,13 @@ def _gen_value_fallback(col: ColumnSpec, rng: random.Random, row_index: int) -> 
                 return s
         return candidate()
 
-    raise ValueError(f"Unsupported dtype: {col.dtype}")
+    raise ValueError(
+        _runtime_error(
+            f"Column '{col.name}'",
+            f"unsupported dtype '{col.dtype}' during runtime fallback generation",
+            "use a supported dtype or configure a compatible generator",
+        )
+    )
 
 
 def _dependency_order(project: SchemaProject) -> list[str]:
@@ -209,7 +234,13 @@ def _dependency_order(project: SchemaProject) -> list[str]:
                 ready.sort()
 
     if len(out) != len(table_names):
-        raise ValueError("Cycle detected in foreign key relationships (not supported).")
+        raise ValueError(
+            _runtime_error(
+                "Project foreign keys",
+                "cycle detected in table dependency graph",
+                "remove circular foreign key dependencies",
+            )
+        )
 
     return out
 
@@ -227,6 +258,10 @@ def _normalize_scd_mode(table: TableSpec) -> str | None:
         return None
     mode = table.scd_mode.strip().lower()
     return mode or None
+
+
+def _effective_scd_tracked_columns(table: TableSpec) -> list[str]:
+    return list(table.business_key_changing_columns or table.scd_tracked_columns or [])
 
 
 def _business_key_is_already_unique(rows: list[dict[str, object]], key_cols: list[str]) -> bool:
@@ -322,7 +357,8 @@ def _apply_scd2_history(table: TableSpec, rows: list[dict[str, object]], rng: ra
 
     col_map = _table_col_map(table)
     pk_col = _table_pk_col_name(table)
-    tracked_cols = list(table.scd_tracked_columns or [])
+    tracked_cols = _effective_scd_tracked_columns(table)
+    static_cols = list(table.business_key_static_columns or [])
     start_col = table.scd_active_from_column
     end_col = table.scd_active_to_column
     active_dtype = col_map[start_col].dtype
@@ -344,6 +380,8 @@ def _apply_scd2_history(table: TableSpec, rows: list[dict[str, object]], rng: ra
                         version_idx=version_idx,
                         rng=rng,
                     )
+            for static_col in static_cols:
+                out_row[static_col] = base_row.get(static_col)
 
             if active_dtype == "date":
                 period_start = date(2020, 1, 1) + timedelta(days=base_offset_days + (version_idx * 30))
@@ -433,13 +471,19 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
         if total < min_total:
             raise ValueError(
-                f"Table '{child_table}': not enough rows to satisfy FK {child_fk_col} -> {parent_table}. "
-                f"Need at least {min_total} rows (parents={parent_n} * min_children={min_children}), have {total}."
+                _runtime_error(
+                    f"Table '{child_table}', FK column '{child_fk_col}'",
+                    f"not enough rows to satisfy FK to parent table '{parent_table}' (need >= {min_total}, have {total})",
+                    "increase child row_count or lower min_children",
+                )
             )
         if total > max_total:
             raise ValueError(
-                f"Table '{child_table}': too many rows to satisfy FK {child_fk_col} -> {parent_table}. "
-                f"Need at most {max_total} rows (parents={parent_n} * max_children={max_children}), have {total}."
+                _runtime_error(
+                    f"Table '{child_table}', FK column '{child_fk_col}'",
+                    f"too many rows to satisfy FK to parent table '{parent_table}' (need <= {max_total}, have {total})",
+                    "decrease child row_count or raise max_children",
+                )
             )
 
         # Choose a count for each parent (within bounds), then adjust totals to match exactly
@@ -497,7 +541,11 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
             for r in rows:
                 if r.get(pk_col) is None:
                     raise ValueError(
-                        f"PK is None in table={table_name}, pk_col={pk_col}. Check schema PK settings."
+                        _runtime_error(
+                            f"Table '{table_name}', column '{pk_col}'",
+                            "primary key generated as null",
+                            "set PK column nullable=false and use deterministic PK generation",
+                        )
                     )
 
             # Extra defensive fill (should not normally trigger)
@@ -560,8 +608,11 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
         if max_allowed < min_allowed:
             raise ValueError(
-                f"Table '{table_name}': FK constraints incompatible for row_count. "
-                f"Need intersection, got min_allowed={min_allowed}, max_allowed={max_allowed}."
+                _runtime_error(
+                    f"Table '{table_name}'",
+                    f"FK constraints produce an empty row_count range (min_allowed={min_allowed}, max_allowed={max_allowed})",
+                    "adjust FK min_children/max_children so ranges overlap",
+                )
             )
 
         # If user set row_count > 0, use it; else auto-pick a value in the intersection
@@ -569,8 +620,11 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
             n = t.row_count
             if not (min_allowed <= n <= max_allowed):
                 raise ValueError(
-                    f"Table '{table_name}': row_count={n} outside allowed range "
-                    f"[{min_allowed}, {max_allowed}] from FK constraints."
+                    _runtime_error(
+                        f"Table '{table_name}'",
+                        f"row_count={n} is outside FK-constrained range [{min_allowed}, {max_allowed}]",
+                        "set row_count within the allowed range or adjust FK bounds",
+                    )
                 )
         else:
             n = rng.randint(min_allowed, max_allowed)
@@ -593,7 +647,11 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         for r in rows:
             if r.get(pk_col) is None:
                 raise ValueError(
-                    f"PK is None in table={table_name}, pk_col={pk_col}. Check schema PK settings."
+                    _runtime_error(
+                        f"Table '{table_name}', column '{pk_col}'",
+                        "primary key generated as null",
+                        "set PK column nullable=false and use deterministic PK generation",
+                    )
                 )
 
         # Assign each FK column independently, enforcing its min/max rules
@@ -648,7 +706,13 @@ def _order_columns_by_dependencies(cols: list[ColumnSpec]) -> list[ColumnSpec]:
         if not progressed:
             # cycle or missing dependency
             stuck = [(c.name, getattr(c, "depends_on", None)) for c in remaining]
-            raise ValueError(f"Cannot resolve column dependencies: {stuck}")
+            raise ValueError(
+                _runtime_error(
+                    "Column dependency ordering",
+                    f"cannot resolve dependencies {stuck}",
+                    "remove circular depends_on references and reference only existing columns",
+                )
+            )
     return ordered
 
 
@@ -674,11 +738,19 @@ def _assign_fk_column(
 
     if total < min_total:
         raise ValueError(
-            f"Not enough rows to satisfy FK min_children: need >= {min_total}, have {total}"
+            _runtime_error(
+                f"FK column '{child_fk_col}'",
+                f"not enough rows to satisfy min_children (need >= {min_total}, have {total})",
+                "increase child rows or lower min_children",
+            )
         )
     if total > max_total:
         raise ValueError(
-            f"Too many rows to satisfy FK max_children: need <= {max_total}, have {total}"
+            _runtime_error(
+                f"FK column '{child_fk_col}'",
+                f"too many rows to satisfy max_children (need <= {max_total}, have {total})",
+                "decrease child rows or raise max_children",
+            )
         )
 
     # Build a pool with each parent repeated random(min..max) times

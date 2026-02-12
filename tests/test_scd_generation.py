@@ -62,6 +62,8 @@ class TestSCDGeneration(unittest.TestCase):
                         ColumnSpec("valid_to", "date", nullable=False),
                     ],
                     business_key=["customer_code"],
+                    business_key_static_columns=["customer_code"],
+                    business_key_changing_columns=["city"],
                     scd_mode="scd2",
                     scd_tracked_columns=["city"],
                     scd_active_from_column="valid_from",
@@ -175,6 +177,133 @@ class TestSCDGeneration(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("Table 'customer_dim'", msg)
         self.assertIn("scd_mode='scd2' requires scd_active_from_column and scd_active_to_column", msg)
+        self.assertIn("Fix:", msg)
+
+    def test_business_key_static_and_changing_columns_drive_scd2_versions(self):
+        project = SchemaProject(
+            name="business_key_behavior",
+            seed=901,
+            tables=[
+                TableSpec(
+                    table_name="customer_dim",
+                    row_count=4,
+                    columns=[
+                        ColumnSpec("customer_sk", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_code", "text", nullable=False),
+                        ColumnSpec("last_name", "text", nullable=False),
+                        ColumnSpec("address", "text", nullable=False),
+                        ColumnSpec("valid_from", "date", nullable=False),
+                        ColumnSpec("valid_to", "date", nullable=False),
+                    ],
+                    business_key=["customer_code"],
+                    business_key_static_columns=["last_name"],
+                    business_key_changing_columns=["address"],
+                    scd_mode="scd2",
+                    scd_active_from_column="valid_from",
+                    scd_active_to_column="valid_to",
+                )
+            ],
+            foreign_keys=[],
+        )
+        validate_project(project)
+
+        rows = generate_project_rows(project)["customer_dim"]
+        by_key: dict[str, list[dict[str, object]]] = {}
+        for row in rows:
+            key = str(row["customer_code"])
+            by_key.setdefault(key, []).append(row)
+
+        multi_version_keys = [key for key, key_rows in by_key.items() if len(key_rows) > 1]
+        self.assertTrue(
+            multi_version_keys,
+            "Expected at least one business key to have multiple SCD2 versions. "
+            "Fix: generate historical rows when scd_mode='scd2'.",
+        )
+
+        for key in multi_version_keys:
+            key_rows = by_key[key]
+            last_names = {str(r["last_name"]) for r in key_rows}
+            addresses = {str(r["address"]) for r in key_rows}
+            self.assertEqual(
+                len(last_names),
+                1,
+                f"Business key '{key}' has changing values for static column 'last_name'. "
+                "Fix: keep business_key_static_columns constant across versions.",
+            )
+            self.assertGreater(
+                len(addresses),
+                1,
+                f"Business key '{key}' has no changes in column 'address'. "
+                "Fix: mutate business_key_changing_columns across SCD2 versions.",
+            )
+
+    def test_business_key_static_and_changing_columns_cannot_overlap(self):
+        bad = SchemaProject(
+            name="bad_business_key_overlap",
+            seed=11,
+            tables=[
+                TableSpec(
+                    table_name="customer_dim",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("customer_sk", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_code", "text", nullable=False),
+                        ColumnSpec("city", "text", nullable=False),
+                        ColumnSpec("valid_from", "date", nullable=False),
+                        ColumnSpec("valid_to", "date", nullable=False),
+                    ],
+                    business_key=["customer_code"],
+                    business_key_static_columns=["city"],
+                    business_key_changing_columns=["city"],
+                    scd_mode="scd2",
+                    scd_active_from_column="valid_from",
+                    scd_active_to_column="valid_to",
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            validate_project(bad)
+
+        msg = str(ctx.exception)
+        self.assertIn("Table 'customer_dim'", msg)
+        self.assertIn("business_key_static_columns and business_key_changing_columns overlap", msg)
+        self.assertIn("Fix:", msg)
+
+    def test_business_key_changing_columns_must_match_scd_tracked_when_both_set(self):
+        bad = SchemaProject(
+            name="bad_business_key_tracked_mismatch",
+            seed=12,
+            tables=[
+                TableSpec(
+                    table_name="customer_dim",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("customer_sk", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_code", "text", nullable=False),
+                        ColumnSpec("city", "text", nullable=False),
+                        ColumnSpec("segment", "text", nullable=False),
+                        ColumnSpec("valid_from", "date", nullable=False),
+                        ColumnSpec("valid_to", "date", nullable=False),
+                    ],
+                    business_key=["customer_code"],
+                    business_key_changing_columns=["city"],
+                    scd_mode="scd2",
+                    scd_tracked_columns=["segment"],
+                    scd_active_from_column="valid_from",
+                    scd_active_to_column="valid_to",
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            validate_project(bad)
+
+        msg = str(ctx.exception)
+        self.assertIn("Table 'customer_dim'", msg)
+        self.assertIn("business_key_changing_columns must match scd_tracked_columns", msg)
         self.assertIn("Fix:", msg)
 
 

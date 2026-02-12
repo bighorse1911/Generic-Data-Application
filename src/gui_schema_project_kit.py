@@ -1,11 +1,13 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
+from src.generator_project import generate_project_rows
 from src.gui_kit.forms import FormBuilder
 from src.gui_kit.layout import BaseScreen
 from src.gui_kit.panels import CollapsiblePanel, Tabs
 from src.gui_kit.scroll import ScrollFrame
 from src.gui_kit.table import TableView
+from src.schema_project_model import validate_project
 from src.gui_schema_project import (
     DTYPES,
     EXPORT_OPTIONS,
@@ -14,6 +16,7 @@ from src.gui_schema_project import (
     SchemaProjectDesignerScreen,
     ValidationHeatmap,
 )
+from src.storage_sqlite_project import create_tables, insert_project_rows
 
 
 class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
@@ -150,6 +153,14 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.table_business_key_entry = table_form.add_entry(
             "Business key columns (comma)",
             self.table_business_key_var,
+        )
+        self.table_business_key_static_entry = table_form.add_entry(
+            "Business key static columns (comma)",
+            self.table_business_key_static_columns_var,
+        )
+        self.table_business_key_changing_entry = table_form.add_entry(
+            "Business key changing columns (comma)",
+            self.table_business_key_changing_columns_var,
         )
         self.table_scd_mode_combo = table_form.add_combo(
             "SCD mode",
@@ -376,3 +387,82 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
 
     def _move_column_down(self) -> None:
         self._move_selected_column(1)
+
+    def _on_generate_project(self) -> None:
+        if self.is_running:
+            return
+        try:
+            self._apply_project_vars_to_model()
+            validate_project(self.project)
+        except Exception as exc:
+            messagebox.showerror("Invalid project", str(exc))
+            return
+
+        self._set_running(True, "Generating data for all tables...")
+        self.safe_threaded_job(
+            lambda: generate_project_rows(self.project),
+            self._on_generated_ok,
+            lambda exc: self._on_job_failed(str(exc)),
+        )
+
+    def _on_create_insert_sqlite(self) -> None:
+        if self.is_running:
+            return
+        if not self.generated_rows:
+            messagebox.showwarning("No data", "Generate data first.")
+            return
+
+        db_path = self.db_path_var.get().strip()
+        if not db_path:
+            messagebox.showerror(
+                "Missing DB path",
+                "Generate / Preview / Export / SQLite panel: SQLite DB path is required. "
+                "Fix: choose a SQLite database file path.",
+            )
+            return
+
+        try:
+            self._apply_project_vars_to_model()
+            validate_project(self.project)
+        except Exception as exc:
+            messagebox.showerror("Invalid project", str(exc))
+            return
+
+        self._set_running(True, "Creating tables and inserting rows into SQLite...")
+
+        def _sqlite_job() -> dict[str, int]:
+            create_tables(db_path, self.project)
+            return insert_project_rows(db_path, self.project, self.generated_rows, chunk_size=5000)
+
+        self.safe_threaded_job(
+            _sqlite_job,
+            lambda counts: self._on_sqlite_ok(db_path, counts),
+            lambda exc: self._on_job_failed(str(exc)),
+        )
+
+    def _on_generate_sample(self) -> None:
+        if self.is_running:
+            return
+
+        if self.last_validation_errors > 0:
+            messagebox.showerror(
+                "Cannot generate",
+                "Generate sample action: schema has validation errors. "
+                "Fix: run validation and resolve all error cells first.",
+            )
+            return
+
+        try:
+            self._apply_project_vars_to_model()
+            validate_project(self.project)
+        except Exception as exc:
+            messagebox.showerror("Invalid project", str(exc))
+            return
+
+        sample_project = self._make_sample_project(10)
+        self._set_running(True, "Generating sample data (10 rows per root table)...")
+        self.safe_threaded_job(
+            lambda: generate_project_rows(sample_project),
+            self._on_generated_ok,
+            lambda exc: self._on_job_failed(str(exc)),
+        )

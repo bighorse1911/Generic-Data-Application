@@ -32,6 +32,10 @@ EXPORT_OPTION_SQLITE = "SQLite (database)"
 EXPORT_OPTIONS = [EXPORT_OPTION_CSV, EXPORT_OPTION_SQLITE]
 
 
+def _gui_error(location: str, issue: str, hint: str) -> str:
+    return f"{location}: {issue}. Fix: {hint}."
+
+
 def validate_export_option(option: object) -> str:
     value = option.strip() if isinstance(option, str) else ""
     if value in EXPORT_OPTIONS:
@@ -413,6 +417,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_name_var = tk.StringVar(value="")
         self.row_count_var = tk.StringVar(value="100")
         self.table_business_key_var = tk.StringVar(value="")
+        self.table_business_key_static_columns_var = tk.StringVar(value="")
+        self.table_business_key_changing_columns_var = tk.StringVar(value="")
         self.table_scd_mode_var = tk.StringVar(value="")
         self.table_scd_tracked_columns_var = tk.StringVar(value="")
         self.table_scd_active_from_var = tk.StringVar(value="")
@@ -584,7 +590,21 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_business_key_entry = ttk.Entry(props, textvariable=self.table_business_key_var)
         self.table_business_key_entry.grid(row=2, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD mode:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="Business key static columns (comma):").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        self.table_business_key_static_entry = ttk.Entry(
+            props,
+            textvariable=self.table_business_key_static_columns_var,
+        )
+        self.table_business_key_static_entry.grid(row=3, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(props, text="Business key changing columns (comma):").grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        self.table_business_key_changing_entry = ttk.Entry(
+            props,
+            textvariable=self.table_business_key_changing_columns_var,
+        )
+        self.table_business_key_changing_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(props, text="SCD mode:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_mode_combo = ttk.Combobox(
             props,
             values=SCD_MODES,
@@ -592,22 +612,22 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             state="readonly",
             width=12,
         )
-        self.table_scd_mode_combo.grid(row=3, column=1, sticky="w", padx=6, pady=6)
+        self.table_scd_mode_combo.grid(row=5, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD tracked columns (comma):").grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="SCD tracked columns (comma):").grid(row=6, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_tracked_entry = ttk.Entry(props, textvariable=self.table_scd_tracked_columns_var)
-        self.table_scd_tracked_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=6)
+        self.table_scd_tracked_entry.grid(row=6, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD active from column:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="SCD active from column:").grid(row=7, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_active_from_entry = ttk.Entry(props, textvariable=self.table_scd_active_from_var)
-        self.table_scd_active_from_entry.grid(row=5, column=1, sticky="ew", padx=6, pady=6)
+        self.table_scd_active_from_entry.grid(row=7, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD active to column:").grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="SCD active to column:").grid(row=8, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_active_to_entry = ttk.Entry(props, textvariable=self.table_scd_active_to_var)
-        self.table_scd_active_to_entry.grid(row=6, column=1, sticky="ew", padx=6, pady=6)
+        self.table_scd_active_to_entry.grid(row=8, column=1, sticky="ew", padx=6, pady=6)
 
         self.apply_table_btn = ttk.Button(props, text="Apply table changes", command=self._apply_table_changes)
-        self.apply_table_btn.grid(row=7, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
+        self.apply_table_btn.grid(row=9, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
 
         # Column editor (grid inside col)
         col = ttk.LabelFrame(right, text="Add column", padding=10)
@@ -847,6 +867,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_name_entry.configure(state=state)
         self.row_count_entry.configure(state=state)
         self.table_business_key_entry.configure(state=state)
+        self.table_business_key_static_entry.configure(state=state)
+        self.table_business_key_changing_entry.configure(state=state)
         self.table_scd_mode_combo.configure(state=("readonly" if enabled else tk.DISABLED))
         self.table_scd_tracked_entry.configure(state=state)
         self.table_scd_active_from_entry.configure(state=state)
@@ -938,7 +960,16 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     def _apply_project_vars_to_model(self) -> None:
         name = self.project_name_var.get().strip()
-        seed = int(self.seed_var.get().strip())
+        try:
+            seed = int(self.seed_var.get().strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _gui_error(
+                    "Project / Seed",
+                    f"seed '{self.seed_var.get()}' must be an integer",
+                    "enter a whole number for Seed",
+                )
+            ) from exc
         self.project = SchemaProject(
             name=name,
             seed=seed,
@@ -953,7 +984,13 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 for c in t.columns:
                     if c.primary_key:
                         return c.name
-        raise ValueError(f"Table '{table_name}' has no primary key (should not happen).")
+        raise ValueError(
+            _gui_error(
+                f"Table '{table_name}'",
+                "no primary key column was found",
+                "add or keep one column with primary_key=true",
+            )
+        )
 
     def _int_columns(self, table_name: str) -> list[str]:
         for t in self.project.tables:
@@ -1083,22 +1120,70 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         for t in project.tables:
             # Must have PK
             if not any(c.primary_key for c in t.columns):
-                issues.append(ValidationIssue("error", "table", t.table_name, None, "Table has no primary key."))
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "table",
+                        t.table_name,
+                        None,
+                        _gui_error(
+                            f"Table '{t.table_name}'",
+                            "no primary key column found",
+                            "add one int column with primary_key=true",
+                        ),
+                    )
+                )
 
             # Duplicate column names
             names = [c.name for c in t.columns]
             if len(names) != len(set(names)):
-                issues.append(ValidationIssue("error", "table", t.table_name, None, "Duplicate column names."))
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "table",
+                        t.table_name,
+                        None,
+                        _gui_error(
+                            f"Table '{t.table_name}'",
+                            "duplicate column names found",
+                            "rename columns so each column name is unique",
+                        ),
+                    )
+                )
 
             # Warn on nullable PK
             for c in t.columns:
                 if c.primary_key and c.nullable:
-                    issues.append(ValidationIssue("warn", "column", t.table_name, c.name, "Primary key should not be nullable."))
+                    issues.append(
+                        ValidationIssue(
+                            "warn",
+                            "column",
+                            t.table_name,
+                            c.name,
+                            _gui_error(
+                                f"Table '{t.table_name}', column '{c.name}'",
+                                "primary key should not be nullable",
+                                "set nullable=false for primary key columns",
+                            ),
+                        )
+                    )
 
             # Warn on text PK (even if model prevents it)
             for c in t.columns:
                 if c.primary_key and c.dtype != "int":
-                    issues.append(ValidationIssue("warn", "column", t.table_name, c.name, "Primary key is not int (recommended int)."))
+                    issues.append(
+                        ValidationIssue(
+                            "warn",
+                            "column",
+                            t.table_name,
+                            c.name,
+                            _gui_error(
+                                f"Table '{t.table_name}', column '{c.name}'",
+                                "primary key dtype is not int",
+                                "use dtype='int' for primary key columns",
+                            ),
+                        )
+                    )
 
             # Direction 3 compatibility warning: float is still supported but deprecated for new authoring.
             for c in t.columns:
@@ -1117,14 +1202,50 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         for fk in project.foreign_keys:
             # parent must exist
             if fk.parent_table not in [t.table_name for t in project.tables]:
-                issues.append(ValidationIssue("error", "fk", fk.child_table, fk.child_column, f"Parent table '{fk.parent_table}' not found."))
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "fk",
+                        fk.child_table,
+                        fk.child_column,
+                        _gui_error(
+                            f"FK '{fk.child_table}.{fk.child_column}'",
+                            f"parent table '{fk.parent_table}' not found",
+                            "choose an existing parent table",
+                        ),
+                    )
+                )
 
             # child must exist
             if fk.child_table not in [t.table_name for t in project.tables]:
-                issues.append(ValidationIssue("error", "fk", fk.child_table, fk.child_column, f"Child table '{fk.child_table}' not found."))
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "fk",
+                        fk.child_table,
+                        fk.child_column,
+                        _gui_error(
+                            f"FK '{fk.child_table}.{fk.child_column}'",
+                            f"child table '{fk.child_table}' not found",
+                            "choose an existing child table",
+                        ),
+                    )
+                )
 
             if fk.min_children > fk.max_children:
-                issues.append(ValidationIssue("error", "fk", fk.child_table, fk.child_column, "FK min_children > max_children."))
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "fk",
+                        fk.child_table,
+                        fk.child_column,
+                        _gui_error(
+                            f"FK '{fk.child_table}.{fk.child_column}'",
+                            "min_children cannot exceed max_children",
+                            "set min_children <= max_children",
+                        ),
+                    )
+                )
 
         return issues
 
@@ -1182,7 +1303,14 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     def _on_generate_project(self) -> None:
         if self.last_validation_errors > 0:
-            messagebox.showerror("Cannot generate", "Schema has validation errors. Fix them first.")
+            messagebox.showerror(
+                "Cannot generate",
+                _gui_error(
+                    "Generate action",
+                    "schema has validation errors",
+                    "run validation and resolve all error cells first",
+                ),
+            )
             return
         ...
 
@@ -1241,6 +1369,12 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_name_var.set(t.table_name)
         self.row_count_var.set(str(t.row_count))
         self.table_business_key_var.set(", ".join(t.business_key) if t.business_key else "")
+        self.table_business_key_static_columns_var.set(
+            ", ".join(t.business_key_static_columns) if t.business_key_static_columns else ""
+        )
+        self.table_business_key_changing_columns_var.set(
+            ", ".join(t.business_key_changing_columns) if t.business_key_changing_columns else ""
+        )
         self.table_scd_mode_var.set((t.scd_mode or "").strip().lower())
         self.table_scd_tracked_columns_var.set(", ".join(t.scd_tracked_columns) if t.scd_tracked_columns else "")
         self.table_scd_active_from_var.set(t.scd_active_from_column or "")
@@ -1259,14 +1393,39 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
             new_name = self.table_name_var.get().strip()
             if not new_name:
-                raise ValueError("Table name cannot be empty.")
+                raise ValueError(
+                    _gui_error(
+                        "Table editor / Name",
+                        "table name cannot be empty",
+                        "enter a non-empty table name",
+                    )
+                )
 
-            row_count = int(self.row_count_var.get().strip())
+            try:
+                row_count = int(self.row_count_var.get().strip())
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _gui_error(
+                        "Table editor / Root row count",
+                        f"row_count '{self.row_count_var.get()}' must be an integer",
+                        "enter a whole number for Root row count",
+                    )
+                ) from exc
             location = f"Table '{new_name}' / Table editor"
             business_key = self._parse_column_name_csv(
                 self.table_business_key_var.get(),
                 location=location,
                 field_name="business_key",
+            )
+            business_key_static_columns = self._parse_column_name_csv(
+                self.table_business_key_static_columns_var.get(),
+                location=location,
+                field_name="business_key_static_columns",
+            )
+            business_key_changing_columns = self._parse_column_name_csv(
+                self.table_business_key_changing_columns_var.get(),
+                location=location,
+                field_name="business_key_changing_columns",
             )
             scd_mode_raw = self.table_scd_mode_var.get().strip().lower()
             if scd_mode_raw not in {"", "scd1", "scd2"}:
@@ -1315,6 +1474,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=old.columns,
                 row_count=row_count,
                 business_key=business_key,
+                business_key_static_columns=business_key_static_columns,
+                business_key_changing_columns=business_key_changing_columns,
                 scd_mode=scd_mode,
                 scd_tracked_columns=scd_tracked_columns,
                 scd_active_from_column=scd_active_from_column,
@@ -1376,14 +1537,32 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 try:
                     obj = json.loads(params_text)
                     if not isinstance(obj, dict):
-                        raise ValueError("Params JSON must be an object/dict, e.g. {\"path\": \"...\", \"column_index\": 0}")
+                        raise ValueError(
+                            _gui_error(
+                                "Add column / Params JSON",
+                                "value must be a JSON object",
+                                "use an object like {\"path\": \"...\", \"column_index\": 0}",
+                            )
+                        )
                     params = obj
                 except Exception as exc:
-                    raise ValueError(f"Params JSON invalid: {exc}") from exc
+                    raise ValueError(
+                        _gui_error(
+                            "Add column / Params JSON",
+                            f"invalid JSON ({exc})",
+                            "provide valid JSON object syntax or leave Params JSON empty",
+                        )
+                    ) from exc
 
 
             if not name:
-                raise ValueError("Column name cannot be empty.")
+                raise ValueError(
+                    _gui_error(
+                        "Add column / Name",
+                        "column name cannot be empty",
+                        "enter a non-empty column name",
+                    )
+                )
 
             nullable = bool(self.col_nullable_var.get())
             pk = bool(self.col_pk_var.get())
@@ -1391,8 +1570,26 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
             min_s = self.col_min_var.get().strip()
             max_s = self.col_max_var.get().strip()
-            min_v = float(min_s) if min_s != "" else None
-            max_v = float(max_s) if max_s != "" else None
+            try:
+                min_v = float(min_s) if min_s != "" else None
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _gui_error(
+                        "Add column / Min value",
+                        f"min value '{self.col_min_var.get()}' must be numeric",
+                        "enter a numeric min value or leave it empty",
+                    )
+                ) from exc
+            try:
+                max_v = float(max_s) if max_s != "" else None
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _gui_error(
+                        "Add column / Max value",
+                        f"max value '{self.col_max_var.get()}' must be numeric",
+                        "enter a numeric max value or leave it empty",
+                    )
+                ) from exc
 
             choices_s = self.col_choices_var.get().strip()
             choices = [c.strip() for c in choices_s.split(",") if c.strip()] if choices_s else None
@@ -1421,12 +1618,24 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             cols = list(t.columns)
 
             if any(c.name == new_col.name for c in cols):
-                raise ValueError(f"Column '{new_col.name}' already exists on table '{t.table_name}'.")
+                raise ValueError(
+                    _gui_error(
+                        f"Table '{t.table_name}', column '{new_col.name}'",
+                        "column already exists",
+                        "choose a unique column name",
+                    )
+                )
 
             # If setting PK, unset existing PK (MVP allows only one PK)
             if new_col.primary_key:
                 if new_col.dtype != "int":
-                    raise ValueError("Primary key must be dtype=int in this MVP.")
+                    raise ValueError(
+                        _gui_error(
+                            "Add column / Primary key",
+                            "primary key must be dtype=int in this MVP",
+                            "change dtype to 'int' or disable Primary key",
+                        )
+                    )
                 cols = [ColumnSpec(**{**c.__dict__, "primary_key": False}) for c in cols]  # type: ignore
 
             cols.append(new_col)
@@ -1437,6 +1646,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=cols,
                 row_count=t.row_count,
                 business_key=t.business_key,
+                business_key_static_columns=t.business_key_static_columns,
+                business_key_changing_columns=t.business_key_changing_columns,
                 scd_mode=t.scd_mode,
                 scd_tracked_columns=t.scd_tracked_columns,
                 scd_active_from_column=t.scd_active_from_column,
@@ -1486,9 +1697,21 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             # prevent removing a column that is used in an FK
             for fk in self.project.foreign_keys:
                 if fk.child_table == t.table_name and fk.child_column == removed:
-                    raise ValueError("Cannot remove: column is used as a child FK.")
+                    raise ValueError(
+                        _gui_error(
+                            f"Remove column / Table '{t.table_name}', column '{removed}'",
+                            "column is used as a child FK",
+                            "remove the related FK first",
+                        )
+                    )
                 if fk.parent_table == t.table_name and fk.parent_column == removed:
-                    raise ValueError("Cannot remove: column is used as a parent PK reference in an FK.")
+                    raise ValueError(
+                        _gui_error(
+                            f"Remove column / Table '{t.table_name}', column '{removed}'",
+                            "column is referenced as a parent FK target",
+                            "remove the related FK first",
+                        )
+                    )
 
             cols.pop(col_idx)
 
@@ -1498,6 +1721,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=cols,
                 row_count=t.row_count,
                 business_key=t.business_key,
+                business_key_static_columns=t.business_key_static_columns,
+                business_key_changing_columns=t.business_key_changing_columns,
                 scd_mode=t.scd_mode,
                 scd_tracked_columns=t.scd_tracked_columns,
                 scd_active_from_column=t.scd_active_from_column,
@@ -1544,6 +1769,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=cols,
                 row_count=t.row_count,
                 business_key=t.business_key,
+                business_key_static_columns=t.business_key_static_columns,
+                business_key_changing_columns=t.business_key_changing_columns,
                 scd_mode=t.scd_mode,
                 scd_tracked_columns=t.scd_tracked_columns,
                 scd_active_from_column=t.scd_active_from_column,
@@ -1580,34 +1807,94 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             child_col = self.fk_child_column_var.get().strip()
 
             if not parent or not child or not child_col:
-                raise ValueError("Choose parent table, child table, and child FK column.")
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship",
+                        "parent table, child table, and child FK column are required",
+                        "choose all three fields before adding the relationship",
+                    )
+                )
 
             if parent == child:
-                raise ValueError("Parent table and child table must be different.")
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship",
+                        "parent and child tables must be different",
+                        "choose two different tables",
+                    )
+                )
 
             parent_pk = self._table_pk_name(parent)
             child_pk = self._table_pk_name(child)
 
-            min_k = int(self.fk_min_children_var.get().strip())
-            max_k = int(self.fk_max_children_var.get().strip())
+            try:
+                min_k = int(self.fk_min_children_var.get().strip())
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship / Cardinality",
+                        f"min_children '{self.fk_min_children_var.get()}' must be an integer",
+                        "enter a whole number for Min children",
+                    )
+                ) from exc
+            try:
+                max_k = int(self.fk_max_children_var.get().strip())
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship / Cardinality",
+                        f"max_children '{self.fk_max_children_var.get()}' must be an integer",
+                        "enter a whole number for Max children",
+                    )
+                ) from exc
             if min_k <= 0 or max_k <= 0:
-                raise ValueError("Min/max children must be > 0.")
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship / Cardinality",
+                        "min_children and max_children must be > 0",
+                        "enter positive integer bounds",
+                    )
+                )
             if min_k > max_k:
-                raise ValueError("Min children cannot exceed max children.")
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship / Cardinality",
+                        "min_children cannot exceed max_children",
+                        "set min_children <= max_children",
+                    )
+                )
 
             # # MVP constraint: child can only have one FK
             # if any(fk.child_table == child for fk in self.project.foreign_keys):
             #     raise ValueError(f"Table '{child}' already has a foreign key (MVP supports 1 FK per child table).")
 
             if child_col == child_pk:
-                raise ValueError("Child FK column cannot be the child's primary key column.")
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship / Child FK column",
+                        "child FK column cannot be the child primary key",
+                        "choose a non-PK int column for the child FK",
+                    )
+                )
 
             if child_col not in self._int_columns(child):
-                raise ValueError("Child FK column must be an int column.")
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship / Child FK column",
+                        "child FK column must be dtype int",
+                        "choose an int column in the child table",
+                    )
+                )
             
             # A child column can only be used by one FK
             if any(fk.child_table == child and fk.child_column == child_col for fk in self.project.foreign_keys):
-                raise ValueError(f"Column '{child}.{child_col}' is already used as a foreign key.")
+                raise ValueError(
+                    _gui_error(
+                        "Add relationship / Child FK column",
+                        f"column '{child}.{child_col}' is already used as a foreign key",
+                        "choose a different child column",
+                    )
+                )
 
 
             fks = list(self.project.foreign_keys)
@@ -1793,7 +2080,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # Defensive fallback: export options are validated above.
         messagebox.showerror(
             "Invalid export option",
-            f"Unsupported export option '{export_option}'. Fix: choose a supported export option.",
+            _gui_error(
+                "Generate / Preview / Export / SQLite panel",
+                f"unsupported export option '{export_option}'",
+                "choose one of the supported export options",
+            ),
         )
 
     def _on_export_csv(self) -> None:
@@ -1834,7 +2125,14 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         db_path = self.db_path_var.get().strip()
         if not db_path:
-            messagebox.showerror("Missing DB path", "Please choose a SQLite DB path.")
+            messagebox.showerror(
+                "Missing DB path",
+                _gui_error(
+                    "Generate / Preview / Export / SQLite panel",
+                    "SQLite DB path is required",
+                    "choose a SQLite database file path",
+                ),
+            )
             return
 
         try:
@@ -1910,6 +2208,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     row_count=rc,
                     columns=t.columns,
                     business_key=t.business_key,
+                    business_key_static_columns=t.business_key_static_columns,
+                    business_key_changing_columns=t.business_key_changing_columns,
                     scd_mode=t.scd_mode,
                     scd_tracked_columns=t.scd_tracked_columns,
                     scd_active_from_column=t.scd_active_from_column,
@@ -1929,7 +2229,14 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             return
 
         if self.last_validation_errors > 0:
-            messagebox.showerror("Cannot generate", "Schema has validation errors. Fix them first.")
+            messagebox.showerror(
+                "Cannot generate",
+                _gui_error(
+                    "Generate sample action",
+                    "schema has validation errors",
+                    "run validation and resolve all error cells first",
+                ),
+            )
             return
 
         try:

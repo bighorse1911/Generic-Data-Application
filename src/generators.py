@@ -42,6 +42,10 @@ def get_generator(name: str) -> GeneratorFn:
         raise KeyError(f"Unknown generator '{name}'. Registered: {sorted(REGISTRY.keys())}")
     return REGISTRY[name]
 
+def _generator_error(location: str, issue: str, hint: str) -> str:
+    return f"{location}: {issue}. Fix: {hint}."
+
+
 def _bounded_uniform_float(
     params: Dict[str, Any],
     ctx: GenContext,
@@ -131,7 +135,13 @@ def gen_date(params: Dict[str, Any], ctx: GenContext) -> str:
     start = date.fromisoformat(start_s)
     end = date.fromisoformat(end_s)
     if end < start:
-        raise ValueError("date generator: end < start")
+        raise ValueError(
+            _generator_error(
+                "Generator 'date'",
+                "params.end is earlier than params.start",
+                "set params.end >= params.start",
+            )
+        )
     days = (end - start).days
     d = start + timedelta(days=ctx.rng.randint(0, days))
     return d.isoformat()
@@ -154,7 +164,13 @@ def gen_timestamp_utc(params: Dict[str, Any], ctx: GenContext) -> str:
     start = parse(params.get("start", "2000-01-01T00:00:00Z"))
     end = parse(params.get("end", "2026-12-31T23:59:59Z"))
     if end < start:
-        raise ValueError("timestamp_utc generator: end < start")
+        raise ValueError(
+            _generator_error(
+                "Generator 'timestamp_utc'",
+                "params.end is earlier than params.start",
+                "set params.end >= params.start",
+            )
+        )
 
     span = int((end - start).total_seconds())
     dt = start + timedelta(seconds=ctx.rng.randint(0, span))
@@ -186,7 +202,24 @@ def gen_sample_csv(params: Dict[str, Any], ctx: GenContext) -> str:
             "Fix: set params.column_index to 0 or greater."
         )
 
-    values = load_csv_column(path, col, skip_header=True)
+    try:
+        values = load_csv_column(path, col, skip_header=True)
+    except FileNotFoundError as exc:
+        raise ValueError(
+            _generator_error(
+                f"Table '{ctx.table}', generator 'sample_csv'",
+                f"params.path '{path}' does not exist",
+                "set params.path to an existing CSV file path",
+            )
+        ) from exc
+    except ValueError as exc:
+        raise ValueError(
+            _generator_error(
+                f"Table '{ctx.table}', generator 'sample_csv'",
+                f"no non-empty values were loaded from column_index={col}",
+                "choose a CSV column with non-empty values or change params.column_index",
+            )
+        ) from exc
     return ctx.rng.choice(values)
 
 
@@ -241,12 +274,24 @@ def gen_choice_weighted(params, ctx):
     choices = params.get("choices", None)
     weights = params.get("weights", None)
     if not isinstance(choices, list) or not choices:
-        raise ValueError("choice_weighted requires params.choices = [...]")
+        raise ValueError(
+            _generator_error(
+                "Generator 'choice_weighted'",
+                "params.choices must be a non-empty list",
+                "set params.choices to one or more values",
+            )
+        )
     if weights is None:
         # equal weights
         return ctx.rng.choice(choices)
     if not isinstance(weights, list) or len(weights) != len(choices):
-        raise ValueError("choice_weighted requires params.weights same length as choices")
+        raise ValueError(
+            _generator_error(
+                "Generator 'choice_weighted'",
+                "params.weights must match params.choices length",
+                "provide one numeric weight per choice or omit params.weights",
+            )
+        )
     return ctx.rng.choices(choices, weights=weights, k=1)[0]
 
 

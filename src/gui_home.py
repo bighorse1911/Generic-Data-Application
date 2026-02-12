@@ -28,7 +28,7 @@ class HomeScreen(ttk.Frame):
 
         ttk.Button(
             card,
-            text="Schema Project Designer -> Tables, FKs, generation, JSON, SQLite",
+            text="Schema Project Designer (Production) -> modular layout, tables/FKs/generation/JSON/SQLite",
             command=lambda: self.app.show_screen("schema_project"),
         ).pack(fill="x", pady=6)
 
@@ -36,6 +36,12 @@ class HomeScreen(ttk.Frame):
             card,
             text="Schema Project Designer (Kit Preview) -> modular layout components",
             command=lambda: self.app.show_screen("schema_project_kit"),
+        ).pack(fill="x", pady=6)
+
+        ttk.Button(
+            card,
+            text="Schema Project Designer (Legacy Fallback) -> pre-modular screen",
+            command=lambda: self.app.show_screen("schema_project_legacy"),
         ).pack(fill="x", pady=6)
 
 
@@ -58,8 +64,9 @@ class App(ttk.Frame):
 
         self.screens: dict[str, ttk.Frame] = {}
         self.screens["home"] = HomeScreen(self.screen_container, self)
-        self.screens["schema_project"] = SchemaProjectDesignerScreen(self.screen_container, self, cfg)
+        self.screens["schema_project"] = SchemaProjectDesignerKitScreen(self.screen_container, self, cfg)
         self.screens["schema_project_kit"] = SchemaProjectDesignerKitScreen(self.screen_container, self, cfg)
+        self.screens["schema_project_legacy"] = SchemaProjectDesignerScreen(self.screen_container, self, cfg)
 
         for frame in self.screens.values():
             frame.grid(row=0, column=0, sticky="nsew")

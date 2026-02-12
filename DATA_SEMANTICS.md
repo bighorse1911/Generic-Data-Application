@@ -23,6 +23,9 @@ Direction 3 (float -> decimal) is completed.
 - Backward compatibility policy: existing JSON schemas using `float` remain supported.
 - GUI authoring policy: new columns use `decimal`; GUI blocks new `float` column creation.
 - SCD Type 1 and Type 2 are implemented in generator + validator + JSON IO + GUI authoring controls (business-key linkage, tracked slowly-changing columns, and SCD2 active periods).
+- Business-key behavior controls are implemented end-to-end:
+  - `business_key_static_columns` for attributes that must remain stable per business key across versions,
+  - `business_key_changing_columns` for attributes that are expected to change per business key across versions.
 - SCD current limitation: `scd2` is validated for root tables only (no incoming FKs) in phase 1.
 
 ## Core design principle
@@ -189,6 +192,16 @@ Definition:
 Rules:
 - Nullable only when explicitly allowed by model semantics.
 
+Optional behavior fields:
+- `business_key_static_columns`: non-key attributes that should stay constant for the same business key across records.
+- `business_key_changing_columns`: non-key attributes that are expected to change for the same business key across records.
+
+Validation rules:
+- Static/changing columns must reference existing columns.
+- Static/changing columns must not overlap.
+- Business key columns cannot be listed in `business_key_changing_columns`.
+- When both `business_key_changing_columns` and `scd_tracked_columns` are provided, they must match.
+
 ## 3.3 Slowly Changing Dimension Type 1 (SCD1) (phase 1 implemented)
 
 Definition:
@@ -198,7 +211,7 @@ Definition:
 
 Phase 1 schema contract (implemented):
 - SCD1 links to a business key definition for the table.
-- SCD1 defines which columns are "slowly changing" (`tracked_columns`).
+- SCD1 defines which columns are "slowly changing" (`business_key_changing_columns` or legacy `scd_tracked_columns`).
 - Changes to tracked columns overwrite values in the existing row for the same business key.
 
 Rules:
@@ -224,7 +237,8 @@ Definition:
 Phase 1 schema contract (implemented):
 - SCD2 links to a business key definition for the table.
 - SCD2 defines active-period tracking using `date` or `datetime` at table scope.
-- SCD2 defines which columns are "slowly changing" (`tracked_columns`).
+- SCD2 defines which columns are "slowly changing" (`business_key_changing_columns` or legacy `scd_tracked_columns`).
+- SCD2 supports optional `business_key_static_columns` to explicitly pin stable attributes across generated versions.
 - Changes to tracked columns create a new version row for the same business key.
 
 Rules:

@@ -35,7 +35,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `build_relationships_panel()`
   - `build_generate_panel()`
   - `build_status_bar()`
-- Kit-based preview screen is additive and reachable from Home; legacy screen remains intact.
+- `schema_project` production route now uses the modular `gui_kit` composition path.
+- Legacy pre-modular screen remains available as fallback route `schema_project_legacy` during transition.
 - GUI design changes must be recorded in `GUI_WIREFRAME_SCHEMA.md` and `docs/decisions/`.
 
 ## Data Generation
@@ -51,7 +52,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - SCD semantics options are defined in DATA_SEMANTICS.md and implemented end-to-end:
   - SCD1 (business-key-linked overwrite-in-place with configurable tracked slowly-changing columns),
   - SCD2 (business-key-linked version rows with active period `date|datetime` and configurable tracked slowly-changing columns),
-  - GUI authoring/editing controls for business key, SCD mode, tracked columns, and SCD2 active-period columns are available in both schema designer screens.
+  - Business-key behavior controls support explicit static vs changing attribute column definitions.
+  - GUI authoring/editing controls for business key, business-key static columns, business-key changing columns, SCD mode, tracked columns, and SCD2 active-period columns are available in both schema designer screens.
   Current limitation: `scd2` remains validated for root tables only (no incoming FKs).
 - Supports:
   - CSV sampling

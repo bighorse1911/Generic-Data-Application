@@ -14,6 +14,7 @@ from src.gui_schema_project import (
     GENERATORS,
     validate_export_option,
 )
+from src.gui_schema_project_kit import SchemaProjectDesignerKitScreen
 from src.schema_project_io import load_project_from_json, save_project_to_json
 from src.schema_project_model import ColumnSpec, ForeignKeySpec, SchemaProject, TableSpec, validate_project
 from src.storage_sqlite_project import create_tables, insert_project_rows
@@ -246,6 +247,32 @@ class TestInvariants(unittest.TestCase):
         self.assertIn("Table 'people'", msg)
         self.assertIn("column 'score'", msg)
         self.assertIn("min_value cannot exceed max_value", msg)
+        self.assertIn("Fix:", msg)
+
+    def test_runtime_generator_error_includes_location_issue_and_fix(self):
+        bad = SchemaProject(
+            name="bad_runtime_generator",
+            seed=1,
+            tables=[
+                TableSpec(
+                    table_name="people",
+                    row_count=1,
+                    columns=[
+                        ColumnSpec("id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("value", "text", nullable=False, generator="not_registered"),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            generate_project_rows(bad)
+
+        msg = str(ctx.exception)
+        self.assertIn("Table 'people', column 'value'", msg)
+        self.assertIn("unknown generator 'not_registered'", msg)
+        self.assertIn("Fix:", msg)
 
     def test_export_option_validation_accepts_supported_values(self):
         self.assertEqual(validate_export_option(EXPORT_OPTION_CSV), EXPORT_OPTION_CSV)
@@ -280,6 +307,9 @@ class TestInvariants(unittest.TestCase):
             app = App(root, AppConfig())
             self.assertIn("home", app.screens)
             self.assertIn("schema_project", app.screens)
+            self.assertIn("schema_project_kit", app.screens)
+            self.assertIn("schema_project_legacy", app.screens)
+            self.assertIsInstance(app.screens["schema_project"], SchemaProjectDesignerKitScreen)
 
             schema_screen = app.screens["schema_project"]
             self.assertEqual(schema_screen.export_option_var.get(), EXPORT_OPTION_CSV)
@@ -287,6 +317,18 @@ class TestInvariants(unittest.TestCase):
                 tuple(schema_screen.export_option_combo["values"]),
                 (EXPORT_OPTION_CSV, EXPORT_OPTION_SQLITE),
             )
+
+            schema_screen.seed_var.set("not_a_number")
+            with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
+                schema_screen._run_validation()
+                showerror.assert_called_once()
+                title, message = showerror.call_args.args
+            self.assertEqual(title, "Project error")
+            self.assertIn("Project / Seed", message)
+            self.assertIn("must be an integer", message)
+            self.assertIn("Fix:", message)
+            schema_screen.seed_var.set(str(AppConfig().seed))
+            schema_screen._run_validation()
 
             called: list[str] = []
             schema_screen._on_export_csv = lambda: called.append("csv")
@@ -300,6 +342,21 @@ class TestInvariants(unittest.TestCase):
 
             schema_screen._add_table()
             before_columns = len(schema_screen.project.tables[0].columns)
+
+            schema_screen.col_name_var.set("bad_min")
+            schema_screen.col_dtype_var.set("int")
+            schema_screen.col_min_var.set("abc")
+            schema_screen.col_max_var.set("")
+            with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
+                schema_screen._add_column()
+                showerror.assert_called_once()
+                title, message = showerror.call_args.args
+            self.assertEqual(title, "Add column failed")
+            self.assertIn("Add column / Min value", message)
+            self.assertIn("must be numeric", message)
+            self.assertIn("Fix:", message)
+            self.assertEqual(len(schema_screen.project.tables[0].columns), before_columns)
+
             schema_screen.col_name_var.set("legacy_score")
             schema_screen.col_dtype_var.set("float")
             with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
@@ -333,6 +390,28 @@ class TestInvariants(unittest.TestCase):
                 any("legacy dtype 'float'" in m and "prefer dtype='decimal'" in m for m in warning_messages),
                 "GUI validation should warn when legacy float dtype is used. "
                 "Fix: surface a warning with a decimal migration hint for float columns.",
+            )
+
+            duplicate_columns_project = SchemaProject(
+                name="duplicate_columns",
+                seed=9,
+                tables=[
+                    TableSpec(
+                        table_name="dup",
+                        row_count=1,
+                        columns=[
+                            ColumnSpec("dup_id", "int", nullable=False, primary_key=True),
+                            ColumnSpec("dup_id", "text", nullable=False),
+                        ],
+                    )
+                ],
+                foreign_keys=[],
+            )
+            dup_issues = schema_screen._validate_project_detailed(duplicate_columns_project)
+            duplicate_errors = [i.message for i in dup_issues if i.severity == "error"]
+            self.assertTrue(
+                any("duplicate column names" in m and "Fix:" in m for m in duplicate_errors),
+                "GUI validation errors must include location, issue, and fix hint.",
             )
 
             with self.assertRaisesRegex(KeyError, "Unknown screen 'missing'"):

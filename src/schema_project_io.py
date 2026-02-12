@@ -112,6 +112,8 @@ def load_project_from_json(path: str) -> SchemaProject:
                 columns=cols,
                 row_count=int(t.get("row_count", 100)),
                 business_key=t.get("business_key"),
+                business_key_static_columns=t.get("business_key_static_columns"),
+                business_key_changing_columns=t.get("business_key_changing_columns"),
                 scd_mode=t.get("scd_mode"),
                 scd_tracked_columns=t.get("scd_tracked_columns"),
                 scd_active_from_column=t.get("scd_active_from_column"),
