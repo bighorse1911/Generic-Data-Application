@@ -10,6 +10,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Deterministic generation via seed
 - CSV, SQLite output
 - GUI schema designer
+- GUI data generation behavior reference page
 
 ## Architecture
 - Tkinter GUI
@@ -24,6 +25,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `Tabs`: notebook wrapper for sectioned workflows
   - `FormBuilder`: consistent label+input row construction
   - `TableView`: Treeview wrapper with both scrollbars + column sizing
+  - `theme`: shared dark-mode styling for kit-based screens
 
 ## Screen Composition Standard
 - New modular screens should split UI into dedicated section builders, not giant build methods.
@@ -37,6 +39,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `build_status_bar()`
 - `schema_project` production route now uses the modular `gui_kit` composition path.
 - Legacy pre-modular screen remains available as fallback route `schema_project_legacy` during transition.
+- Home screen includes a dedicated route to a read-only generation behavior guide page.
+- Column editor supports add, remove, move, and in-place edit of selected columns.
 - GUI design changes must be recorded in `GUI_WIREFRAME_SCHEMA.md` and `docs/decisions/`.
 
 ## Data Generation
@@ -57,6 +61,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
   Current limitation: `scd2` remains validated for root tables only (no incoming FKs).
 - Supports:
   - CSV sampling
+  - Repo-root-relative CSV sample paths in schema JSON (legacy absolute paths normalized when possible)
+  - Conditional generators (phase 1 `if_then`)
   - Distributions (uniform, normal, lognormal)
   - Dates, timestamps, semantic numeric generators (lat/lon/money/percent)
   - Correlated columns via `depends_on`

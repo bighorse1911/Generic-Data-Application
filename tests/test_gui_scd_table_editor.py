@@ -4,6 +4,7 @@ from unittest import mock
 
 from src.config import AppConfig
 from src.gui_home import App
+from src.gui_kit.theme import DARK_BG
 
 
 class TestGuiSCDTableEditor(unittest.TestCase):
@@ -130,6 +131,54 @@ class TestGuiSCDTableEditor(unittest.TestCase):
             screen._on_create_insert_sqlite()
 
         self.assertEqual(calls, ["safe_threaded_job", "safe_threaded_job", "safe_threaded_job"])
+
+    def test_kit_screen_can_edit_selected_column(self):
+        screen = self.app.screens["schema_project_kit"]
+        screen._add_table()
+        idx = screen.selected_table_index
+        self.assertIsNotNone(idx)
+        assert idx is not None
+
+        self._add_non_nullable_column(screen, "old_name", "text")
+
+        children = screen.columns_tree.get_children()
+        self.assertGreaterEqual(len(children), 2)
+        screen.columns_tree.selection_set(children[1])
+        screen._on_column_selected()
+
+        screen.col_name_var.set("new_name")
+        screen.col_pattern_var.set("^[A-Z]+$")
+        screen.col_depends_var.set(f"{screen.project.tables[idx].table_name}_id")
+        screen._apply_selected_column_changes()
+
+        table = screen.project.tables[idx]
+        names = [c.name for c in table.columns]
+        self.assertIn("new_name", names)
+        self.assertNotIn("old_name", names)
+        edited = next(c for c in table.columns if c.name == "new_name")
+        self.assertEqual(edited.pattern, "^[A-Z]+$")
+        self.assertEqual(edited.depends_on, [f"{table.table_name}_id"])
+
+    def test_edit_column_requires_selected_row_with_actionable_error(self):
+        screen = self.app.screens["schema_project_kit"]
+        screen._add_table()
+        self._add_non_nullable_column(screen, "city", "text")
+        screen.columns_tree.selection_remove(screen.columns_tree.selection())
+
+        with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
+            screen._apply_selected_column_changes()
+            showerror.assert_called_once()
+            title, message = showerror.call_args.args
+
+        self.assertEqual(title, "Edit column failed")
+        self.assertIn("Edit column", message)
+        self.assertIn("no column is selected", message)
+        self.assertIn("Fix:", message)
+
+    def test_kit_screen_applies_dark_mode(self):
+        screen = self.app.screens["schema_project_kit"]
+        self.assertTrue(getattr(screen, "kit_dark_mode_enabled", False))
+        self.assertEqual(str(screen.scroll.canvas.cget("background")).lower(), DARK_BG.lower())
 
 
 if __name__ == "__main__":

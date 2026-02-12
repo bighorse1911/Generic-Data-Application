@@ -7,6 +7,7 @@ from src.gui_kit.layout import BaseScreen
 from src.gui_kit.panels import CollapsiblePanel, Tabs
 from src.gui_kit.scroll import ScrollFrame
 from src.gui_kit.table import TableView
+from src.gui_kit.theme import apply_dark_mode
 from src.schema_project_model import validate_project
 from src.gui_schema_project import (
     DTYPES,
@@ -47,6 +48,9 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.build_relationships_panel()
         self.build_generate_panel()
         self.build_status_bar()
+
+        apply_dark_mode(self.winfo_toplevel(), self)
+        self.kit_dark_mode_enabled = True
 
     def build_header(self) -> ttk.Frame:
         return BaseScreen.build_header(
@@ -221,6 +225,12 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
 
         self.add_col_btn = ttk.Button(editor_box, text="Add column to selected table", command=self._add_column)
         self.add_col_btn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.edit_col_btn = ttk.Button(
+            editor_box,
+            text="Apply edits to selected column",
+            command=self._apply_selected_column_changes,
+        )
+        self.edit_col_btn.grid(row=3, column=0, sticky="ew", pady=(6, 0))
 
         columns_box = ttk.LabelFrame(panel.body, text="Columns in selected table", padding=8)
         columns_box.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
@@ -234,6 +244,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.columns_tree.column("name", width=140)
         self.columns_tree.column("choices", width=180)
         self.columns_tree.column("pattern", width=180)
+        self.columns_tree.bind("<<TreeviewSelect>>", self._on_column_selected)
 
         column_actions = ttk.Frame(columns_box)
         column_actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))

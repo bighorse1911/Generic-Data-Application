@@ -25,7 +25,7 @@ from src.schema_project_io import save_project_to_json, load_project_from_json
 logger = logging.getLogger("gui_schema_project")
 
 DTYPES = ["int", "decimal", "text", "bool", "date", "datetime"]
-GENERATORS = ["", "sample_csv", "date", "timestamp_utc", "latitude", "longitude", "money", "percent"]
+GENERATORS = ["", "sample_csv", "if_then", "date", "timestamp_utc", "latitude", "longitude", "money", "percent"]
 SCD_MODES = ["", "scd1", "scd2"]
 EXPORT_OPTION_CSV = "CSV (folder)"
 EXPORT_OPTION_SQLITE = "SQLite (database)"
@@ -681,12 +681,17 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         #Adds Column
         self.add_col_btn = ttk.Button(col, text="Add column to selected table", command=self._add_column)
         self.add_col_btn.grid(row=8, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
+        self.edit_col_btn = ttk.Button(
+            col,
+            text="Apply edits to selected column",
+            command=self._apply_selected_column_changes,
+        )
+        self.edit_col_btn.grid(row=9, column=0, columnspan=4, sticky="ew", padx=6, pady=(6, 0))
 
         #Correlation stuff
         ttk.Label(col, text="Depends on (comma):").grid(row=7, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(col, textvariable=self.col_depends_var).grid(row=7, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
-        dep_s = self.col_depends_var.get().strip()
-        depends = [d.strip() for d in dep_s.split(",") if d.strip()] if dep_s else None
+        self.col_depends_entry = ttk.Entry(col, textvariable=self.col_depends_var)
+        self.col_depends_entry.grid(row=7, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
 
 
         # Columns table (pack inside cols_frame)
@@ -701,6 +706,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.columns_tree.column("name", width=140)
         self.columns_tree.column("choices", width=180)
         self.columns_tree.column("pattern", width=180)
+        self.columns_tree.bind("<<TreeviewSelect>>", self._on_column_selected)
 
         yscroll = ttk.Scrollbar(cols_frame, orient="vertical", command=self.columns_tree.yview)
         self.columns_tree.configure(yscrollcommand=yscroll.set)
@@ -884,7 +890,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_max_entry.configure(state=state)
         self.col_choices_entry.configure(state=state)
         self.col_pattern_entry.configure(state=state)
+        self.col_generator_combo.configure(state=("readonly" if enabled else tk.DISABLED))
+        self.col_params_entry.configure(state=state)
+        self.col_depends_entry.configure(state=state)
         self.add_col_btn.configure(state=state)
+        self.edit_col_btn.configure(state=state)
 
     def _refresh_tables_list(self) -> None:
         self.tables_list.delete(0, tk.END)
@@ -917,6 +927,148 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         if not sel:
             return None
         return int(self.columns_tree.item(sel[0], "tags")[0])
+
+    def _clear_column_editor(self) -> None:
+        self.col_name_var.set("")
+        self.col_dtype_var.set("text")
+        self.col_nullable_var.set(True)
+        self.col_pk_var.set(False)
+        self.col_unique_var.set(False)
+        self.col_min_var.set("")
+        self.col_max_var.set("")
+        self.col_choices_var.set("")
+        self.col_pattern_var.set("")
+        self.col_generator_var.set("")
+        self.col_params_var.set("")
+        self.col_depends_var.set("")
+
+    def _load_column_into_editor(self, col: ColumnSpec) -> None:
+        self.col_name_var.set(col.name)
+        dtype = "decimal" if col.dtype == "float" else col.dtype
+        self.col_dtype_var.set(dtype)
+        self.col_nullable_var.set(bool(col.nullable))
+        self.col_pk_var.set(bool(col.primary_key))
+        self.col_unique_var.set(bool(col.unique))
+        self.col_min_var.set("" if col.min_value is None else str(col.min_value))
+        self.col_max_var.set("" if col.max_value is None else str(col.max_value))
+        self.col_choices_var.set(", ".join(col.choices) if col.choices else "")
+        self.col_pattern_var.set(col.pattern or "")
+        self.col_generator_var.set(col.generator or "")
+        if isinstance(col.params, dict):
+            self.col_params_var.set(json.dumps(col.params))
+        else:
+            self.col_params_var.set("")
+        self.col_depends_var.set(", ".join(col.depends_on) if col.depends_on else "")
+
+    def _on_column_selected(self, _event=None) -> None:
+        if self.selected_table_index is None:
+            return
+        col_idx = self._selected_column_index()
+        if col_idx is None:
+            return
+        t = self.project.tables[self.selected_table_index]
+        self._load_column_into_editor(t.columns[col_idx])
+
+    def _column_spec_from_editor(self, *, action_prefix: str) -> ColumnSpec:
+        name = self.col_name_var.get().strip()
+        dtype = self.col_dtype_var.get().strip()
+
+        if dtype == "float":
+            raise ValueError(
+                f"{action_prefix} / Type: dtype 'float' is deprecated for new GUI columns. "
+                "Fix: choose dtype='decimal' for new columns; keep legacy float only in loaded JSON."
+            )
+        if dtype not in DTYPES:
+            allowed = ", ".join(DTYPES)
+            raise ValueError(
+                f"{action_prefix} / Type: unsupported dtype '{dtype}'. "
+                f"Fix: choose one of: {allowed}."
+            )
+
+        if not name:
+            raise ValueError(
+                _gui_error(
+                    f"{action_prefix} / Name",
+                    "column name cannot be empty",
+                    "enter a non-empty column name",
+                )
+            )
+
+        nullable = bool(self.col_nullable_var.get())
+        pk = bool(self.col_pk_var.get())
+        unique = bool(self.col_unique_var.get())
+
+        min_s = self.col_min_var.get().strip()
+        max_s = self.col_max_var.get().strip()
+        try:
+            min_v = float(min_s) if min_s != "" else None
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _gui_error(
+                    f"{action_prefix} / Min value",
+                    f"min value '{self.col_min_var.get()}' must be numeric",
+                    "enter a numeric min value or leave it empty",
+                )
+            ) from exc
+        try:
+            max_v = float(max_s) if max_s != "" else None
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _gui_error(
+                    f"{action_prefix} / Max value",
+                    f"max value '{self.col_max_var.get()}' must be numeric",
+                    "enter a numeric max value or leave it empty",
+                )
+            ) from exc
+
+        choices_s = self.col_choices_var.get().strip()
+        choices = [c.strip() for c in choices_s.split(",") if c.strip()] if choices_s else None
+        pattern = self.col_pattern_var.get().strip() or None
+
+        gen_name = self.col_generator_var.get().strip() or None
+        params_text = self.col_params_var.get().strip()
+        params = None
+        if params_text:
+            try:
+                obj = json.loads(params_text)
+                if not isinstance(obj, dict):
+                    raise ValueError(
+                        _gui_error(
+                            f"{action_prefix} / Params JSON",
+                            "value must be a JSON object",
+                            "use an object like {\"path\": \"...\", \"column_index\": 0}",
+                        )
+                    )
+                params = obj
+            except Exception as exc:
+                raise ValueError(
+                    _gui_error(
+                        f"{action_prefix} / Params JSON",
+                        f"invalid JSON ({exc})",
+                        "provide valid JSON object syntax or leave Params JSON empty",
+                    )
+                ) from exc
+
+        depends_on = self._parse_column_name_csv(
+            self.col_depends_var.get(),
+            location=action_prefix,
+            field_name="depends_on",
+        )
+
+        return ColumnSpec(
+            name=name,
+            dtype=dtype,
+            nullable=nullable,
+            primary_key=pk,
+            unique=unique,
+            min_value=min_v,
+            max_value=max_v,
+            choices=choices,
+            pattern=pattern,
+            generator=gen_name,
+            params=params,
+            depends_on=depends_on,
+        )
 
     def _parse_column_name_csv(
         self,
@@ -1357,6 +1509,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         if not sel:
             self.selected_table_index = None
             self._set_table_editor_enabled(False)
+            self._clear_column_editor()
             self._refresh_columns_tree()
             return
         self.selected_table_index = int(sel[0])
@@ -1514,107 +1667,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             idx = self.selected_table_index
             t = self.project.tables[idx]
 
-            name = self.col_name_var.get().strip()
-            dtype = self.col_dtype_var.get().strip()
-
-            if dtype == "float":
-                raise ValueError(
-                    "Add column / Type: dtype 'float' is deprecated for new GUI columns. "
-                    "Fix: choose dtype='decimal' for new columns; keep legacy float only in loaded JSON."
-                )
-            if dtype not in DTYPES:
-                allowed = ", ".join(DTYPES)
-                raise ValueError(
-                    f"Add column / Type: unsupported dtype '{dtype}'. "
-                    f"Fix: choose one of: {allowed}."
-                )
-
-            gen_name = self.col_generator_var.get().strip() or None
-
-            params_text = self.col_params_var.get().strip()
-            params = None
-            if params_text:
-                try:
-                    obj = json.loads(params_text)
-                    if not isinstance(obj, dict):
-                        raise ValueError(
-                            _gui_error(
-                                "Add column / Params JSON",
-                                "value must be a JSON object",
-                                "use an object like {\"path\": \"...\", \"column_index\": 0}",
-                            )
-                        )
-                    params = obj
-                except Exception as exc:
-                    raise ValueError(
-                        _gui_error(
-                            "Add column / Params JSON",
-                            f"invalid JSON ({exc})",
-                            "provide valid JSON object syntax or leave Params JSON empty",
-                        )
-                    ) from exc
-
-
-            if not name:
-                raise ValueError(
-                    _gui_error(
-                        "Add column / Name",
-                        "column name cannot be empty",
-                        "enter a non-empty column name",
-                    )
-                )
-
-            nullable = bool(self.col_nullable_var.get())
-            pk = bool(self.col_pk_var.get())
-            unique = bool(self.col_unique_var.get())
-
-            min_s = self.col_min_var.get().strip()
-            max_s = self.col_max_var.get().strip()
-            try:
-                min_v = float(min_s) if min_s != "" else None
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    _gui_error(
-                        "Add column / Min value",
-                        f"min value '{self.col_min_var.get()}' must be numeric",
-                        "enter a numeric min value or leave it empty",
-                    )
-                ) from exc
-            try:
-                max_v = float(max_s) if max_s != "" else None
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    _gui_error(
-                        "Add column / Max value",
-                        f"max value '{self.col_max_var.get()}' must be numeric",
-                        "enter a numeric max value or leave it empty",
-                    )
-                ) from exc
-
-            choices_s = self.col_choices_var.get().strip()
-            choices = [c.strip() for c in choices_s.split(",") if c.strip()] if choices_s else None
-
-            pattern = self.col_pattern_var.get().strip() or None
-
-            new_col = ColumnSpec(
-                    name=name,
-                    dtype=dtype,
-                    nullable=nullable,
-                    primary_key=pk,
-                    unique=unique,
-                    min_value=min_v,
-                    max_value=max_v,
-                    choices=choices,
-                    pattern=pattern,
-
-                    generator=gen_name,
-                    params=params,
-                )
-
-            self.col_generator_var.set("")
-            self.col_params_var.set("")
-
-
+            new_col = self._column_spec_from_editor(action_prefix="Add column")
             cols = list(t.columns)
 
             if any(c.name == new_col.name for c in cols):
@@ -1664,13 +1717,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
             self.project = new_project
 
-            # clear form
-            self.col_name_var.set("")
-            self.col_min_var.set("")
-            self.col_max_var.set("")
-            self.col_choices_var.set("")
-            self.col_pattern_var.set("")
-            self.col_pk_var.set(False)
+            self._clear_column_editor()
 
             self._refresh_columns_tree()
             self._refresh_fk_dropdowns()
@@ -1678,6 +1725,90 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set("Column added.")
         except Exception as exc:
             messagebox.showerror("Add column failed", str(exc))
+        self._run_validation()
+
+    def _apply_selected_column_changes(self) -> None:
+        if self.selected_table_index is None:
+            return
+
+        try:
+            col_idx = self._selected_column_index()
+            if col_idx is None:
+                raise ValueError(
+                    _gui_error(
+                        "Edit column",
+                        "no column is selected",
+                        "select a column in the Columns table first",
+                    )
+                )
+
+            self._apply_project_vars_to_model()
+            t_idx = self.selected_table_index
+            t = self.project.tables[t_idx]
+            old_col = t.columns[col_idx]
+            edited_col = self._column_spec_from_editor(action_prefix="Edit column")
+
+            cols = list(t.columns)
+            if any(i != col_idx and c.name == edited_col.name for i, c in enumerate(cols)):
+                raise ValueError(
+                    _gui_error(
+                        f"Table '{t.table_name}', column '{edited_col.name}'",
+                        "column already exists",
+                        "choose a unique column name",
+                    )
+                )
+
+            if edited_col.primary_key:
+                if edited_col.dtype != "int":
+                    raise ValueError(
+                        _gui_error(
+                            "Edit column / Primary key",
+                            "primary key must be dtype=int in this MVP",
+                            "change dtype to 'int' or disable Primary key",
+                        )
+                    )
+                cols = [
+                    ColumnSpec(**{**c.__dict__, "primary_key": False}) if i != col_idx else c
+                    for i, c in enumerate(cols)
+                ]
+
+            cols[col_idx] = edited_col
+
+            tables = list(self.project.tables)
+            tables[t_idx] = TableSpec(
+                table_name=t.table_name,
+                columns=cols,
+                row_count=t.row_count,
+                business_key=t.business_key,
+                business_key_static_columns=t.business_key_static_columns,
+                business_key_changing_columns=t.business_key_changing_columns,
+                scd_mode=t.scd_mode,
+                scd_tracked_columns=t.scd_tracked_columns,
+                scd_active_from_column=t.scd_active_from_column,
+                scd_active_to_column=t.scd_active_to_column,
+            )
+
+            new_project = SchemaProject(
+                name=self.project.name,
+                seed=self.project.seed,
+                tables=tables,
+                foreign_keys=self.project.foreign_keys,
+            )
+            validate_project(new_project)
+
+            self.project = new_project
+            self._refresh_columns_tree()
+            self._refresh_fk_dropdowns()
+
+            children = self.columns_tree.get_children()
+            if 0 <= col_idx < len(children):
+                self.columns_tree.selection_set(children[col_idx])
+                self.columns_tree.focus(children[col_idx])
+                self._on_column_selected()
+
+            self.status_var.set(f"Updated column '{old_col.name}'.")
+        except Exception as exc:
+            messagebox.showerror("Edit column failed", str(exc))
         self._run_validation()
 
     def _remove_selected_column(self) -> None:
@@ -1739,6 +1870,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
             self.project = new_project
             self._refresh_columns_tree()
+            self._clear_column_editor()
             self._refresh_fk_dropdowns()
             self.status_var.set(f"Removed column '{removed}'.")
         except Exception as exc:

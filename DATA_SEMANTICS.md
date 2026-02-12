@@ -26,6 +26,8 @@ Direction 3 (float -> decimal) is completed.
 - Business-key behavior controls are implemented end-to-end:
   - `business_key_static_columns` for attributes that must remain stable per business key across versions,
   - `business_key_changing_columns` for attributes that are expected to change per business key across versions.
+- GUI-only update (2026-02-12): column edit workflow and kit dark mode were added without changing canonical data semantics.
+- GUI-only update (2026-02-12): generation behavior guide page added to explain configuration patterns without changing canonical data semantics.
 - SCD current limitation: `scd2` is validated for root tables only (no incoming FKs) in phase 1.
 
 ## Core design principle
@@ -165,6 +167,24 @@ Examples:
 Rules:
 - Adding a new data meaning should usually add a generator, not a dtype.
 - New dtypes are rare and must represent a new storage domain.
+
+### 2.1 Conditional generator (`if_then`) (phase 1 implemented)
+
+Definition:
+- Deterministic conditional branch from another column in the same row.
+
+Params:
+- `if_column` (required): source column name in same table.
+- `operator` (optional): `==` or `!=` (default `==`).
+- `value` (required): comparison value.
+- `then_value` (required): output when condition is true.
+- `else_value` (required): output when condition is false.
+
+Rules:
+- `if_column` must exist and must not be the same as the target column.
+- Target column must include `if_column` in `depends_on` so generation order is valid.
+- `value`, `then_value`, and `else_value` must be scalar JSON values (not objects/lists).
+- Validation/runtime errors must include location + issue + fix hint.
 
 ---
 
@@ -316,6 +336,8 @@ Rules:
 - Skip header row
 - Deterministic selection
 - Cache source content by path + column
+- `params.path` may be repo-root-relative (for example `tests/fixtures/city_country_pool.csv`) or absolute; repo-root-relative references are preferred for portability.
+- JSON load/save may normalize legacy absolute repo-local paths to repo-root-relative form.
 Failure behavior:
 - Missing file -> validation error
 - Empty pool -> validation error

@@ -93,7 +93,7 @@
           "pattern": null,
           "generator": "sample_csv",
           "params": {
-            "path": "C:\\Users\\david\\OneDrive\\Documents\\Code Development\\Generic Data Application\\tests\\fixtures\\city_country_pool.csv",
+            "path": "tests/fixtures/city_country_pool.csv",
             "column_index": 0
           },
           "depends_on": null
@@ -110,7 +110,7 @@
           "pattern": null,
           "generator": "sample_csv",
           "params": {
-            "path": "C:\\Users\\david\\OneDrive\\Documents\\Code Development\\Generic Data Application\\tests\\fixtures\\city_country_pool.csv",
+            "path": "tests/fixtures/city_country_pool.csv",
             "column_index": 1
           },
           "depends_on": null
@@ -380,6 +380,8 @@
       "business_key": [
         "customer_id"
       ],
+      "business_key_static_columns": null,
+      "business_key_changing_columns": null,
       "scd_mode": "scd1",
       "scd_tracked_columns": [
         "segment"
@@ -491,6 +493,8 @@
       ],
       "row_count": 5,
       "business_key": null,
+      "business_key_static_columns": null,
+      "business_key_changing_columns": null,
       "scd_mode": null,
       "scd_tracked_columns": null,
       "scd_active_from_column": null,
@@ -583,6 +587,8 @@
       ],
       "row_count": 100,
       "business_key": null,
+      "business_key_static_columns": null,
+      "business_key_changing_columns": null,
       "scd_mode": null,
       "scd_tracked_columns": null,
       "scd_active_from_column": null,
@@ -752,6 +758,8 @@
       ],
       "row_count": 20,
       "business_key": null,
+      "business_key_static_columns": null,
+      "business_key_changing_columns": null,
       "scd_mode": null,
       "scd_tracked_columns": null,
       "scd_active_from_column": null,
@@ -766,7 +774,7 @@
           "nullable": false,
           "primary_key": false,
           "unique": false,
-          "min_value": null,
+          "min_value": 0.0,
           "max_value": null,
           "choices": null,
           "pattern": null,
@@ -824,7 +832,13 @@
           "unique": false,
           "min_value": null,
           "max_value": null,
-          "choices": null,
+          "choices": [
+            "PDAI",
+            "IPSI",
+            "Cyber",
+            "Microsoft",
+            "Losers"
+          ],
           "pattern": null,
           "generator": null,
           "params": null,
@@ -863,9 +877,14 @@
       "business_key": [
         "BK"
       ],
+      "business_key_static_columns": [
+        "Name"
+      ],
+      "business_key_changing_columns": [
+        "Org"
+      ],
       "scd_mode": "scd2",
       "scd_tracked_columns": [
-        "Name",
         "Org"
       ],
       "scd_active_from_column": "EFFECTIVE_FROM",

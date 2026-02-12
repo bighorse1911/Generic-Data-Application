@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
+from src.project_paths import resolve_repo_path
 
 DataType = Literal["int", "float", "decimal", "text", "bool", "date", "datetime"]
 
@@ -231,10 +232,11 @@ def validate_project(project: SchemaProject) -> None:
                         "Fix: set params.path to a CSV file path."
                     )
                 path = path_value.strip()
-                if not Path(path).exists():
+                resolved_path = resolve_repo_path(path)
+                if not resolved_path.exists():
                     raise ValueError(
                         f"Table '{t.table_name}', column '{c.name}': generator 'sample_csv' params.path '{path}' does not exist. "
-                        "Fix: provide an existing CSV file path."
+                        "Fix: provide an existing CSV file path (for example tests/fixtures/city_country_pool.csv)."
                     )
                 col_idx_value = params.get("column_index", 0)
                 try:
@@ -249,6 +251,56 @@ def validate_project(project: SchemaProject) -> None:
                         f"Table '{t.table_name}', column '{c.name}': generator 'sample_csv' params.column_index cannot be negative. "
                         "Fix: set params.column_index to 0 or greater."
                     )
+            if c.generator == "if_then":
+                params = c.params or {}
+                if_col = params.get("if_column")
+                if not isinstance(if_col, str) or if_col.strip() == "":
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'if_then' requires params.if_column. "
+                        "Fix: set params.if_column to an existing source column name."
+                    )
+                if_col = if_col.strip()
+                if if_col == c.name:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'if_then' cannot reference itself in params.if_column. "
+                        "Fix: choose a different source column name."
+                    )
+                if if_col not in col_map:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'if_then' params.if_column '{if_col}' was not found. "
+                        "Fix: use an existing source column name."
+                    )
+
+                depends_on = c.depends_on or []
+                if if_col not in depends_on:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'if_then' requires depends_on to include '{if_col}'. "
+                        "Fix: add the source column to depends_on so it generates first."
+                    )
+
+                op = params.get("operator", "==")
+                if not isinstance(op, str) or op not in {"==", "!="}:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'if_then' has unsupported operator '{op}'. "
+                        "Fix: use operator '==' or '!='."
+                    )
+                if "value" not in params:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'if_then' requires params.value. "
+                        "Fix: set params.value to a comparison value."
+                    )
+                if "then_value" not in params or "else_value" not in params:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'if_then' requires params.then_value and params.else_value. "
+                        "Fix: set both output values for true/false branches."
+                    )
+                for key in ("value", "then_value", "else_value"):
+                    val = params.get(key)
+                    if isinstance(val, (dict, list)):
+                        raise ValueError(
+                            f"Table '{t.table_name}', column '{c.name}': generator 'if_then' params.{key} must be a scalar value. "
+                            "Fix: use string/number/bool/null values for if_then params."
+                        )
         incoming = [fk for fk in project.foreign_keys if fk.child_table == t.table_name]
         incoming_fk_cols = {fk.child_column for fk in incoming}
 

@@ -24,6 +24,10 @@ ad-hoc assumptions.
 - Business-key behavior controls are implemented in both schema designer screens:
   - `business_key_static_columns` (stable attributes),
   - `business_key_changing_columns` (changing attributes).
+- Column editor supports in-place editing of selected columns in addition to add/remove/reorder actions.
+- GUI kit screens apply a shared dark-mode theme contract.
+- Schema JSON path fields used by GUI flows (for example `sample_csv` params.path) prefer repo-root-relative references for portability.
+- Home includes a dedicated route to a generation behaviors guide screen for in-app guidance.
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -136,6 +140,7 @@ Examples:
 - open schema project designer (production modular route)
 - open schema project designer kit route (modular parity reference path)
 - open schema project designer legacy fallback route
+- open generation behaviors guide screen
 
 ### 4.2 `schema_project` (production modular path)
 
@@ -159,6 +164,8 @@ Examples:
 - validation gating for generation buttons
 - busy/progress during generation/export tasks via `BaseScreen.safe_threaded_job`
 - actionable error dialogs for invalid actions
+- column editor allows editing the selected column and validates edits before apply
+- generator selector includes conditional generator option `if_then` (configured via Params JSON + depends_on)
 - SCD configuration flow with mode selection (`scd1` or `scd2`) and business-key linkage.
 - Business-key behavior controls: comma-separated static columns and changing columns, validated against existing table columns.
 - SCD1 controls: tracked slowly-changing column selection.
@@ -170,6 +177,7 @@ Examples:
 - Mirrors modular production behavior for parity/regression checks.
 - Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`,
   `Tabs`, `FormBuilder`, `TableView`).
+- Applies shared gui_kit dark-mode styling on page build.
 - Additive navigation path from Home.
 - Long-running actions on this screen (`Generate data`, `Generate sample`, `SQLite insert`) run via `BaseScreen.safe_threaded_job` to preserve busy/progress behavior and avoid duplicate-trigger races.
 
@@ -178,6 +186,17 @@ Examples:
 - Purpose: low-risk fallback route while modular production path is adopted.
 - Must preserve business-logic compatibility with modular production path for validation/generation/export/JSON IO flows.
 - Uses pre-modular UI implementation from `src/gui_schema_project.py`.
+
+### 4.5 `generation_behaviors_guide`
+
+- Purpose: read-only, in-app reference that explains each generation behavior and how to configure it.
+- Required regions:
+- header with explicit back navigation to `home`
+- scrollable content cards with "what it does" and "how to use" per behavior
+- Required behavior:
+- include core dtype-driven behavior, generator-driven behavior, depends_on/correlation behavior, and SCD/business-key table behavior notes
+- content is instructional only (no schema mutation controls)
+- navigation returns to `home` via Back button
 
 ## 5. Library-Agnostic Mapping Guide
 

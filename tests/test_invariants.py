@@ -6,7 +6,7 @@ from unittest import mock
 
 from src.config import AppConfig
 from src.generator_project import generate_project_rows
-from src.gui_home import App
+from src.gui_home import App, GENERATION_BEHAVIOR_GUIDE, GenerationBehaviorsGuideScreen
 from src.gui_schema_project import (
     DTYPES,
     EXPORT_OPTION_CSV,
@@ -294,6 +294,7 @@ class TestInvariants(unittest.TestCase):
         self.assertNotIn("float", DTYPES)
         self.assertIn("money", GENERATORS)
         self.assertIn("percent", GENERATORS)
+        self.assertIn("if_then", GENERATORS)
 
     def test_gui_navigation_contract(self):
         try:
@@ -309,7 +310,17 @@ class TestInvariants(unittest.TestCase):
             self.assertIn("schema_project", app.screens)
             self.assertIn("schema_project_kit", app.screens)
             self.assertIn("schema_project_legacy", app.screens)
+            self.assertIn("generation_behaviors_guide", app.screens)
             self.assertIsInstance(app.screens["schema_project"], SchemaProjectDesignerKitScreen)
+            self.assertIsInstance(app.screens["generation_behaviors_guide"], GenerationBehaviorsGuideScreen)
+
+            guide_titles = {entry[0] for entry in GENERATION_BEHAVIOR_GUIDE}
+            self.assertIn("sample_csv generator", guide_titles)
+            self.assertIn("if_then conditional generator", guide_titles)
+            self.assertIn("Business key + SCD table behaviors", guide_titles)
+
+            app.show_screen("generation_behaviors_guide")
+            app.show_screen("home")
 
             schema_screen = app.screens["schema_project"]
             self.assertEqual(schema_screen.export_option_var.get(), EXPORT_OPTION_CSV)

@@ -2,6 +2,7 @@ import unittest
 import tempfile
 import os
 import json
+from pathlib import Path
 
 from src.schema_project_model import (
     SchemaProject, TableSpec, ColumnSpec, ForeignKeySpec
@@ -119,6 +120,47 @@ class TestSchemaProjectRoundtrip(unittest.TestCase):
             self.assertIn("sql_ddl", msg)
             self.assertIn("must be a string", msg)
             self.assertIn("Fix:", msg)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_save_normalizes_sample_csv_path_to_repo_relative(self):
+        fixture_csv = Path(__file__).resolve().parent / "fixtures" / "city_country_pool.csv"
+        project = SchemaProject(
+            name="csv_path_normalize",
+            seed=12,
+            tables=[
+                TableSpec(
+                    table_name="people",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("id", "int", nullable=False, primary_key=True),
+                        ColumnSpec(
+                            "city",
+                            "text",
+                            nullable=False,
+                            generator="sample_csv",
+                            params={"path": str(fixture_csv), "column_index": 0},
+                        ),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+
+        try:
+            save_project_to_json(project, path)
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+
+            saved_path = raw["tables"][0]["columns"][1]["params"]["path"]
+            self.assertEqual(saved_path, "tests/fixtures/city_country_pool.csv")
         finally:
             try:
                 os.remove(path)

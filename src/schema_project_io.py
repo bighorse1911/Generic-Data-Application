@@ -2,7 +2,7 @@ import json
 from dataclasses import asdict
 
 from src.schema_project_model import SchemaProject, TableSpec, ColumnSpec, ForeignKeySpec, validate_project
-from pathlib import Path
+from src.project_paths import to_repo_relative_path
 
 
 _DEFAULT_SQL_TYPES: dict[str, str] = {
@@ -76,6 +76,7 @@ def build_project_sql_ddl(project: SchemaProject) -> str:
 def save_project_to_json(project: SchemaProject, path: str) -> None:
     validate_project(project)
     data = asdict(project)
+    _normalize_sample_csv_paths(data)
     data["sql_ddl"] = build_project_sql_ddl(project)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
@@ -92,16 +93,7 @@ def load_project_from_json(path: str) -> SchemaProject:
             "Fix: set 'sql_ddl' to a SQL DDL string or remove the key."
         )
 
-    # Convenience: resolve known test-fixture placeholder tokens to local files when available.
-    # This mirrors test behavior where the JSON uses a placeholder `__CITY_COUNTRY_CSV__`.
-    repo_root = Path(__file__).resolve().parents[1]
-    candidate = repo_root / "tests" / "fixtures" / "city_country_pool.csv"
-    if candidate.exists():
-        for t in data.get("tables", []):
-            for c in t.get("columns", []):
-                params = c.get("params")
-                if isinstance(params, dict) and params.get("path") == "__CITY_COUNTRY_CSV__":
-                    params["path"] = str(candidate)
+    _normalize_sample_csv_paths(data)
 
     tables = []
     for t in data["tables"]:
@@ -131,3 +123,26 @@ def load_project_from_json(path: str) -> SchemaProject:
     )
     validate_project(project)
     return project
+
+
+def _normalize_sample_csv_paths(data: dict[str, object]) -> None:
+    for table in data.get("tables", []):
+        if not isinstance(table, dict):
+            continue
+        for column in table.get("columns", []):
+            if not isinstance(column, dict):
+                continue
+            if column.get("generator") != "sample_csv":
+                continue
+            params = column.get("params")
+            if not isinstance(params, dict):
+                continue
+            path_value = params.get("path")
+            if not isinstance(path_value, str) or path_value.strip() == "":
+                continue
+
+            raw_path = path_value.strip()
+            if raw_path == "__CITY_COUNTRY_CSV__":
+                params["path"] = "tests/fixtures/city_country_pool.csv"
+                continue
+            params["path"] = to_repo_relative_path(raw_path)

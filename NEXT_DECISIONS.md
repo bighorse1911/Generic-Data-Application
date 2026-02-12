@@ -2,6 +2,22 @@
 Direction 1 - Smarter Data
 
 ## Recent Completed Slice (Direction 1)
+- Completed (2026-02-12): GUI generation behavior guide page added:
+  - added Home route `generation_behaviors_guide`,
+  - added read-only screen documenting supported generation behaviors and setup patterns,
+  - added GUI navigation contract assertions for the new screen.
+- Completed (2026-02-12): Priority 1 phased rollout started with conditional generators phase 1:
+  - added `if_then` generator for deterministic if/then branching from row context,
+  - added validator guardrails for params shape and `depends_on` ordering requirements,
+  - exposed `if_then` in GUI generator selection.
+- Completed (2026-02-12): CSV sampling path portability hardening:
+  - schema/sample_csv paths now resolve relative to repo root,
+  - legacy absolute fixture-style paths normalize to repo-relative form where possible,
+  - load/save JSON paths now prefer `tests/...` style references for repo-local files.
+- Completed (2026-02-12): GUI column editor + kit dark mode improvements:
+  - added in-place selected-column editing flow in schema designer screens,
+  - preserved validator-first safety checks and actionable GUI error wording,
+  - added shared gui_kit dark-mode styling and applied it to kit-based pages.
 - Completed (2026-02-12): business-key attribute behavior controls added end-to-end:
   - table schema fields for `business_key_static_columns` and `business_key_changing_columns`,
   - validator rules for overlap/unknown/mismatch safeguards with actionable fix hints,
@@ -29,6 +45,12 @@ Direction 3 - Refactor float -> decimal; move semantic numeric types (lat/lon/mo
 - CSV column sampling
 - Extensible data types
 - Realistic distributions
+- Priority 1 phased rollout (started):
+  - Phase 1 complete: conditional generators (`if_then`)
+  - Phase 2 pending: time-aware constraints
+  - Phase 3 pending: hierarchical categories
+  - Phase 4 pending: validation heatmaps enhancements
+  - Phase 5 pending: extend SCD2 beyond root-table-only scope
 - DATA_SEMANTICS canonical spec adopted with migration notes for float compatibility
 - GUI_WIREFRAME_SCHEMA canonical spec adopted for library-agnostic GUI design decisions and change tracking
 
