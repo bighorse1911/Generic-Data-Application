@@ -14,7 +14,7 @@ this project. It is authoritative for:
 If GUI behavior is unclear, this document and `PROJECT_CANON.md` override
 ad-hoc assumptions.
 
-## Implementation Status (2026-02-12)
+## Implementation Status (2026-02-14)
 
 - Current runtime GUI: Tkinter (`src/gui_home.py`)
 - Production modular route: `schema_project` uses `src/gui_schema_project_kit.py` with `src/gui_kit`.
@@ -25,9 +25,23 @@ ad-hoc assumptions.
   - `business_key_static_columns` (stable attributes),
   - `business_key_changing_columns` (changing attributes).
 - Column editor supports in-place editing of selected columns in addition to add/remove/reorder actions.
-- GUI kit screens apply a shared dark-mode theme contract.
+- GUI kit screens use the regular/default Tk/ttk theme (dark mode is not forced).
 - Schema JSON path fields used by GUI flows (for example `sample_csv` params.path) prefer repo-root-relative references for portability.
 - Home includes a dedicated route to a generation behaviors guide screen for in-app guidance.
+- Priority 1 phase 2 implemented: column generator selector now includes `time_offset` for time-aware date/datetime constraints using `depends_on` + params JSON.
+- Priority 1 phase 3 implemented: column generator selector now includes `hierarchical_category` for parent->child category mapping constraints.
+- Priority 1 phase 4 implemented: schema validation heatmap now includes explicit `Dependencies` and `SCD/BK` check buckets.
+- Priority 1 phase 5 implemented: SCD2 validation/authoring now supports root and incoming-FK child tables.
+- Priority 1 rollout status: phases 1-5 are completed.
+- Extensible data types update: GUI dtype authoring now includes `bytes`.
+- Realistic distributions update: column generator selector includes `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted`.
+- Ordered choices update: column generator selector includes `ordered_choice` with params JSON authoring support for multi-order progression behavior.
+- GUI authoring ergonomics update: generator selector options are filtered by selected dtype, pattern presets are available for regex fields, and generator params template fill is available in column editor.
+- GUI kit modernization phase A update: modular schema screen now uses debounced search controls (tables/columns/FKs), token-style editors for comma-separated business-key fields, non-blocking toasts for success feedback, params JSON editor dialog with parse location hints, and centralized shortcuts + help dialog.
+- GUI kit modernization phase B update: modular schema screen now uses preview pagination, preview column visibility/order chooser, inline validation summary with jump actions, and dirty-state prompts for unsaved navigation/load flows.
+- GUI kit modernization phase C update: legacy fallback screen now includes low-risk adoption of Phase B UX patterns (opt-in preview pagination, preview column chooser, inline validation jumps, dirty-state prompts).
+- Business-key cardinality update: table editor now exposes optional `business_key_unique_count` to configure unique business keys separately from table row count.
+- `sample_csv` authoring update: params JSON now supports optional dependent CSV sampling via `match_column` + `match_column_index` (with `depends_on` linkage).
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -106,13 +120,11 @@ These dtypes are valid for new column creation in the GUI:
 - `bool`: boolean (true/false)
 - `date`: calendar date (YYYY-MM-DD)
 - `datetime`: timestamp with date+time (ISO 8601 string)
+- `bytes`: binary payload (generated as bytes, exported as base64 text for CSV)
 
 Legacy compatibility:
 - `float`: accepted at JSON schema load for backward compatibility; maps to decimal semantics at runtime.
   GUI validation **blocks** new columns with `dtype=float`; users must choose `decimal` instead.
-
-Roadmap:
-- `bytes`: binary payload (not yet implemented for GUI column creation; outside Direction 3 scope).
 
 ### 3.2 Error Format Contract
 
@@ -127,7 +139,7 @@ Where:
 
 Examples:
 
-- `Add column / Type: unsupported dtype 'foo'. Fix: choose one of: int, decimal, text, bool, date, datetime.`
+- `Add column / Type: unsupported dtype 'foo'. Fix: choose one of: int, decimal, text, bool, date, datetime, bytes.`
 - `Add column / Type: dtype 'float' is deprecated for new GUI columns. Fix: choose dtype='decimal' for new numeric columns; keep legacy float only in loaded JSON schemas.`
 - `Table 'orders', column 'amount': min_value cannot exceed max_value. Fix: set min_value <= max_value.`
 
@@ -154,7 +166,8 @@ Examples:
 - `build_status_bar()`
 - Required regions:
 - project metadata and JSON save/load
-- schema validation summary + heatmap
+- schema validation summary + heatmap (`PK`, `Columns`, `Dependencies`, `Generator`, `SCD/BK`, `FKs`)
+- inline validation summary panel with jump-to-location actions
 - table editor
 - column editor + columns table
 - FK relationship editor + FK table
@@ -165,19 +178,29 @@ Examples:
 - busy/progress during generation/export tasks via `BaseScreen.safe_threaded_job`
 - actionable error dialogs for invalid actions
 - column editor allows editing the selected column and validates edits before apply
-- generator selector includes conditional generator option `if_then` (configured via Params JSON + depends_on)
+- generator selector includes conditional/time-aware/hierarchical options `if_then`, `time_offset`, `hierarchical_category`, ordered-sequence option `ordered_choice`, plus distribution/weighted options `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted` (configured via Params JSON + depends_on where applicable)
+- generator selector list is filtered by selected dtype and blocks invalid dtype/generator combinations in column apply actions.
+- regex field includes pattern preset controls for common patterns while still supporting custom regex input.
+- generator params JSON includes template-fill action to reduce manual JSON authoring.
+- generator params JSON supports a dedicated editor dialog with pretty-format and actionable parse error location (`line`, `column`).
+- `sample_csv` params JSON supports optional dependent sampling (`match_column`, `match_column_index`) and relies on Depends on column linkage for same-row correlation.
 - SCD configuration flow with mode selection (`scd1` or `scd2`) and business-key linkage.
-- Business-key behavior controls: comma-separated static columns and changing columns, validated against existing table columns.
+- Business-key behavior controls: token-style comma-separated static/changing/business-key column editors, validated against existing table columns.
+- Table editor includes optional unique business-key count (`business_key_unique_count`) to support scenarios where generated row count exceeds unique business keys.
 - SCD1 controls: tracked slowly-changing column selection.
-- SCD2 controls: active period boundary columns (`from`/`to`, using `date` or `datetime`) plus tracked slowly-changing column selection.
-- Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`, `Tabs`, `FormBuilder`, `TableView`).
+- SCD2 controls: active period boundary columns (`from`/`to`, using `date` or `datetime`) plus tracked slowly-changing column selection; applies to root and incoming-FK child tables.
+- Includes discoverable keyboard shortcuts help and debounced search controls for large schema navigation.
+- Preview table supports paged rendering for large row previews.
+- Preview supports a column chooser dialog for visibility and display-order control without mutating schema column order.
+- Screen-level dirty-state behavior prompts on unsaved back/load navigation and exposes an unsaved indicator.
+- Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`, `Tabs`, `FormBuilder`, `TableView`, `ColumnChooserDialog`, `InlineValidationSummary`).
 
 ### 4.3 `schema_project_kit` (modular parity reference path)
 
 - Mirrors modular production behavior for parity/regression checks.
 - Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`,
-  `Tabs`, `FormBuilder`, `TableView`).
-- Applies shared gui_kit dark-mode styling on page build.
+  `Tabs`, `FormBuilder`, `TableView`, `ColumnChooserDialog`, `InlineValidationSummary`).
+- Uses default platform theme styling (no forced dark mode).
 - Additive navigation path from Home.
 - Long-running actions on this screen (`Generate data`, `Generate sample`, `SQLite insert`) run via `BaseScreen.safe_threaded_job` to preserve busy/progress behavior and avoid duplicate-trigger races.
 
@@ -186,6 +209,11 @@ Examples:
 - Purpose: low-risk fallback route while modular production path is adopted.
 - Must preserve business-logic compatibility with modular production path for validation/generation/export/JSON IO flows.
 - Uses pre-modular UI implementation from `src/gui_schema_project.py`.
+- Includes low-risk Phase C adoption of selected gui_kit components:
+  - `TableView` for preview table rendering with opt-in pagination controls,
+  - `ColumnChooserDialog` for preview column visibility/order,
+  - `InlineValidationSummary` panel with quick-jump actions,
+  - dirty-state prompts for unsaved back/load navigation.
 
 ### 4.5 `generation_behaviors_guide`
 

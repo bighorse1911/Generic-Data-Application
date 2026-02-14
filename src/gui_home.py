@@ -12,17 +12,32 @@ GENERATION_BEHAVIOR_GUIDE: tuple[GuideEntry, ...] = (
     (
         "Default dtype generation",
         "When Generator is blank, values are generated from the column dtype and constraints using project.seed.",
-        "Set DType and optional Min/Max, Choices, and Pattern in the Column editor. Keep Generator empty.",
+        "Set DType and optional constraints in the Column editor (for bytes use params JSON min_length/max_length). Use Pattern preset for common regex cases and keep Generator empty.",
+    ),
+    (
+        "Guided generator authoring",
+        "The Generator dropdown is filtered by selected DType and can auto-fill starter params.",
+        "Pick DType first, then choose Generator from the filtered list, and click 'Fill params template for selected generator' to avoid writing full params JSON from scratch.",
     ),
     (
         "sample_csv generator",
-        "Samples deterministic values from a CSV column and reuses the source distribution.",
-        "Set Generator='sample_csv' and params JSON like {\"path\": \"tests/fixtures/city_country_pool.csv\", \"column_index\": 0}.",
+        "Samples deterministic values from a CSV column and can optionally match rows by another generated column.",
+        "Set Generator='sample_csv' and params JSON like {\"path\": \"tests/fixtures/city_country_pool.csv\", \"column_index\": 0}. For dependent sampling (for example city by country), add params.match_column and params.match_column_index, and include match_column in Depends on column.",
     ),
     (
         "if_then conditional generator",
         "Returns then_value or else_value based on another column in the same row.",
         "Set Generator='if_then', include params.if_column/operator/value/then_value/else_value, and set Depends on column to include if_column.",
+    ),
+    (
+        "time_offset time-aware generator",
+        "Constrains date/datetime output to be before or after another time column in the same row.",
+        "Set Generator='time_offset', include params.base_column and optional direction ('after'/'before') plus min/max offsets (date: min_days/max_days, datetime: min_seconds/max_seconds), and include base_column in Depends on column.",
+    ),
+    (
+        "hierarchical_category generator",
+        "Generates child categories from a parent category column using a hierarchy mapping.",
+        "Set Generator='hierarchical_category', include params.parent_column and params.hierarchy JSON, and include parent_column in Depends on column.",
     ),
     (
         "date generator",
@@ -45,14 +60,19 @@ GENERATION_BEHAVIOR_GUIDE: tuple[GuideEntry, ...] = (
         "Use DType='decimal', then set Generator='money' or 'percent' with optional min/max/decimals params.",
     ),
     (
-        "Distribution generators (advanced JSON)",
-        "Supports normal, uniform, and lognormal distributions for specialized modeling.",
-        "Load/edit JSON with generator ids 'normal', 'uniform_int', 'uniform_float', or 'lognormal', and provide the documented params for each.",
+        "Distribution generators",
+        "Supports realistic normal, uniform, and lognormal numeric distributions with deterministic seed behavior.",
+        "Set Generator to 'normal', 'uniform_int', 'uniform_float', or 'lognormal' in the Column editor, then provide Params JSON for bounds/shape (for example mean/stdev or median/sigma).",
     ),
     (
-        "Weighted categorical generator (advanced JSON)",
+        "Weighted categorical generator",
         "Generates category values using explicit weighted probabilities.",
-        "Load/edit JSON with Generator='choice_weighted' and params like {\"choices\": [\"A\", \"B\"], \"weights\": [0.8, 0.2]}.",
+        "Set Generator='choice_weighted' and Params JSON like {\"choices\": [\"A\", \"B\"], \"weights\": [0.8, 0.2]}.",
+    ),
+    (
+        "ordered_choice sequence generator",
+        "Chooses one named order path and progresses through that sequence over rows using weighted movement steps.",
+        "Set Generator='ordered_choice' with params.orders, optional params.order_weights, params.move_weights, and optional params.start_index (for example {\"orders\": {\"A\": [\"1\", \"2\", \"3\"], \"B\": [\"4\", \"5\", \"6\"]}, \"order_weights\": {\"A\": 0.5, \"B\": 0.5}, \"move_weights\": [0.1, 0.8, 0.1], \"start_index\": 0}).",
     ),
     (
         "Correlated generator via depends_on (advanced JSON)",

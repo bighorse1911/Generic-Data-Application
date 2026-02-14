@@ -30,10 +30,19 @@ class TestGUIKitComponentCatalog(unittest.TestCase):
         expected_exports = {
             "BaseScreen",
             "CollapsiblePanel",
+            "ColumnChooserDialog",
             "FormBuilder",
+            "InlineValidationEntry",
+            "InlineValidationSummary",
+            "JsonEditorDialog",
+            "SearchEntry",
+            "ShortcutManager",
             "ScrollFrame",
             "TableView",
+            "ToastCenter",
+            "TokenEntry",
             "Tabs",
+            "parse_json_text",
             "wheel_units_from_delta",
         }
         catalog_exports: set[str] = set()

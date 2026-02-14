@@ -17,6 +17,7 @@ def _sqlite_type(dtype: str) -> str:
         "bool": "INTEGER",
         "date": "TEXT",
         "datetime": "TEXT",
+        "bytes": "BLOB",
     }[dtype]
 
 

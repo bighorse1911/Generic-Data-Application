@@ -5,7 +5,7 @@ from datetime import date
 
 from src.generator_project import generate_project_rows
 from src.schema_project_io import load_project_from_json, save_project_to_json
-from src.schema_project_model import ColumnSpec, SchemaProject, TableSpec, validate_project
+from src.schema_project_model import ColumnSpec, ForeignKeySpec, SchemaProject, TableSpec, validate_project
 
 
 class TestSCDGeneration(unittest.TestCase):
@@ -150,6 +150,70 @@ class TestSCDGeneration(unittest.TestCase):
             except PermissionError:
                 pass
 
+    def test_scd2_supports_child_tables_with_incoming_fks_safely(self):
+        project = SchemaProject(
+            name="scd2_child_table",
+            seed=4321,
+            tables=[
+                TableSpec(
+                    table_name="accounts",
+                    row_count=4,
+                    columns=[
+                        ColumnSpec("account_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("account_name", "text", nullable=False),
+                    ],
+                ),
+                TableSpec(
+                    table_name="customer_dim",
+                    columns=[
+                        ColumnSpec("customer_sk", "int", nullable=False, primary_key=True),
+                        ColumnSpec("account_id", "int", nullable=False),
+                        ColumnSpec("customer_code", "text", nullable=False),
+                        ColumnSpec("city", "text", nullable=False),
+                        ColumnSpec("valid_from", "date", nullable=False),
+                        ColumnSpec("valid_to", "date", nullable=False),
+                    ],
+                    business_key=["customer_code"],
+                    business_key_changing_columns=["city"],
+                    scd_mode="scd2",
+                    scd_active_from_column="valid_from",
+                    scd_active_to_column="valid_to",
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec(
+                    child_table="customer_dim",
+                    child_column="account_id",
+                    parent_table="accounts",
+                    parent_column="account_id",
+                    min_children=1,
+                    max_children=4,
+                )
+            ],
+        )
+        validate_project(project)
+
+        rows = generate_project_rows(project)
+        parent_ids = {r["account_id"] for r in rows["accounts"]}
+        child_rows = rows["customer_dim"]
+
+        for row in child_rows:
+            self.assertIn(
+                row["account_id"],
+                parent_ids,
+                "SCD2 child-table generation produced orphan FK values. "
+                "Fix: keep child FK values inside the parent PK set when applying SCD2 history.",
+            )
+
+        counts_by_parent: dict[int, int] = {int(pid): 0 for pid in parent_ids}
+        for row in child_rows:
+            counts_by_parent[int(row["account_id"])] += 1
+        self.assertTrue(
+            all(count <= 4 for count in counts_by_parent.values()),
+            "SCD2 child-table generation exceeded FK max_children for at least one parent. "
+            "Fix: cap SCD2 version growth to available FK capacity.",
+        )
+
     def test_scd2_validation_error_is_actionable_when_period_columns_missing(self):
         bad = SchemaProject(
             name="bad_scd2",
@@ -235,6 +299,68 @@ class TestSCDGeneration(unittest.TestCase):
                 1,
                 f"Business key '{key}' has no changes in column 'address'. "
                 "Fix: mutate business_key_changing_columns across SCD2 versions.",
+            )
+
+    def test_ordered_choice_changing_column_uses_order_progression_for_scd2_versions(self):
+        project = SchemaProject(
+            name="scd2_ordered_choice_progression",
+            seed=777,
+            tables=[
+                TableSpec(
+                    table_name="customer_dim",
+                    row_count=4,
+                    columns=[
+                        ColumnSpec("customer_sk", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_code", "text", nullable=False),
+                        ColumnSpec(
+                            "lifecycle_stage",
+                            "int",
+                            nullable=False,
+                            generator="ordered_choice",
+                            params={
+                                "orders": {"A": [10, 20, 30], "B": [40, 50, 60]},
+                                "order_weights": {"A": 1.0, "B": 0.0},
+                                "move_weights": [0.0, 1.0],
+                                "start_index": 0,
+                            },
+                        ),
+                        ColumnSpec("valid_from", "date", nullable=False),
+                        ColumnSpec("valid_to", "date", nullable=False),
+                    ],
+                    business_key=["customer_code"],
+                    business_key_changing_columns=["lifecycle_stage"],
+                    scd_mode="scd2",
+                    scd_active_from_column="valid_from",
+                    scd_active_to_column="valid_to",
+                )
+            ],
+            foreign_keys=[],
+        )
+        validate_project(project)
+
+        rows = generate_project_rows(project)["customer_dim"]
+        by_key: dict[str, list[dict[str, object]]] = {}
+        for row in rows:
+            key = str(row["customer_code"])
+            by_key.setdefault(key, []).append(row)
+
+        multi_version_keys = [key for key, key_rows in by_key.items() if len(key_rows) > 1]
+        self.assertTrue(
+            multi_version_keys,
+            "Expected at least one business key to have multiple SCD2 versions for ordered_choice progression checks. "
+            "Fix: ensure SCD2 emits historical versions in this scenario.",
+        )
+
+        next_stage = {10: 20, 20: 30, 30: 30, 40: 50, 50: 60, 60: 60}
+        for key in multi_version_keys:
+            key_rows = sorted(by_key[key], key=lambda r: str(r["valid_from"]))
+            first = int(key_rows[0]["lifecycle_stage"])
+            second = int(key_rows[1]["lifecycle_stage"])
+            self.assertEqual(
+                second,
+                next_stage[first],
+                f"Business key '{key}' did not follow ordered_choice progression between SCD2 versions. "
+                "Fix: advance ordered_choice tracked columns by configured order movement instead of generic numeric mutation.",
             )
 
     def test_business_key_static_and_changing_columns_cannot_overlap(self):

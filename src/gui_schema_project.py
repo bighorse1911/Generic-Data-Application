@@ -5,6 +5,7 @@ import tkinter as tk
 import threading
 import csv
 import os
+import base64
 import tkinter.font as tkfont
 from src.generator_project import generate_project_rows
 from src.storage_sqlite_project import create_tables, insert_project_rows
@@ -13,6 +14,10 @@ from dataclasses import dataclass
 from tkinter import ttk, messagebox, filedialog
 
 from src.config import AppConfig
+from src.gui_kit.column_chooser import ColumnChooserDialog
+from src.gui_kit.scroll import wheel_units_from_delta
+from src.gui_kit.table import TableView
+from src.gui_kit.validation import InlineValidationEntry, InlineValidationSummary
 from src.schema_project_model import (
     SchemaProject,
     TableSpec,
@@ -24,8 +29,133 @@ from src.schema_project_io import save_project_to_json, load_project_from_json
 
 logger = logging.getLogger("gui_schema_project")
 
-DTYPES = ["int", "decimal", "text", "bool", "date", "datetime"]
-GENERATORS = ["", "sample_csv", "if_then", "date", "timestamp_utc", "latitude", "longitude", "money", "percent"]
+DTYPES = ["int", "decimal", "text", "bool", "date", "datetime", "bytes"]
+GENERATORS = [
+    "",
+    "sample_csv",
+    "if_then",
+    "time_offset",
+    "hierarchical_category",
+    "uniform_int",
+    "uniform_float",
+    "normal",
+    "lognormal",
+    "choice_weighted",
+    "ordered_choice",
+    "date",
+    "timestamp_utc",
+    "latitude",
+    "longitude",
+    "money",
+    "percent",
+]
+GENERATOR_VALID_DTYPES: dict[str, set[str]] = {
+    "sample_csv": {"int", "decimal", "text"},
+    "if_then": {"int", "decimal", "text", "bool", "date", "datetime"},
+    "time_offset": {"date", "datetime"},
+    "hierarchical_category": {"text"},
+    "uniform_int": {"int"},
+    "uniform_float": {"decimal"},
+    "normal": {"int", "decimal"},
+    "lognormal": {"int", "decimal"},
+    "choice_weighted": {"int", "text"},
+    "ordered_choice": {"int", "text"},
+    "date": {"date"},
+    "timestamp_utc": {"datetime"},
+    "latitude": {"decimal"},
+    "longitude": {"decimal"},
+    "money": {"decimal"},
+    "percent": {"decimal"},
+}
+
+PATTERN_PRESET_CUSTOM = "(custom)"
+PATTERN_PRESETS: dict[str, str | None] = {
+    PATTERN_PRESET_CUSTOM: None,
+    "Lowercase word (5-14)": r"^[a-z]{5,14}$",
+    "Uppercase code (3-8)": r"^[A-Z]{3,8}$",
+    "Alphanumeric ID (6-12)": r"^[A-Za-z0-9]{6,12}$",
+    "US ZIP (5)": r"^\d{5}$",
+    "Email (basic)": r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+}
+
+
+def valid_generators_for_dtype(dtype: str) -> list[str]:
+    selected_dtype = dtype.strip().lower()
+    if selected_dtype == "":
+        return [""]
+    valid = [""]
+    for generator in GENERATORS:
+        if generator == "":
+            continue
+        if selected_dtype in GENERATOR_VALID_DTYPES.get(generator, set()):
+            valid.append(generator)
+    return valid
+
+
+def default_generator_params_template(generator: str, dtype: str) -> dict[str, object] | None:
+    key = generator.strip()
+    selected_dtype = dtype.strip().lower()
+    if key == "sample_csv":
+        return {"path": "tests/fixtures/city_country_pool.csv", "column_index": 0}
+    if key == "if_then":
+        return {
+            "if_column": "source_column",
+            "operator": "==",
+            "value": "A",
+            "then_value": "B",
+            "else_value": "C",
+        }
+    if key == "time_offset":
+        if selected_dtype == "datetime":
+            return {
+                "base_column": "base_timestamp",
+                "direction": "after",
+                "min_seconds": 0,
+                "max_seconds": 3600,
+            }
+        return {
+            "base_column": "base_date",
+            "direction": "after",
+            "min_days": 0,
+            "max_days": 30,
+        }
+    if key == "hierarchical_category":
+        return {
+            "parent_column": "parent_category",
+            "hierarchy": {"Parent": ["ChildA", "ChildB"]},
+            "default_children": ["Other"],
+        }
+    if key == "uniform_int":
+        return {"min": 0, "max": 100}
+    if key == "uniform_float":
+        return {"min": 0.0, "max": 1.0, "decimals": 3}
+    if key == "normal":
+        return {"mean": 0.0, "stdev": 1.0, "decimals": 2}
+    if key == "lognormal":
+        return {"median": 100.0, "sigma": 0.5, "decimals": 2}
+    if key == "choice_weighted":
+        return {"choices": ["A", "B"], "weights": [0.8, 0.2]}
+    if key == "ordered_choice":
+        return {
+            "orders": {"A": ["choice_1", "choice_2", "choice_3"], "B": ["choice_4", "choice_5", "choice_6"]},
+            "order_weights": {"A": 0.7, "B": 0.3},
+            "move_weights": [0.1, 0.8, 0.1],
+            "start_index": 0,
+        }
+    if key == "date":
+        return {"start": "2020-01-01", "end": "2026-12-31"}
+    if key == "timestamp_utc":
+        return {"start": "2020-01-01T00:00:00Z", "end": "2026-12-31T23:59:59Z"}
+    if key == "latitude":
+        return {"min": -90.0, "max": 90.0, "decimals": 6}
+    if key == "longitude":
+        return {"min": -180.0, "max": 180.0, "decimals": 6}
+    if key == "money":
+        return {"min": 0.0, "max": 10000.0, "decimals": 2}
+    if key == "percent":
+        return {"min": 0.0, "max": 100.0, "decimals": 2}
+    return None
+
 SCD_MODES = ["", "scd1", "scd2"]
 EXPORT_OPTION_CSV = "CSV (folder)"
 EXPORT_OPTION_SQLITE = "SQLite (database)"
@@ -34,6 +164,12 @@ EXPORT_OPTIONS = [EXPORT_OPTION_CSV, EXPORT_OPTION_SQLITE]
 
 def _gui_error(location: str, issue: str, hint: str) -> str:
     return f"{location}: {issue}. Fix: {hint}."
+
+
+def _csv_export_value(value: object) -> object:
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    return value
 
 
 def validate_export_option(option: object) -> str:
@@ -113,32 +249,49 @@ class ScrollableFrame(ttk.Frame):
 
     def _bind_mousewheel(self, widget: tk.Widget) -> None:
         # Windows: <MouseWheel>, Linux: Button-4/5, macOS uses <MouseWheel> too but delta differs.
-        widget.bind_all("<MouseWheel>", self._on_mousewheel)     # Windows/macOS
-        widget.bind_all("<Shift-MouseWheel>", self._on_shift_mousewheel)
-        widget.bind_all("<Button-4>", self._on_linux_wheel_up)   # Linux
-        widget.bind_all("<Button-5>", self._on_linux_wheel_down)
-        widget.bind_all("<Control-MouseWheel>", self._on_ctrl_mousewheel)
-        widget.bind_all("<Control-plus>", lambda e: self.zoom_in())
-        widget.bind_all("<Control-minus>", lambda e: self.zoom_out())
-        widget.bind_all("<Control-0>", lambda e: self.reset_zoom())
+        widget.bind_all("<MouseWheel>", self._on_mousewheel, add="+")     # Windows/macOS
+        widget.bind_all("<Shift-MouseWheel>", self._on_shift_mousewheel, add="+")
+        widget.bind_all("<Button-4>", self._on_linux_wheel_up, add="+")   # Linux
+        widget.bind_all("<Button-5>", self._on_linux_wheel_down, add="+")
+        widget.bind_all("<Control-MouseWheel>", self._on_ctrl_mousewheel, add="+")
+        widget.bind_all("<Control-plus>", lambda e: self.zoom_in(), add="+")
+        widget.bind_all("<Control-minus>", lambda e: self.zoom_out(), add="+")
+        widget.bind_all("<Control-0>", lambda e: self.reset_zoom(), add="+")
+
+    def _pointer_inside_self(self) -> bool:
+        try:
+            widget = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+        except tk.TclError:
+            return False
+        while widget is not None:
+            if widget is self:
+                return True
+            widget = widget.master
+        return False
 
 
     def _on_mousewheel(self, event) -> None:
         # Vertical scroll
-        if event.delta and self.canvas.winfo_exists():
-            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        if not self.canvas.winfo_exists() or not self._pointer_inside_self():
+            return
+        units = wheel_units_from_delta(getattr(event, "delta", 0))
+        if units != 0:
+            self.canvas.yview_scroll(units, "units")
 
     def _on_shift_mousewheel(self, event) -> None:
         # Horizontal scroll (hold Shift)
-        if event.delta and self.canvas.winfo_exists():
-            self.canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+        if not self.canvas.winfo_exists() or not self._pointer_inside_self():
+            return
+        units = wheel_units_from_delta(getattr(event, "delta", 0))
+        if units != 0:
+            self.canvas.xview_scroll(units, "units")
 
     def _on_linux_wheel_up(self, _event) -> None:
-        if self.canvas.winfo_exists():
+        if self.canvas.winfo_exists() and self._pointer_inside_self():
             self.canvas.yview_scroll(-1, "units")
 
     def _on_linux_wheel_down(self, _event) -> None:
-        if self.canvas.winfo_exists():
+        if self.canvas.winfo_exists() and self._pointer_inside_self():
             self.canvas.yview_scroll(1, "units")
     # Zooming methods
     def zoom_in(self) -> None:
@@ -172,9 +325,12 @@ class ScrollableFrame(ttk.Frame):
 
 
     def _on_ctrl_mousewheel(self, event) -> None:
-        if event.delta > 0:
+        if not self.canvas.winfo_exists() or not self._pointer_inside_self():
+            return
+        delta = getattr(event, "delta", 0)
+        if delta > 0:
             self.zoom_in()
-        else:
+        elif delta < 0:
             self.zoom_out()
 
 
@@ -416,6 +572,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # Table editor vars
         self.table_name_var = tk.StringVar(value="")
         self.row_count_var = tk.StringVar(value="100")
+        self.table_business_key_unique_count_var = tk.StringVar(value="")
         self.table_business_key_var = tk.StringVar(value="")
         self.table_business_key_static_columns_var = tk.StringVar(value="")
         self.table_business_key_changing_columns_var = tk.StringVar(value="")
@@ -434,6 +591,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_max_var = tk.StringVar(value="")
         self.col_choices_var = tk.StringVar(value="")
         self.col_pattern_var = tk.StringVar(value="")
+        self.col_pattern_preset_var = tk.StringVar(value=PATTERN_PRESET_CUSTOM)
 
         #Updated data generation variables
         self.col_generator_var = tk.StringVar(value="")
@@ -461,17 +619,33 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.db_path_var = tk.StringVar(value=os.path.join(os.getcwd(), "schema_project.db"))
         self.export_option_var = tk.StringVar(value=EXPORT_OPTION_CSV)
         self.preview_table_var = tk.StringVar(value="")
+        self.preview_paging_enabled_var = tk.BooleanVar(value=False)
+        self.preview_page_size_var = tk.StringVar(value="100")
 
         #Validation state variables
         self.last_validation_errors = 0
         self.last_validation_warnings = 0
+        self._preview_source_table = ""
+        self._preview_source_rows: list[dict[str, object]] = []
+        self._preview_column_preferences: dict[str, list[str]] = {}
+        self._dirty = False
+        self._dirty_indicator_var = tk.StringVar(value="")
+        self._suspend_dirty_tracking = False
 
 
         self._build()
+        self.col_dtype_var.trace_add("write", self._on_column_dtype_changed)
+        self.col_generator_var.trace_add("write", self._on_column_generator_changed)
+        self.project_name_var.trace_add("write", self._on_project_meta_changed)
+        self.seed_var.trace_add("write", self._on_project_meta_changed)
+        self._refresh_generator_options_for_dtype()
+        self._sync_pattern_preset_from_pattern()
         self._refresh_tables_list()
         self._set_table_editor_enabled(False)
         self._refresh_fk_dropdowns()
         self._refresh_fks_tree()
+        self._on_preview_paging_toggled()
+        self._mark_clean()
 
         #Final validation
         self._run_validation()
@@ -487,8 +661,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         header = ttk.Frame(root)
         header.pack(fill="x", pady=(0, 10))
 
-        ttk.Button(header, text="← Back", command=self.app.go_home).pack(side="left")
+        ttk.Button(header, text="<- Back", command=self._on_back_requested).pack(side="left")
         ttk.Label(header, text="Schema Project Designer", font=("Segoe UI", 16, "bold")).pack(side="left", padx=12)
+        ttk.Label(header, textvariable=self._dirty_indicator_var).pack(side="left")
         ttk.Button(header, text="Zoom +", command=self.scroll.zoom_in).pack(side="top", padx=0)
         ttk.Button(header, text="Zoom −", command=self.scroll.zoom_out).pack(side="top", padx=0)
         ttk.Button(header, text="Reset", command=self.scroll.reset_zoom).pack(side="top", padx=0)
@@ -523,6 +698,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # Validation Panels
         validation_section = CollapsibleSection(root, title="Schema validation", start_collapsed=False)
         validation_section.pack(fill="x", pady=(10, 0))
+        self.validation_section = validation_section
 
         validation_panel = ttk.LabelFrame(validation_section.content, text="", padding=10)
         validation_panel.pack(fill="x", expand=True)
@@ -537,6 +713,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         self.heatmap = ValidationHeatmap(validation_panel)
         self.heatmap.pack(fill="both", expand=True, pady=(8, 0))
+        self.inline_validation = InlineValidationSummary(
+            validation_panel,
+            on_jump=self._jump_to_validation_issue,
+        )
+        self.inline_validation.pack(fill="x", pady=(8, 0))
 
 
         # =========================
@@ -554,6 +735,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # ---- Left: tables list (pack inside left)
         left_section = CollapsibleSection(main, title="Tables")
         left_section.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.tables_section = left_section
         left = ttk.LabelFrame(left_section.content, text="", padding=10)  # inner panel
         left.pack(fill="both", expand=True)
 
@@ -570,6 +752,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # ---- Middle: table editor (pack inside right)
         right_section = CollapsibleSection(main, title="Table editor")
         right_section.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
+        self.table_editor_section = right_section
         right = ttk.LabelFrame(right_section.content, text="", padding=10)
         right.pack(fill="both", expand=True)
 
@@ -586,25 +769,29 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.row_count_entry = ttk.Entry(props, textvariable=self.row_count_var)
         self.row_count_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(props, text="Business key columns (comma):").grid(row=2, column=0, sticky="w", padx=6, pady=6)
-        self.table_business_key_entry = ttk.Entry(props, textvariable=self.table_business_key_var)
-        self.table_business_key_entry.grid(row=2, column=1, sticky="ew", padx=6, pady=6)
+        ttk.Label(props, text="Unique business keys (optional):").grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        self.table_business_key_unique_count_entry = ttk.Entry(props, textvariable=self.table_business_key_unique_count_var)
+        self.table_business_key_unique_count_entry.grid(row=2, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(props, text="Business key static columns (comma):").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="Business key columns (comma):").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        self.table_business_key_entry = ttk.Entry(props, textvariable=self.table_business_key_var)
+        self.table_business_key_entry.grid(row=3, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(props, text="Business key static columns (comma):").grid(row=4, column=0, sticky="w", padx=6, pady=6)
         self.table_business_key_static_entry = ttk.Entry(
             props,
             textvariable=self.table_business_key_static_columns_var,
         )
-        self.table_business_key_static_entry.grid(row=3, column=1, sticky="ew", padx=6, pady=6)
+        self.table_business_key_static_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="Business key changing columns (comma):").grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="Business key changing columns (comma):").grid(row=5, column=0, sticky="w", padx=6, pady=6)
         self.table_business_key_changing_entry = ttk.Entry(
             props,
             textvariable=self.table_business_key_changing_columns_var,
         )
-        self.table_business_key_changing_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=6)
+        self.table_business_key_changing_entry.grid(row=5, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD mode:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="SCD mode:").grid(row=6, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_mode_combo = ttk.Combobox(
             props,
             values=SCD_MODES,
@@ -612,22 +799,22 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             state="readonly",
             width=12,
         )
-        self.table_scd_mode_combo.grid(row=5, column=1, sticky="w", padx=6, pady=6)
+        self.table_scd_mode_combo.grid(row=6, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD tracked columns (comma):").grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="SCD tracked columns (comma):").grid(row=7, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_tracked_entry = ttk.Entry(props, textvariable=self.table_scd_tracked_columns_var)
-        self.table_scd_tracked_entry.grid(row=6, column=1, sticky="ew", padx=6, pady=6)
+        self.table_scd_tracked_entry.grid(row=7, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD active from column:").grid(row=7, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="SCD active from column:").grid(row=8, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_active_from_entry = ttk.Entry(props, textvariable=self.table_scd_active_from_var)
-        self.table_scd_active_from_entry.grid(row=7, column=1, sticky="ew", padx=6, pady=6)
+        self.table_scd_active_from_entry.grid(row=8, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(props, text="SCD active to column:").grid(row=8, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(props, text="SCD active to column:").grid(row=9, column=0, sticky="w", padx=6, pady=6)
         self.table_scd_active_to_entry = ttk.Entry(props, textvariable=self.table_scd_active_to_var)
-        self.table_scd_active_to_entry.grid(row=8, column=1, sticky="ew", padx=6, pady=6)
+        self.table_scd_active_to_entry.grid(row=9, column=1, sticky="ew", padx=6, pady=6)
 
         self.apply_table_btn = ttk.Button(props, text="Apply table changes", command=self._apply_table_changes)
-        self.apply_table_btn.grid(row=9, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
+        self.apply_table_btn.grid(row=10, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
 
         # Column editor (grid inside col)
         col = ttk.LabelFrame(right, text="Add column", padding=10)
@@ -668,30 +855,47 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         ttk.Label(col, text="Regex pattern:").grid(row=4, column=0, sticky="w", padx=6, pady=6)
         self.col_pattern_entry = ttk.Entry(col, textvariable=self.col_pattern_var)
         self.col_pattern_entry.grid(row=4, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+        self.col_pattern_entry.bind("<FocusOut>", self._on_pattern_entry_focus_out)
+
+        ttk.Label(col, text="Pattern preset:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        self.col_pattern_preset_combo = ttk.Combobox(
+            col,
+            values=list(PATTERN_PRESETS.keys()),
+            textvariable=self.col_pattern_preset_var,
+            state="readonly",
+        )
+        self.col_pattern_preset_combo.grid(row=5, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+        self.col_pattern_preset_combo.bind("<<ComboboxSelected>>", self._on_pattern_preset_selected)
 
 
-
-        ttk.Label(col, text="Generator:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(col, text="Generator:").grid(row=6, column=0, sticky="w", padx=6, pady=6)
         self.col_generator_combo = ttk.Combobox(col, values=GENERATORS, textvariable=self.col_generator_var, state="readonly")
-        self.col_generator_combo.grid(row=5, column=1, sticky="ew", padx=6, pady=6)
+        self.col_generator_combo.grid(row=6, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(col, text="Params (JSON):").grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(col, text="Params (JSON):").grid(row=7, column=0, sticky="w", padx=6, pady=6)
         self.col_params_entry = ttk.Entry(col, textvariable=self.col_params_var)
-        self.col_params_entry.grid(row=6, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+        self.col_params_entry.grid(row=7, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+
+        self.col_params_template_btn = ttk.Button(
+            col,
+            text="Fill params template for selected generator",
+            command=self._apply_generator_params_template,
+        )
+        self.col_params_template_btn.grid(row=8, column=0, columnspan=4, sticky="ew", padx=6, pady=(0, 6))
         #Adds Column
         self.add_col_btn = ttk.Button(col, text="Add column to selected table", command=self._add_column)
-        self.add_col_btn.grid(row=8, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
+        self.add_col_btn.grid(row=10, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
         self.edit_col_btn = ttk.Button(
             col,
             text="Apply edits to selected column",
             command=self._apply_selected_column_changes,
         )
-        self.edit_col_btn.grid(row=9, column=0, columnspan=4, sticky="ew", padx=6, pady=(6, 0))
+        self.edit_col_btn.grid(row=11, column=0, columnspan=4, sticky="ew", padx=6, pady=(6, 0))
 
         #Correlation stuff
-        ttk.Label(col, text="Depends on (comma):").grid(row=7, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(col, text="Depends on (comma):").grid(row=9, column=0, sticky="w", padx=6, pady=6)
         self.col_depends_entry = ttk.Entry(col, textvariable=self.col_depends_var)
-        self.col_depends_entry.grid(row=7, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+        self.col_depends_entry.grid(row=9, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
 
 
         # Columns table (pack inside cols_frame)
@@ -725,6 +929,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # ---- Right: relationships editor (grid/pack inside rel)
         rel_section = CollapsibleSection(main, title="Relationships (FKs)")
         rel_section.grid(row=0, column=2, sticky="nsew")
+        self.relationships_section = rel_section
         rel = ttk.LabelFrame(rel_section.content, text="", padding=10)
         rel.pack(fill="both", expand=True)
         rel.columnconfigure(1, weight=1)
@@ -840,31 +1045,281 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         ttk.Label(left_preview, text="Max rows to show:").grid(row=2, column=0, sticky="w")
         self.preview_limit_var = tk.StringVar(value="200")
-        ttk.Entry(left_preview, textvariable=self.preview_limit_var, width=10).grid(row=3, column=0, sticky="w", pady=(0, 10))
+        ttk.Entry(left_preview, textvariable=self.preview_limit_var, width=10).grid(row=3, column=0, sticky="w", pady=(0, 8))
+
+        self.preview_paging_chk = ttk.Checkbutton(
+            left_preview,
+            text="Use paged preview",
+            variable=self.preview_paging_enabled_var,
+            command=self._on_preview_paging_toggled,
+        )
+        self.preview_paging_chk.grid(row=4, column=0, sticky="w", pady=(0, 6))
+
+        ttk.Label(left_preview, text="Page size:").grid(row=5, column=0, sticky="w")
+        self.preview_page_size_combo = ttk.Combobox(
+            left_preview,
+            textvariable=self.preview_page_size_var,
+            values=["50", "100", "200", "500"],
+            state="readonly",
+            width=8,
+        )
+        self.preview_page_size_combo.grid(row=6, column=0, sticky="w", pady=(0, 8))
+        self.preview_page_size_combo.bind("<<ComboboxSelected>>", self._on_preview_page_size_changed)
 
         self.preview_btn = ttk.Button(left_preview, text="Refresh preview", command=self._refresh_preview)
-        self.preview_btn.grid(row=4, column=0, sticky="ew")
+        self.preview_btn.grid(row=7, column=0, sticky="ew")
+
+        self.preview_columns_btn = ttk.Button(
+            left_preview,
+            text="Choose preview columns",
+            command=self._open_preview_column_chooser,
+        )
+        self.preview_columns_btn.grid(row=8, column=0, sticky="ew", pady=(6, 0))
 
         self.progress = ttk.Progressbar(left_preview, mode="indeterminate")
-        self.progress.grid(row=5, column=0, sticky="ew", pady=(14, 0))
+        self.progress.grid(row=9, column=0, sticky="ew", pady=(14, 0))
 
         right_preview = ttk.LabelFrame(preview_area, text="Data preview", padding=8)
         right_preview.grid(row=0, column=1, sticky="nsew")
         right_preview.rowconfigure(0, weight=1)
         right_preview.columnconfigure(0, weight=1)
 
-        self.preview_tree = ttk.Treeview(right_preview, show="headings")
-        y3 = ttk.Scrollbar(right_preview, orient="vertical", command=self.preview_tree.yview)
-        x3 = ttk.Scrollbar(right_preview, orient="horizontal", command=self.preview_tree.xview)
-        self.preview_tree.configure(yscrollcommand=y3.set, xscrollcommand=x3.set)
-
-        self.preview_tree.grid(row=0, column=0, sticky="nsew")
-        y3.grid(row=0, column=1, sticky="ns")
-        x3.grid(row=1, column=0, sticky="ew")
+        self.preview_table = TableView(right_preview, height=12)
+        self.preview_table.grid(row=0, column=0, sticky="nsew")
+        self.preview_table.disable_pagination()
+        self.preview_tree = self.preview_table.tree
 
         # Status line (pack on root)
         ttk.Label(root, textvariable=self.status_var).pack(anchor="w", pady=(10, 0))
 
+    def _on_back_requested(self) -> None:
+        if self._confirm_discard_or_save("returning to Home"):
+            self.app.go_home()
+
+    def _mark_dirty(self, reason: str | None = None) -> None:
+        self._dirty = True
+        text = "Unsaved changes"
+        if reason:
+            text = f"Unsaved: {reason}"
+        self._dirty_indicator_var.set(f"[{text}]")
+
+    def _mark_clean(self) -> None:
+        self._dirty = False
+        self._dirty_indicator_var.set("")
+
+    def _on_project_meta_changed(self, *_args) -> None:
+        if self._suspend_dirty_tracking:
+            return
+        self._mark_dirty("project settings")
+
+    def _mark_dirty_if_project_changed(self, before_project: SchemaProject, *, reason: str) -> None:
+        if self.project != before_project:
+            self._mark_dirty(reason)
+
+    def _confirm_discard_or_save(self, action_name: str) -> bool:
+        if not self._dirty:
+            return True
+        action = action_name.strip() or "continuing"
+        choice = messagebox.askyesnocancel(
+            "Unsaved changes",
+            "Schema Project Designer: unsaved changes detected before "
+            f"{action}. Fix: choose Yes to save, No to discard, or Cancel to stay.",
+        )
+        if choice is None:
+            return False
+        if choice is False:
+            return True
+        saved = self._save_project()
+        return bool(saved and not self._dirty)
+
+    def _refresh_inline_validation_summary(self, issues: list[ValidationIssue]) -> None:
+        entries: list[InlineValidationEntry] = []
+        for issue in issues:
+            location = "Project"
+            if issue.scope == "fk":
+                fk_table = issue.table or "unknown_child"
+                fk_column = issue.column or "unknown_column"
+                location = f"FK {fk_table}.{fk_column}"
+            elif issue.table is not None and issue.column is not None:
+                location = f"Table '{issue.table}', column '{issue.column}'"
+            elif issue.table is not None:
+                location = f"Table '{issue.table}'"
+            entries.append(
+                InlineValidationEntry(
+                    severity=issue.severity,
+                    location=location,
+                    message=issue.message,
+                    jump_payload=issue,
+                )
+            )
+        self.inline_validation.set_entries(entries)
+
+    def _jump_to_validation_issue(self, entry: InlineValidationEntry) -> None:
+        payload = entry.jump_payload
+        if not isinstance(payload, ValidationIssue):
+            return
+
+        if payload.scope == "fk":
+            self._jump_to_fk_issue(payload.table, payload.column)
+            return
+        self._jump_to_table_or_column_issue(payload.table, payload.column)
+
+    def _jump_to_table_or_column_issue(self, table_name: str | None, column_name: str | None) -> None:
+        if table_name is None:
+            return
+        self.tables_section.expand()
+        self.table_editor_section.expand()
+        for index, table in enumerate(self.project.tables):
+            if table.table_name != table_name:
+                continue
+            self.tables_list.selection_clear(0, tk.END)
+            self.tables_list.selection_set(index)
+            self.tables_list.activate(index)
+            self.tables_list.see(index)
+            self._on_table_selected()
+            if column_name:
+                for item in self.columns_tree.get_children():
+                    values = self.columns_tree.item(item, "values")
+                    if values and str(values[0]) == column_name:
+                        self.columns_tree.selection_set(item)
+                        self.columns_tree.focus(item)
+                        self.columns_tree.see(item)
+                        self._on_column_selected()
+                        break
+            self.status_var.set(
+                f"Jumped to validation location: table '{table_name}'"
+                + (f", column '{column_name}'." if column_name else ".")
+            )
+            return
+        self.status_var.set(
+            f"Validation jump: table '{table_name}' was not found. "
+            "Fix: run validation again to refresh issue locations."
+        )
+
+    def _jump_to_fk_issue(self, child_table: str | None, child_column: str | None) -> None:
+        if child_table is None:
+            return
+        self.relationships_section.expand()
+        for item in self.fks_tree.get_children():
+            values = self.fks_tree.item(item, "values")
+            if len(values) < 4:
+                continue
+            table_value = str(values[2])
+            column_value = str(values[3])
+            if table_value != child_table:
+                continue
+            if child_column is not None and column_value != child_column:
+                continue
+            self.fks_tree.selection_set(item)
+            self.fks_tree.focus(item)
+            self.fks_tree.see(item)
+            self.status_var.set(f"Jumped to validation location: FK '{table_value}.{column_value}'.")
+            return
+        self.status_var.set(
+            f"Validation jump: FK '{child_table}.{child_column or ''}' was not found. "
+            "Fix: run validation again to refresh issue locations."
+        )
+
+    def _preview_columns_for_table(self, table_name: str) -> list[str]:
+        for table in self.project.tables:
+            if table.table_name == table_name:
+                return [column.name for column in table.columns]
+        if self._preview_source_rows:
+            return list(self._preview_source_rows[0].keys())
+        return []
+
+    def _refresh_preview_projection(self) -> None:
+        table_name = self._preview_source_table
+        if table_name == "":
+            self._clear_preview_tree()
+            return
+
+        columns = self._preview_columns_for_table(table_name)
+        if not columns:
+            self._clear_preview_tree()
+            return
+
+        selected_columns = self._preview_column_preferences.get(table_name, list(columns))
+        selected_columns = [name for name in selected_columns if name in columns]
+        if not selected_columns:
+            selected_columns = list(columns)
+            self._preview_column_preferences[table_name] = list(selected_columns)
+
+        projected: list[dict[str, object]] = []
+        for row in self._preview_source_rows:
+            projected.append({name: row.get(name, "") for name in selected_columns})
+
+        self.preview_table.set_columns(selected_columns)
+        self.preview_table.set_rows(projected)
+        self._on_preview_page_size_changed()
+
+    def _on_preview_paging_toggled(self) -> None:
+        enabled = bool(self.preview_paging_enabled_var.get())
+        page_size = 100
+        try:
+            page_size = int(self.preview_page_size_var.get().strip())
+            if page_size <= 0:
+                raise ValueError
+        except Exception:
+            page_size = 100
+            self.preview_page_size_var.set("100")
+            messagebox.showerror(
+                "Preview page size",
+                "Generate / Preview / Export / SQLite panel: preview page size is invalid. "
+                "Fix: choose one of 50, 100, 200, or 500.",
+            )
+        if enabled:
+            self.preview_table.enable_pagination(page_size=page_size)
+            self.preview_page_size_combo.configure(state="readonly")
+            self.status_var.set("Preview pagination enabled.")
+        else:
+            self.preview_table.disable_pagination()
+            self.preview_page_size_combo.configure(state=tk.DISABLED)
+            self.status_var.set("Preview pagination disabled.")
+        self._refresh_preview_projection()
+
+    def _on_preview_page_size_changed(self, _event=None) -> None:
+        try:
+            page_size = int(self.preview_page_size_var.get().strip())
+            self.preview_table.set_page_size(page_size)
+        except Exception:
+            self.preview_page_size_var.set("100")
+            self.preview_table.set_page_size(100)
+            messagebox.showerror(
+                "Preview page size",
+                "Generate / Preview / Export / SQLite panel: preview page size is invalid. "
+                "Fix: choose one of 50, 100, 200, or 500.",
+            )
+
+    def _open_preview_column_chooser(self) -> None:
+        table_name = self.preview_table_var.get().strip()
+        if table_name == "":
+            messagebox.showerror(
+                "Preview columns",
+                "Generate / Preview / Export / SQLite panel: no preview table selected. "
+                "Fix: choose a preview table before configuring visible columns.",
+            )
+            return
+        columns = self._preview_columns_for_table(table_name)
+        if not columns:
+            messagebox.showerror(
+                "Preview columns",
+                f"Generate / Preview / Export / SQLite panel: preview table '{table_name}' has no columns. "
+                "Fix: generate rows for the selected table before opening preview columns.",
+            )
+            return
+        ColumnChooserDialog(
+            self,
+            columns=columns,
+            visible_columns=self._preview_column_preferences.get(table_name, list(columns)),
+            on_apply=lambda selected: self._on_preview_columns_applied(table_name, selected),
+            title=f"Preview columns: {table_name}",
+        )
+
+    def _on_preview_columns_applied(self, table_name: str, selected_columns: list[str]) -> None:
+        self._preview_column_preferences[table_name] = list(selected_columns)
+        self._refresh_preview_projection()
+        self.status_var.set(f"Applied preview columns for '{table_name}'.")
 
     # ---------------- Helpers ----------------
     def _set_table_editor_enabled(self, enabled: bool) -> None:
@@ -872,6 +1327,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         self.table_name_entry.configure(state=state)
         self.row_count_entry.configure(state=state)
+        self.table_business_key_unique_count_entry.configure(state=state)
         self.table_business_key_entry.configure(state=state)
         self.table_business_key_static_entry.configure(state=state)
         self.table_business_key_changing_entry.configure(state=state)
@@ -890,8 +1346,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_max_entry.configure(state=state)
         self.col_choices_entry.configure(state=state)
         self.col_pattern_entry.configure(state=state)
+        self.col_pattern_preset_combo.configure(state=("readonly" if enabled else tk.DISABLED))
         self.col_generator_combo.configure(state=("readonly" if enabled else tk.DISABLED))
         self.col_params_entry.configure(state=state)
+        self.col_params_template_btn.configure(state=state)
         self.col_depends_entry.configure(state=state)
         self.add_col_btn.configure(state=state)
         self.edit_col_btn.configure(state=state)
@@ -938,9 +1396,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_max_var.set("")
         self.col_choices_var.set("")
         self.col_pattern_var.set("")
+        self.col_pattern_preset_var.set(PATTERN_PRESET_CUSTOM)
         self.col_generator_var.set("")
         self.col_params_var.set("")
         self.col_depends_var.set("")
+        self._refresh_generator_options_for_dtype()
 
     def _load_column_into_editor(self, col: ColumnSpec) -> None:
         self.col_name_var.set(col.name)
@@ -953,12 +1413,108 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_max_var.set("" if col.max_value is None else str(col.max_value))
         self.col_choices_var.set(", ".join(col.choices) if col.choices else "")
         self.col_pattern_var.set(col.pattern or "")
+        self._sync_pattern_preset_from_pattern()
+        self._refresh_generator_options_for_dtype()
         self.col_generator_var.set(col.generator or "")
         if isinstance(col.params, dict):
             self.col_params_var.set(json.dumps(col.params))
         else:
             self.col_params_var.set("")
         self.col_depends_var.set(", ".join(col.depends_on) if col.depends_on else "")
+
+    def _on_column_dtype_changed(self, *_args) -> None:
+        self._refresh_generator_options_for_dtype()
+
+    def _on_column_generator_changed(self, *_args) -> None:
+        # Placeholder hook for future generator-specific GUI widgets.
+        pass
+
+    def _refresh_generator_options_for_dtype(self) -> None:
+        if not hasattr(self, "col_generator_combo"):
+            return
+        valid = valid_generators_for_dtype(self.col_dtype_var.get())
+        self.col_generator_combo.configure(values=valid)
+        selected = self.col_generator_var.get().strip()
+        if selected and selected not in valid:
+            self.col_generator_var.set("")
+
+    def _on_pattern_entry_focus_out(self, _event=None) -> None:
+        self._sync_pattern_preset_from_pattern()
+
+    def _on_pattern_preset_selected(self, _event=None) -> None:
+        preset = self.col_pattern_preset_var.get().strip()
+        pattern = PATTERN_PRESETS.get(preset)
+        if pattern is None:
+            return
+        self.col_pattern_var.set(pattern)
+
+    def _sync_pattern_preset_from_pattern(self) -> None:
+        pattern = self.col_pattern_var.get().strip()
+        for preset, preset_pattern in PATTERN_PRESETS.items():
+            if preset_pattern is None:
+                continue
+            if pattern == preset_pattern:
+                self.col_pattern_preset_var.set(preset)
+                return
+        self.col_pattern_preset_var.set(PATTERN_PRESET_CUSTOM)
+
+    def _apply_generator_params_template(self) -> None:
+        generator = self.col_generator_var.get().strip()
+        if generator == "":
+            messagebox.showerror(
+                "Params template",
+                _gui_error(
+                    "Column editor / Generator",
+                    "no generator selected",
+                    "choose a generator before filling params",
+                ),
+            )
+            return
+
+        template = default_generator_params_template(generator, self.col_dtype_var.get())
+        if template is None:
+            messagebox.showerror(
+                "Params template",
+                _gui_error(
+                    f"Column editor / Generator '{generator}'",
+                    "no params template is defined",
+                    "enter params JSON manually for this generator",
+                ),
+            )
+            return
+
+        params: dict[str, object] = {}
+        existing_raw = self.col_params_var.get().strip()
+        if existing_raw:
+            try:
+                existing = json.loads(existing_raw)
+            except Exception as exc:
+                messagebox.showerror(
+                    "Params template",
+                    _gui_error(
+                        "Column editor / Params JSON",
+                        f"invalid JSON ({exc})",
+                        "fix Params JSON or clear it before applying template",
+                    ),
+                )
+                return
+            if not isinstance(existing, dict):
+                messagebox.showerror(
+                    "Params template",
+                    _gui_error(
+                        "Column editor / Params JSON",
+                        "value must be a JSON object",
+                        "use an object like {\"min\": 0} before applying template",
+                    ),
+                )
+                return
+            params.update(existing)
+
+        for key, value in template.items():
+            params.setdefault(key, value)
+
+        self.col_params_var.set(json.dumps(params))
+        self.status_var.set(f"Applied params template for generator '{generator}'.")
 
     def _on_column_selected(self, _event=None) -> None:
         if self.selected_table_index is None:
@@ -1026,6 +1582,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         pattern = self.col_pattern_var.get().strip() or None
 
         gen_name = self.col_generator_var.get().strip() or None
+        if gen_name is not None:
+            valid_generators = valid_generators_for_dtype(dtype)
+            if gen_name not in valid_generators:
+                allowed = [g for g in valid_generators if g]
+                allowed_display = ", ".join(allowed) if allowed else "(none)"
+                raise ValueError(
+                    _gui_error(
+                        f"{action_prefix} / Generator",
+                        f"generator '{gen_name}' is not valid for dtype '{dtype}'",
+                        f"choose one of: {allowed_display}",
+                    )
+                )
         params_text = self.col_params_var.get().strip()
         params = None
         if params_text:
@@ -1214,6 +1782,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     # ---------------- Table list actions ----------------
     def _add_table(self) -> None:
+        before_project = self.project
         try:
             self._apply_project_vars_to_model()
             base_name = "new_table"
@@ -1254,23 +1823,60 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._refresh_fks_tree()
 
             self.status_var.set(f"Added table '{name}'.")
+            self._mark_dirty_if_project_changed(before_project, reason="table changes")
         except Exception as exc:
             messagebox.showerror("Add table failed", str(exc))
         self._run_validation()
 
 
+    def _find_dependency_cycle(self, columns: list[ColumnSpec]) -> list[str] | None:
+        graph: dict[str, list[str]] = {c.name: list(c.depends_on or []) for c in columns}
+        visited: set[str] = set()
+        visiting: set[str] = set()
+
+        def walk(node: str, path: list[str]) -> list[str] | None:
+            if node in visiting:
+                if node in path:
+                    idx = path.index(node)
+                    return path[idx:] + [node]
+                return [node, node]
+            if node in visited:
+                return None
+            visiting.add(node)
+            path.append(node)
+            for dep in graph.get(node, []):
+                if dep not in graph:
+                    continue
+                cycle = walk(dep, path)
+                if cycle:
+                    return cycle
+            path.pop()
+            visiting.remove(node)
+            visited.add(node)
+            return None
+
+        for col in graph:
+            cycle = walk(col, [])
+            if cycle:
+                return cycle
+        return None
+
     def _validate_project_detailed(self, project: SchemaProject) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
 
-        # Use existing validator (throws on first error)
+        # Canonical validator remains authoritative and fail-fast.
         try:
             validate_project(project)
         except Exception as exc:
             issues.append(ValidationIssue("error", "project", None, None, str(exc)))
 
-        # Per-table checks
+        table_names = [t.table_name for t in project.tables]
+
+        # Per-table checks for richer heatmap coverage.
         for t in project.tables:
-            # Must have PK
+            col_map = {c.name: c for c in t.columns}
+            incoming = [fk for fk in project.foreign_keys if fk.child_table == t.table_name]
+
             if not any(c.primary_key for c in t.columns):
                 issues.append(
                     ValidationIssue(
@@ -1286,7 +1892,6 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     )
                 )
 
-            # Duplicate column names
             names = [c.name for c in t.columns]
             if len(names) != len(set(names)):
                 issues.append(
@@ -1303,7 +1908,6 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     )
                 )
 
-            # Warn on nullable PK
             for c in t.columns:
                 if c.primary_key and c.nullable:
                     issues.append(
@@ -1319,9 +1923,6 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                             ),
                         )
                     )
-
-            # Warn on text PK (even if model prevents it)
-            for c in t.columns:
                 if c.primary_key and c.dtype != "int":
                     issues.append(
                         ValidationIssue(
@@ -1336,9 +1937,6 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                             ),
                         )
                     )
-
-            # Direction 3 compatibility warning: float is still supported but deprecated for new authoring.
-            for c in t.columns:
                 if c.dtype == "float":
                     issues.append(
                         ValidationIssue(
@@ -1350,10 +1948,254 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                         )
                     )
 
-        # FK checks
+                depends_on = list(c.depends_on or [])
+                if len(depends_on) != len(set(depends_on)):
+                    issues.append(
+                        ValidationIssue(
+                            "warn",
+                            "dependency",
+                            t.table_name,
+                            c.name,
+                            _gui_error(
+                                f"Table '{t.table_name}', column '{c.name}'",
+                                "depends_on contains duplicate column names",
+                                "list each dependency only once",
+                            ),
+                        )
+                    )
+                for dep in depends_on:
+                    if dep == c.name:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "dependency",
+                                t.table_name,
+                                c.name,
+                                _gui_error(
+                                    f"Table '{t.table_name}', column '{c.name}'",
+                                    "depends_on cannot reference itself",
+                                    "remove self references from depends_on",
+                                ),
+                            )
+                        )
+                    elif dep not in col_map:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "dependency",
+                                t.table_name,
+                                c.name,
+                                _gui_error(
+                                    f"Table '{t.table_name}', column '{c.name}'",
+                                    f"depends_on references unknown column '{dep}'",
+                                    "use existing columns in depends_on",
+                                ),
+                            )
+                        )
+
+            cycle = self._find_dependency_cycle(t.columns)
+            if cycle:
+                cycle_display = " -> ".join(cycle)
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "dependency",
+                        t.table_name,
+                        None,
+                        _gui_error(
+                            f"Table '{t.table_name}'",
+                            f"circular depends_on detected ({cycle_display})",
+                            "remove circular depends_on references",
+                        ),
+                    )
+                )
+
+            scd_mode = (t.scd_mode or "").strip().lower() if isinstance(t.scd_mode, str) else ""
+            if scd_mode in {"scd1", "scd2"} and not t.business_key:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "scd",
+                        t.table_name,
+                        None,
+                        _gui_error(
+                            f"Table '{t.table_name}'",
+                            f"scd_mode='{scd_mode}' requires business_key",
+                            "configure business_key columns before enabling SCD",
+                        ),
+                    )
+                )
+
+            unique_count = t.business_key_unique_count
+            if unique_count is not None:
+                if isinstance(unique_count, bool) or not isinstance(unique_count, int):
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            "scd",
+                            t.table_name,
+                            None,
+                            _gui_error(
+                                f"Table '{t.table_name}'",
+                                "business_key_unique_count must be an integer when provided",
+                                "set a positive whole number for business_key_unique_count or clear it",
+                            ),
+                        )
+                    )
+                else:
+                    if unique_count <= 0:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "scd",
+                                t.table_name,
+                                None,
+                                _gui_error(
+                                    f"Table '{t.table_name}'",
+                                    "business_key_unique_count must be > 0",
+                                    "set business_key_unique_count to a positive whole number",
+                                ),
+                            )
+                        )
+                    if not t.business_key:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "scd",
+                                t.table_name,
+                                None,
+                                _gui_error(
+                                    f"Table '{t.table_name}'",
+                                    "business_key_unique_count requires business_key",
+                                    "configure business_key columns before setting business_key_unique_count",
+                                ),
+                            )
+                        )
+                    if t.row_count > 0 and unique_count > t.row_count:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "scd",
+                                t.table_name,
+                                None,
+                                _gui_error(
+                                    f"Table '{t.table_name}'",
+                                    f"business_key_unique_count ({unique_count}) cannot exceed row_count ({t.row_count})",
+                                    "set business_key_unique_count <= row_count, or increase row_count",
+                                ),
+                            )
+                        )
+                    if scd_mode == "scd1" and t.row_count > 0 and unique_count != t.row_count:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "scd",
+                                t.table_name,
+                                None,
+                                _gui_error(
+                                    f"Table '{t.table_name}'",
+                                    "SCD1 requires one row per business key, so business_key_unique_count must equal row_count",
+                                    "set business_key_unique_count equal to row_count for SCD1 tables",
+                                ),
+                            )
+                        )
+
+            if t.business_key_static_columns and t.business_key_changing_columns:
+                overlap = sorted(set(t.business_key_static_columns) & set(t.business_key_changing_columns))
+                if overlap:
+                    overlap_display = ", ".join(overlap)
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            "scd",
+                            t.table_name,
+                            None,
+                            _gui_error(
+                                f"Table '{t.table_name}'",
+                                f"business_key_static_columns and business_key_changing_columns overlap ({overlap_display})",
+                                "put each column in only one business-key behavior list",
+                            ),
+                        )
+                    )
+
+            if scd_mode == "scd2":
+                if not t.scd_active_from_column or not t.scd_active_to_column:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            "scd",
+                            t.table_name,
+                            None,
+                            _gui_error(
+                                f"Table '{t.table_name}'",
+                                "scd_mode='scd2' requires scd_active_from_column and scd_active_to_column",
+                                "set both active period columns to existing date/datetime columns",
+                            ),
+                        )
+                    )
+                else:
+                    start = col_map.get(t.scd_active_from_column)
+                    end = col_map.get(t.scd_active_to_column)
+                    if start is None or end is None:
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "scd",
+                                t.table_name,
+                                None,
+                                _gui_error(
+                                    f"Table '{t.table_name}'",
+                                    "SCD2 active period columns were not found",
+                                    "set scd_active_from_column/scd_active_to_column to existing columns",
+                                ),
+                            )
+                        )
+                    else:
+                        if start.dtype not in {"date", "datetime"} or end.dtype not in {"date", "datetime"}:
+                            issues.append(
+                                ValidationIssue(
+                                    "error",
+                                    "scd",
+                                    t.table_name,
+                                    None,
+                                    _gui_error(
+                                        f"Table '{t.table_name}'",
+                                        "SCD2 active period columns must be dtype date or datetime",
+                                        "use date/datetime columns for scd_active_from_column and scd_active_to_column",
+                                    ),
+                                )
+                            )
+                        if start.dtype != end.dtype:
+                            issues.append(
+                                ValidationIssue(
+                                    "error",
+                                    "scd",
+                                    t.table_name,
+                                    None,
+                                    _gui_error(
+                                        f"Table '{t.table_name}'",
+                                        "SCD2 active period column dtypes must match",
+                                        "use the same dtype for scd_active_from_column and scd_active_to_column",
+                                    ),
+                                )
+                            )
+                if incoming:
+                    issues.append(
+                        ValidationIssue(
+                            "warn",
+                            "scd",
+                            t.table_name,
+                            None,
+                            _gui_error(
+                                f"Table '{t.table_name}'",
+                                "SCD2 is enabled on a child table with incoming FKs",
+                                "keep FK max_children high enough for version growth or reduce SCD2 churn",
+                            ),
+                        )
+                    )
+
         for fk in project.foreign_keys:
-            # parent must exist
-            if fk.parent_table not in [t.table_name for t in project.tables]:
+            if fk.parent_table not in table_names:
                 issues.append(
                     ValidationIssue(
                         "error",
@@ -1367,9 +2209,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                         ),
                     )
                 )
-
-            # child must exist
-            if fk.child_table not in [t.table_name for t in project.tables]:
+            if fk.child_table not in table_names:
                 issues.append(
                     ValidationIssue(
                         "error",
@@ -1383,7 +2223,6 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                         ),
                     )
                 )
-
             if fk.min_children > fk.max_children:
                 issues.append(
                     ValidationIssue(
@@ -1410,9 +2249,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         issues = self._validate_project_detailed(self.project)
 
-        # Define checks (columns in the heatmap)
-        checks = ["PK", "Columns", "FKs", "Generator"]
+        checks = ["PK", "Columns", "Dependencies", "Generator", "SCD/BK", "FKs"]
         tables = [t.table_name for t in self.project.tables]
+        if any(i.table is None for i in issues):
+            tables = ["Project"] + tables
 
         # Default OK everywhere
         status: dict[tuple[str, str], str] = {(t, c): "ok" for t in tables for c in checks}
@@ -1426,24 +2266,44 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 status[key] = sev
             details.setdefault(key, []).append(msg)
 
-        # Map issues into heatmap buckets
+        def classify_bucket(issue: ValidationIssue) -> str:
+            if issue.scope == "fk":
+                return "FKs"
+            if issue.scope == "dependency":
+                return "Dependencies"
+            if issue.scope == "scd":
+                return "SCD/BK"
+            if issue.scope == "generator":
+                return "Generator"
+
+            text = issue.message.lower()
+            if "depends_on" in text or "dependency" in text:
+                return "Dependencies"
+            if "scd" in text or "business_key" in text:
+                return "SCD/BK"
+            if "generator" in text or "params." in text:
+                return "Generator"
+            if "foreign key" in text or text.startswith("fk "):
+                return "FKs"
+            if "primary key" in text or " pk" in text:
+                return "PK"
+            return "Columns"
+
         for iss in issues:
-            if iss.table is None:
+            target_table = iss.table if iss.table is not None else "Project"
+            if target_table not in tables:
                 continue
-            if iss.scope in ("table", "column"):
-                # PK + Columns buckets
-                if "primary key" in iss.message.lower() or "pk" in iss.message.lower():
-                    mark(iss.table, "PK", iss.severity, iss.message)
-                else:
-                    mark(iss.table, "Columns", iss.severity, iss.message)
-            elif iss.scope == "fk":
-                mark(iss.table, "FKs", iss.severity, iss.message)
-            else:
-                mark(iss.table, "Generator", iss.severity, iss.message)
+            mark(target_table, classify_bucket(iss), iss.severity, iss.message)
 
 
         # Update heatmap
         self.heatmap.set_data(tables=tables, checks=checks, status=status, details=details)
+        refresh_inline = getattr(self, "_refresh_inline_validation_summary", None)
+        if callable(refresh_inline):
+            try:
+                refresh_inline(issues)
+            except TypeError:
+                refresh_inline()
 
         # Summary
         e = sum(1 for i in issues if i.severity == "error")
@@ -1470,6 +2330,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     def _remove_table(self) -> None:
         if self.selected_table_index is None:
             return
+        before_project = self.project
         try:
             idx = self.selected_table_index
             removed = self.project.tables[idx].table_name
@@ -1498,6 +2359,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._refresh_fks_tree()
 
             self.status_var.set(f"Removed table '{removed}'.")
+            self._mark_dirty_if_project_changed(before_project, reason="table changes")
         except Exception as exc:
             messagebox.showerror("Remove table failed", str(exc))
 
@@ -1521,6 +2383,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         t = self.project.tables[self.selected_table_index]
         self.table_name_var.set(t.table_name)
         self.row_count_var.set(str(t.row_count))
+        self.table_business_key_unique_count_var.set(
+            str(t.business_key_unique_count) if t.business_key_unique_count is not None else ""
+        )
         self.table_business_key_var.set(", ".join(t.business_key) if t.business_key else "")
         self.table_business_key_static_columns_var.set(
             ", ".join(t.business_key_static_columns) if t.business_key_static_columns else ""
@@ -1538,6 +2403,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     def _apply_table_changes(self) -> None:
         if self.selected_table_index is None:
             return
+        before_project = self.project
         try:
             self._apply_project_vars_to_model()
 
@@ -1564,6 +2430,19 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                         "enter a whole number for Root row count",
                     )
                 ) from exc
+            business_key_unique_count_raw = self.table_business_key_unique_count_var.get().strip()
+            business_key_unique_count: int | None = None
+            if business_key_unique_count_raw != "":
+                try:
+                    business_key_unique_count = int(business_key_unique_count_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        _gui_error(
+                            "Table editor / Unique business keys",
+                            f"business_key_unique_count '{self.table_business_key_unique_count_var.get()}' must be an integer",
+                            "enter a whole number for Unique business keys or leave it blank",
+                        )
+                    ) from exc
             location = f"Table '{new_name}' / Table editor"
             business_key = self._parse_column_name_csv(
                 self.table_business_key_var.get(),
@@ -1627,6 +2506,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=old.columns,
                 row_count=row_count,
                 business_key=business_key,
+                business_key_unique_count=business_key_unique_count,
                 business_key_static_columns=business_key_static_columns,
                 business_key_changing_columns=business_key_changing_columns,
                 scd_mode=scd_mode,
@@ -1652,6 +2532,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._refresh_fks_tree()
 
             self.status_var.set("Applied table changes.")
+            self._mark_dirty_if_project_changed(before_project, reason="table properties")
         except Exception as exc:
             messagebox.showerror("Apply failed", str(exc))
 
@@ -1662,6 +2543,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     def _add_column(self) -> None:
         if self.selected_table_index is None:
             return
+        before_project = self.project
         try:
             self._apply_project_vars_to_model()
             idx = self.selected_table_index
@@ -1699,6 +2581,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=cols,
                 row_count=t.row_count,
                 business_key=t.business_key,
+                business_key_unique_count=t.business_key_unique_count,
                 business_key_static_columns=t.business_key_static_columns,
                 business_key_changing_columns=t.business_key_changing_columns,
                 scd_mode=t.scd_mode,
@@ -1723,6 +2606,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._refresh_fk_dropdowns()
 
             self.status_var.set("Column added.")
+            self._mark_dirty_if_project_changed(before_project, reason="column changes")
         except Exception as exc:
             messagebox.showerror("Add column failed", str(exc))
         self._run_validation()
@@ -1731,6 +2615,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         if self.selected_table_index is None:
             return
 
+        before_project = self.project
         try:
             col_idx = self._selected_column_index()
             if col_idx is None:
@@ -1780,6 +2665,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=cols,
                 row_count=t.row_count,
                 business_key=t.business_key,
+                business_key_unique_count=t.business_key_unique_count,
                 business_key_static_columns=t.business_key_static_columns,
                 business_key_changing_columns=t.business_key_changing_columns,
                 scd_mode=t.scd_mode,
@@ -1807,6 +2693,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 self._on_column_selected()
 
             self.status_var.set(f"Updated column '{old_col.name}'.")
+            self._mark_dirty_if_project_changed(before_project, reason="column changes")
         except Exception as exc:
             messagebox.showerror("Edit column failed", str(exc))
         self._run_validation()
@@ -1817,6 +2704,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         col_idx = self._selected_column_index()
         if col_idx is None:
             return
+        before_project = self.project
         try:
             self._apply_project_vars_to_model()
             t_idx = self.selected_table_index
@@ -1852,6 +2740,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=cols,
                 row_count=t.row_count,
                 business_key=t.business_key,
+                business_key_unique_count=t.business_key_unique_count,
                 business_key_static_columns=t.business_key_static_columns,
                 business_key_changing_columns=t.business_key_changing_columns,
                 scd_mode=t.scd_mode,
@@ -1873,6 +2762,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._clear_column_editor()
             self._refresh_fk_dropdowns()
             self.status_var.set(f"Removed column '{removed}'.")
+            self._mark_dirty_if_project_changed(before_project, reason="column changes")
         except Exception as exc:
             messagebox.showerror("Remove column failed", str(exc))
         self._run_validation()
@@ -1883,6 +2773,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         col_idx = self._selected_column_index()
         if col_idx is None:
             return
+        before_project = self.project
         try:
             self._apply_project_vars_to_model()
             t_idx = self.selected_table_index
@@ -1901,6 +2792,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 columns=cols,
                 row_count=t.row_count,
                 business_key=t.business_key,
+                business_key_unique_count=t.business_key_unique_count,
                 business_key_static_columns=t.business_key_static_columns,
                 business_key_changing_columns=t.business_key_changing_columns,
                 scd_mode=t.scd_mode,
@@ -1924,6 +2816,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             children = self.columns_tree.get_children()
             if 0 <= new_idx < len(children):
                 self.columns_tree.selection_set(children[new_idx])
+            self._mark_dirty_if_project_changed(before_project, reason="column order")
 
         except Exception as exc:
             messagebox.showerror("Move column failed", str(exc))
@@ -1931,6 +2824,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     # ---------------- Relationship actions ----------------
     def _add_fk(self) -> None:
+        before_project = self.project
         try:
             self._apply_project_vars_to_model()
 
@@ -2052,6 +2946,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.project = new_project
             self._refresh_fks_tree()
             self.status_var.set("Relationship added.")
+            self._mark_dirty_if_project_changed(before_project, reason="relationship changes")
         except Exception as exc:
             messagebox.showerror("Add relationship failed", str(exc))
         self._run_validation()
@@ -2060,6 +2955,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         idx = self._selected_fk_index()
         if idx is None:
             return
+        before_project = self.project
         try:
             self._apply_project_vars_to_model()
 
@@ -2080,6 +2976,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(
                 f"Removed relationship: {removed.parent_table}.{removed.parent_column} → {removed.child_table}.{removed.child_column}"
             )
+            self._mark_dirty_if_project_changed(before_project, reason="relationship changes")
         except Exception as exc:
             messagebox.showerror("Remove relationship failed", str(exc))
         self._run_validation()
@@ -2107,6 +3004,19 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.export_option_combo.configure(state=("disabled" if running else "readonly"))
         self.clear_btn.configure(state=state)
         self.preview_btn.configure(state=state)
+        if hasattr(self, "preview_columns_btn"):
+            self.preview_columns_btn.configure(state=state)
+        if hasattr(self, "preview_paging_chk"):
+            self.preview_paging_chk.configure(state=state)
+        if hasattr(self, "preview_page_size_combo"):
+            if running:
+                self.preview_page_size_combo.configure(state=tk.DISABLED)
+            else:
+                paging_enabled_var = getattr(self, "preview_paging_enabled_var", None)
+                paging_enabled = bool(paging_enabled_var.get()) if paging_enabled_var is not None else False
+                self.preview_page_size_combo.configure(
+                    state=("readonly" if paging_enabled else tk.DISABLED)
+                )
 
     def _on_generate_project(self) -> None:
         if self.is_running:
@@ -2167,30 +3077,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             limit = 200
             self.preview_limit_var.set("200")
 
-        rows = self.generated_rows[table][:limit]
-        self._render_preview_rows(rows)
+        self._preview_source_table = table
+        self._preview_source_rows = list(self.generated_rows[table][:limit])
+        self._refresh_preview_projection()
 
     def _clear_preview_tree(self) -> None:
-        self.preview_tree["columns"] = ()
-        for item in self.preview_tree.get_children():
-            self.preview_tree.delete(item)
+        self._preview_source_table = ""
+        self._preview_source_rows = []
+        self.preview_table.set_columns([])
+        self.preview_table.set_rows([])
 
     def _render_preview_rows(self, rows: list[dict[str, object]]) -> None:
-        self._clear_preview_tree()
-        if not rows:
-            return
-
-        # Determine columns from keys of first row
-        cols = list(rows[0].keys())
-        self.preview_tree["columns"] = tuple(cols)
-
-        for c in cols:
-            self.preview_tree.heading(c, text=c)
-            self.preview_tree.column(c, width=140, anchor="w", stretch=True)
-
-        for r in rows:
-            values = [r.get(c) for c in cols]
-            self.preview_tree.insert("", tk.END, values=values)
+        self.preview_table.set_rows(rows)
 
     def _on_export_data(self) -> None:
         if self.is_running:
@@ -2241,7 +3139,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     w = csv.writer(f)
                     w.writerow(cols)
                     for r in rows:
-                        w.writerow([r.get(c) for c in cols])
+                        w.writerow([_csv_export_value(r.get(c)) for c in cols])
 
             self.status_var.set(f"Exported CSVs to: {folder}")
             messagebox.showinfo("Export complete", f"Exported one CSV per table into:\n{folder}")
@@ -2297,6 +3195,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.generated_rows = {}
         self.preview_table_combo["values"] = []
         self.preview_table_var.set("")
+        self._preview_column_preferences.clear()
         self._clear_preview_tree()
         self.status_var.set("Cleared generated data.")
 
@@ -2332,14 +3231,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         new_tables: list[TableSpec] = []
         for t in self.project.tables:
             rc = t.row_count
+            business_key_unique_count = t.business_key_unique_count
             if t.table_name not in child_tables:
                 rc = n
+                if business_key_unique_count is not None:
+                    business_key_unique_count = min(business_key_unique_count, rc)
             new_tables.append(
                 TableSpec(
                     table_name=t.table_name,
                     row_count=rc,
                     columns=t.columns,
                     business_key=t.business_key,
+                    business_key_unique_count=business_key_unique_count,
                     business_key_static_columns=t.business_key_static_columns,
                     business_key_changing_columns=t.business_key_changing_columns,
                     scd_mode=t.scd_mode,
@@ -2396,7 +3299,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
 
     # ---------------- Save / Load ----------------
-    def _save_project(self) -> None:
+    def _save_project(self) -> bool:
         try:
             self._apply_project_vars_to_model()
             validate_project(self.project)
@@ -2407,13 +3310,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 filetypes=[("JSON", "*.json"), ("All files", "*.*")],
             )
             if not path:
-                return
+                return False
             save_project_to_json(self.project, path)
             self.status_var.set(f"Saved project: {path}")
+            self._mark_clean()
+            return True
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
+            return False
 
     def _load_project(self) -> None:
+        if not self._confirm_discard_or_save("loading another project"):
+            return
         try:
             path = filedialog.askopenfilename(
                 title="Load project JSON",
@@ -2423,8 +3331,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 return
             project = load_project_from_json(path)
             self.project = project
+            self._suspend_dirty_tracking = True
             self.project_name_var.set(project.name)
             self.seed_var.set(str(project.seed))
+            self._suspend_dirty_tracking = False
 
             self.selected_table_index = None
             self._refresh_tables_list()
@@ -2433,7 +3343,15 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
             self._refresh_fk_dropdowns()
             self._refresh_fks_tree()
+            self._preview_column_preferences.clear()
+            self._clear_preview_tree()
+            self._mark_clean()
+            self._run_validation()
 
             self.status_var.set(f"Loaded project: {path}")
         except Exception as exc:
+            self._suspend_dirty_tracking = False
             messagebox.showerror("Load failed", str(exc))
+
+
+

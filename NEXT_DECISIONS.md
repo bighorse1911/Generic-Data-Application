@@ -2,6 +2,10 @@
 Direction 1 - Smarter Data
 
 ## Recent Completed Slice (Direction 1)
+- Completed (2026-02-14): Dependent CSV sampling added for same-row column correlation:
+  - `sample_csv` now supports optional params `match_column` + `match_column_index` to filter sampled values by another already-generated column in the same row,
+  - validator/runtime guardrails enforce source-column existence, `depends_on` ordering, and actionable errors when CSV matches are unavailable,
+  - generation behaviors guide text now documents dependent `sample_csv` setup in GUI flows.
 - Completed (2026-02-12): GUI generation behavior guide page added:
   - added Home route `generation_behaviors_guide`,
   - added read-only screen documenting supported generation behaviors and setup patterns,
@@ -10,6 +14,66 @@ Direction 1 - Smarter Data
   - added `if_then` generator for deterministic if/then branching from row context,
   - added validator guardrails for params shape and `depends_on` ordering requirements,
   - exposed `if_then` in GUI generator selection.
+- Completed (2026-02-14): Priority 1 phase 2 time-aware constraints added:
+  - added `time_offset` generator for deterministic row-level date/datetime before/after offsets from a source column,
+  - added validator guardrails for source-column linkage, dtype compatibility, `depends_on` ordering, direction, and offset bounds,
+  - exposed `time_offset` in GUI generator selection and generation behaviors guide content.
+- Completed (2026-02-14): Priority 1 phases 3-5 completed:
+  - Phase 3 hierarchical categories: added `hierarchical_category` generator with parent-column mapping semantics and validator/runtime guardrails.
+  - Phase 4 validation heatmap enhancements: expanded schema heatmap buckets (Dependencies, SCD/BK) with richer per-table issue surfacing.
+  - Phase 5 SCD2 child-table support: removed root-table-only validator restriction and added capacity-aware SCD2 version growth for incoming-FK child tables.
+- Completed (2026-02-14): CSV column sampling finalized:
+  - `sample_csv` generator + validator/runtime guardrails are active,
+  - repo-root-relative JSON path portability and normalization are implemented,
+  - fixture and guardrail tests cover missing-path, bad-column, and deterministic behavior paths.
+- Completed (2026-02-14): Priority 1 phased rollout fully completed (phases 1-5):
+  - phase 1 `if_then`,
+  - phase 2 `time_offset`,
+  - phase 3 `hierarchical_category`,
+  - phase 4 validation heatmap enhancements,
+  - phase 5 SCD2 support beyond root-table-only scope.
+- Completed (2026-02-14): Canonical spec adoption finalized:
+  - DATA_SEMANTICS canonical spec is adopted with float-compatibility migration notes,
+  - GUI_WIREFRAME_SCHEMA canonical spec is adopted for library-agnostic GUI decisions/change tracking.
+- Completed (2026-02-14): Extensible data types implemented:
+  - promoted `bytes` from roadmap candidate to first-class dtype in validation, generation, GUI authoring, SQL DDL/SQLite paths, and tests,
+  - added bytes export behavior for CSV (base64 text) and SQLite storage as BLOB.
+- Completed (2026-02-14): Realistic distributions completed:
+  - GUI column generator selector now includes `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted`.
+  - Validator guardrails now enforce distribution dtype compatibility and actionable params checks (bounds, variance/sigma positivity, weighted-choice shape/values).
+  - Runtime distribution behavior now includes robust param errors, `normal` support for `stdev|stddev`, and optional `min|max` clamping for `lognormal`.
+- Completed (2026-02-14): GUI generator authoring ergonomics update:
+  - generator selector is now filtered by selected column dtype (shows only valid generators for that dtype),
+  - column editor adds regex pattern presets for common cases,
+  - column editor adds "Fill params template" action for generator params JSON bootstrapping.
+- Completed (2026-02-14): GUI theme preference update:
+  - removed forced dark mode application from kit-based schema designer screens,
+  - restored regular/default Tk/ttk theme rendering for GUI surfaces.
+- Completed (2026-02-14): Ordered choices generator behavior added:
+  - added `ordered_choice` generator with multi-order path selection and weighted movement progression,
+  - added validator guardrails for params shape (`orders`, `order_weights`, `move_weights`, `start_index`) with actionable fix hints,
+  - exposed `ordered_choice` in GUI generator filtering and params template defaults.
+- Completed (2026-02-14): Priority 1 GUI kit modernization phase A implemented:
+  - added reusable `ToastCenter`, `SearchEntry`, `TokenEntry`, `JsonEditorDialog`, and `ShortcutManager` primitives in `src/gui_kit`,
+  - integrated phase-A primitives into modular `schema_project` route (non-blocking toasts, debounced search controls, token editors, params JSON dialog, and shortcuts help),
+  - added GUI-kit component and screen integration tests for the new primitives.
+- Completed (2026-02-14): Priority 1 GUI kit modernization phase B implemented:
+  - `TableView` now supports an opt-in pagination path for large preview row sets.
+  - Added `ColumnChooserDialog` and integrated preview column visibility/order controls without mutating underlying schema column order.
+  - Added `DirtyStateGuard` pattern in `BaseScreen` and integrated unsaved-change indicator + guarded back/load flows in modular schema screen.
+  - Added `InlineValidationSummary` panel with jump actions to table/column/FK editor contexts.
+  - Added phase-B unit/integration tests for pagination helpers, dirty-state flow, and validation jump behavior.
+- Completed (2026-02-14): Priority 1 GUI kit modernization phase C legacy adoption implemented:
+  - integrated Phase B components into `schema_project_legacy` in a low-risk slice,
+  - added opt-in preview pagination + preview column chooser in legacy screen,
+  - added legacy dirty-state prompts for back/load navigation with save/discard/cancel flow,
+  - added inline validation summary jump actions to table/column/FK editing contexts,
+  - added legacy Phase C tests and verified full regression suite remains green.
+- Completed (2026-02-14): Business-key cardinality control implemented:
+  - added optional table field `business_key_unique_count` to configure unique business keys separately from table `row_count`,
+  - validator/runtime guardrails now enforce actionable errors for invalid combinations (`business_key` required, positive integer, row-count bounds, and SCD1 one-row-per-key semantics),
+  - generation now supports scenarios like 200 unique business keys across 2000 rows while preserving deterministic seed behavior,
+  - added table-editor controls in both legacy and kit screens and covered with regression tests.
 - Completed (2026-02-12): CSV sampling path portability hardening:
   - schema/sample_csv paths now resolve relative to repo root,
   - legacy absolute fixture-style paths normalize to repo-relative form where possible,
@@ -42,25 +106,11 @@ Direction 3 - Refactor float -> decimal; move semantic numeric types (lat/lon/mo
 - Priority 1 completed (2026-02-12): canonical validator/runtime/GUI/test error wording is aligned to `<Location>: <issue>. Fix: <hint>.`
 
 ## In Progress
-- CSV column sampling
-- Extensible data types
-- Realistic distributions
-- Priority 1 phased rollout (started):
-  - Phase 1 complete: conditional generators (`if_then`)
-  - Phase 2 pending: time-aware constraints
-  - Phase 3 pending: hierarchical categories
-  - Phase 4 pending: validation heatmaps enhancements
-  - Phase 5 pending: extend SCD2 beyond root-table-only scope
-- DATA_SEMANTICS canonical spec adopted with migration notes for float compatibility
-- GUI_WIREFRAME_SCHEMA canonical spec adopted for library-agnostic GUI design decisions and change tracking
+- None currently.
 
 ## Next Candidates
 **Priority 1 (future features):**
-- Conditional generators (if/then)
-- Time-aware constraints
-- Hierarchical categories
-- Validation heatmaps enhancements
-- Extend SCD2 beyond current root-table-only scope (support incoming-FK child tables safely).
+- None currently.
 
 ## Deferred
 - Performance scaling
@@ -73,4 +123,6 @@ Direction 3 - Refactor float -> decimal; move semantic numeric types (lat/lon/mo
 - `src/gui_kit/forms.py`: `FormBuilder`
 - `src/gui_kit/table.py`: `TableView`
 - `src/gui_kit/layout.py`: `BaseScreen`
+- `src/gui_kit/column_chooser.py`: `ColumnChooserDialog`
+- `src/gui_kit/validation.py`: `InlineValidationSummary`
 - `src/gui_schema_project_kit.py`: reference modular screen using kit components

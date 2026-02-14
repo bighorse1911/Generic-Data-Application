@@ -4,7 +4,6 @@ from unittest import mock
 
 from src.config import AppConfig
 from src.gui_home import App
-from src.gui_kit.theme import DARK_BG
 
 
 class TestGuiSCDTableEditor(unittest.TestCase):
@@ -175,10 +174,30 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         self.assertIn("no column is selected", message)
         self.assertIn("Fix:", message)
 
-    def test_kit_screen_applies_dark_mode(self):
+    def test_kit_screen_uses_default_theme(self):
         screen = self.app.screens["schema_project_kit"]
-        self.assertTrue(getattr(screen, "kit_dark_mode_enabled", False))
-        self.assertEqual(str(screen.scroll.canvas.cget("background")).lower(), DARK_BG.lower())
+        self.assertFalse(getattr(screen, "kit_dark_mode_enabled", False))
+        default_canvas_bg = tk.Canvas(screen).cget("background")
+        self.assertEqual(str(screen.scroll.canvas.cget("background")), str(default_canvas_bg))
+
+    def test_business_key_unique_count_can_be_authored_in_legacy_and_kit_screens(self):
+        for screen_key in ("schema_project_legacy", "schema_project_kit"):
+            screen = self.app.screens[screen_key]
+            screen._add_table()
+            idx = screen.selected_table_index
+            self.assertIsNotNone(idx)
+            assert idx is not None
+
+            table_name = screen.project.tables[idx].table_name
+            pk_col = f"{table_name}_id"
+
+            screen.table_business_key_var.set(pk_col)
+            screen.table_business_key_unique_count_var.set("20")
+            screen._apply_table_changes()
+
+            table = screen.project.tables[idx]
+            self.assertEqual(table.business_key, [pk_col])
+            self.assertEqual(table.business_key_unique_count, 20)
 
 
 if __name__ == "__main__":

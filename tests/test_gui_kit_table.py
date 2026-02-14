@@ -1,6 +1,6 @@
 import unittest
 
-from src.gui_kit.table import estimate_column_widths, normalize_rows
+from src.gui_kit.table import estimate_column_widths, normalize_rows, paginate_rows
 
 
 class TestNormalizeRows(unittest.TestCase):
@@ -30,6 +30,26 @@ class TestEstimateColumnWidths(unittest.TestCase):
         )
         self.assertGreaterEqual(widths["id"], 80)
         self.assertEqual(widths["description"], 320)
+
+
+class TestPaginateRows(unittest.TestCase):
+    def test_paginate_rows_normalizes_out_of_range_page_index(self):
+        rows = [[1], [2], [3], [4], [5]]
+        page_rows, page_index, total_pages = paginate_rows(rows, page_size=2, page_index=99)
+        self.assertEqual(page_rows, [[5]])
+        self.assertEqual(page_index, 2)
+        self.assertEqual(total_pages, 3)
+
+    def test_paginate_rows_handles_empty_rows(self):
+        page_rows, page_index, total_pages = paginate_rows([], page_size=10, page_index=0)
+        self.assertEqual(page_rows, [])
+        self.assertEqual(page_index, 0)
+        self.assertEqual(total_pages, 0)
+
+    def test_paginate_rows_requires_positive_page_size(self):
+        with self.assertRaises(ValueError) as ctx:
+            paginate_rows([[1]], page_size=0, page_index=0)
+        self.assertIn("page_size must be > 0", str(ctx.exception))
 
 
 if __name__ == "__main__":

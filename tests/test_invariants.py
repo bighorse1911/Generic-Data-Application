@@ -196,6 +196,7 @@ class TestInvariants(unittest.TestCase):
             loaded = load_project_from_json(path)
             self.assertEqual(loaded.seed, 12345)
             self.assertEqual(loaded.tables[0].row_count, 100)
+            self.assertIsNone(loaded.tables[0].business_key_unique_count)
             self.assertEqual(loaded.foreign_keys[0].min_children, 1)
             self.assertEqual(loaded.foreign_keys[0].max_children, 3)
         finally:
@@ -291,10 +292,19 @@ class TestInvariants(unittest.TestCase):
 
     def test_direction3_gui_lists_decimal_and_semantic_numeric_generators(self):
         self.assertIn("decimal", DTYPES)
+        self.assertIn("bytes", DTYPES)
         self.assertNotIn("float", DTYPES)
         self.assertIn("money", GENERATORS)
         self.assertIn("percent", GENERATORS)
         self.assertIn("if_then", GENERATORS)
+        self.assertIn("time_offset", GENERATORS)
+        self.assertIn("hierarchical_category", GENERATORS)
+        self.assertIn("uniform_int", GENERATORS)
+        self.assertIn("uniform_float", GENERATORS)
+        self.assertIn("normal", GENERATORS)
+        self.assertIn("lognormal", GENERATORS)
+        self.assertIn("choice_weighted", GENERATORS)
+        self.assertIn("ordered_choice", GENERATORS)
 
     def test_gui_navigation_contract(self):
         try:
@@ -317,6 +327,9 @@ class TestInvariants(unittest.TestCase):
             guide_titles = {entry[0] for entry in GENERATION_BEHAVIOR_GUIDE}
             self.assertIn("sample_csv generator", guide_titles)
             self.assertIn("if_then conditional generator", guide_titles)
+            self.assertIn("time_offset time-aware generator", guide_titles)
+            self.assertIn("hierarchical_category generator", guide_titles)
+            self.assertIn("ordered_choice sequence generator", guide_titles)
             self.assertIn("Business key + SCD table behaviors", guide_titles)
 
             app.show_screen("generation_behaviors_guide")
@@ -423,6 +436,69 @@ class TestInvariants(unittest.TestCase):
             self.assertTrue(
                 any("duplicate column names" in m and "Fix:" in m for m in duplicate_errors),
                 "GUI validation errors must include location, issue, and fix hint.",
+            )
+
+            dependency_cycle_project = SchemaProject(
+                name="dependency_cycle",
+                seed=10,
+                tables=[
+                    TableSpec(
+                        table_name="dep_table",
+                        row_count=1,
+                        columns=[
+                            ColumnSpec("dep_id", "int", nullable=False, primary_key=True),
+                            ColumnSpec("a", "text", nullable=False, depends_on=["b"]),
+                            ColumnSpec("b", "text", nullable=False, depends_on=["a"]),
+                        ],
+                    )
+                ],
+                foreign_keys=[],
+            )
+            dep_issues = schema_screen._validate_project_detailed(dependency_cycle_project)
+            dependency_errors = [i.message for i in dep_issues if i.scope == "dependency" and i.severity == "error"]
+            self.assertTrue(
+                any("circular depends_on" in m and "Fix:" in m for m in dependency_errors),
+                "Validation heatmap dependency checks should surface circular dependencies with actionable fixes.",
+            )
+
+            scd_issue_project = SchemaProject(
+                name="scd_issue",
+                seed=11,
+                tables=[
+                    TableSpec(
+                        table_name="dim_table",
+                        row_count=1,
+                        columns=[
+                            ColumnSpec("dim_id", "int", nullable=False, primary_key=True),
+                            ColumnSpec("code", "text", nullable=False),
+                            ColumnSpec("city", "text", nullable=False),
+                        ],
+                        business_key=["code"],
+                        scd_mode="scd2",
+                        scd_tracked_columns=["city"],
+                    )
+                ],
+                foreign_keys=[],
+            )
+            scd_issues = schema_screen._validate_project_detailed(scd_issue_project)
+            scd_errors = [i.message for i in scd_issues if i.scope == "scd" and i.severity == "error"]
+            self.assertTrue(
+                any("scd_mode='scd2' requires scd_active_from_column and scd_active_to_column" in m for m in scd_errors),
+                "Validation heatmap SCD checks should surface missing active period fields.",
+            )
+
+            schema_screen.project = dependency_cycle_project
+            schema_screen.project_name_var.set(dependency_cycle_project.name)
+            schema_screen.seed_var.set(str(dependency_cycle_project.seed))
+            schema_screen._run_validation()
+            self.assertIn("Dependencies", schema_screen.heatmap._checks)
+            self.assertIn("SCD/BK", schema_screen.heatmap._checks)
+            dep_table_idx = schema_screen.heatmap._tables.index("dep_table")
+            dep_check_idx = schema_screen.heatmap._checks.index("Dependencies")
+            dep_cell_msgs = schema_screen.heatmap._cell_details[(dep_table_idx, dep_check_idx)]
+            self.assertTrue(
+                any("depends_on" in m.lower() for m in dep_cell_msgs),
+                "Dependencies heatmap cell should include dependency-specific validation details.",
             )
 
             with self.assertRaisesRegex(KeyError, "Unknown screen 'missing'"):

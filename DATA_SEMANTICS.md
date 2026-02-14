@@ -17,9 +17,8 @@ If you make updates to any DATA_SEMANTICS in the project, update this file too.
 
 Direction 3 (float -> decimal) is completed.
 
-- Runtime support today: `int`, `decimal`, legacy `float`, `text`, `bool`, `date`, `datetime`
-- Canonical authoring dtypes: `int`, `decimal`, `text`, `bool`, `date`, `datetime`
-- Future extension candidate: `bytes` (outside Direction 3 scope)
+- Runtime support today: `int`, `decimal`, legacy `float`, `text`, `bool`, `date`, `datetime`, `bytes`
+- Canonical authoring dtypes: `int`, `decimal`, `text`, `bool`, `date`, `datetime`, `bytes`
 - Backward compatibility policy: existing JSON schemas using `float` remain supported.
 - GUI authoring policy: new columns use `decimal`; GUI blocks new `float` column creation.
 - SCD Type 1 and Type 2 are implemented in generator + validator + JSON IO + GUI authoring controls (business-key linkage, tracked slowly-changing columns, and SCD2 active periods).
@@ -28,7 +27,19 @@ Direction 3 (float -> decimal) is completed.
   - `business_key_changing_columns` for attributes that are expected to change per business key across versions.
 - GUI-only update (2026-02-12): column edit workflow and kit dark mode were added without changing canonical data semantics.
 - GUI-only update (2026-02-12): generation behavior guide page added to explain configuration patterns without changing canonical data semantics.
-- SCD current limitation: `scd2` is validated for root tables only (no incoming FKs) in phase 1.
+- GUI-only update (2026-02-14): column editor now filters generators by selected dtype and provides pattern presets + generator params templates without changing canonical data semantics.
+- GUI-only update (2026-02-14): kit screens now use the regular/default Tk/ttk theme (dark mode disabled) without changing canonical data semantics.
+- GUI-only update (2026-02-14): phase-A gui_kit QoL primitives (toasts, debounced search, token editors, params JSON editor, shortcuts help) were integrated without changing canonical data semantics.
+- GUI-only update (2026-02-14): phase-B gui_kit UX primitives (preview pagination, preview column chooser, inline validation summary jumps, and dirty-state prompts) were integrated without changing canonical data semantics.
+- GUI-only update (2026-02-14): phase-C legacy-screen adoption now exposes the same Phase B preview/validation/dirty-state UX patterns in `schema_project_legacy` without changing canonical data semantics.
+- Priority 1 update (2026-02-14): time-aware constraints phase 2 implemented via `time_offset` generator + validator + GUI authoring exposure.
+- Priority 1 update (2026-02-14): hierarchical categories phase 3 implemented via `hierarchical_category` generator + validator + GUI authoring exposure.
+- Priority 1 update (2026-02-14): SCD2 now supports incoming-FK child tables with FK-capacity-aware version growth.
+- Priority 1 rollout status: phases 1-5 are completed.
+- Extensible data types update (2026-02-14): `bytes` promoted to first-class dtype with validator/runtime/GUI/SQL/CSV support.
+- Generator behavior update (2026-02-14): `ordered_choice` implemented for deterministic sequence progression across named order paths with weighted movement.
+- Business-key cardinality update (2026-02-14): `business_key_unique_count` now allows configuring unique business keys independently from table row count.
+- Generator behavior update (2026-02-14): `sample_csv` now supports optional row-matched sampling via `match_column` + `match_column_index` for same-row correlated CSV values.
 
 ## Core design principle
 
@@ -144,14 +155,15 @@ Definition:
 Allowed constraints:
 - `start_datetime`, `end_datetime`
 
-## 1.8 bytes (future extension binary dtype)
+## 1.8 bytes (binary dtype)
 
 Definition:
 - Binary payload (`bytes`) for blob-like data
 
 Rules:
 - CSV exports should encode bytes (for example base64) at export time.
-- Support is future roadmap-level and not part of Direction 3 completion.
+- SQLite storage should map bytes to blob-compatible storage.
+- Deterministic generation for bytes columns remains seed-driven.
 
 ---
 
@@ -186,6 +198,69 @@ Rules:
 - `value`, `then_value`, and `else_value` must be scalar JSON values (not objects/lists).
 - Validation/runtime errors must include location + issue + fix hint.
 
+### 2.2 Time-aware generator (`time_offset`) (phase 2 implemented)
+
+Definition:
+- Deterministic temporal offset from another column in the same row.
+- Supports both `date` and `datetime` columns.
+- Enforces before/after relative constraints using bounded offsets.
+
+Params:
+- `base_column` (required): source column name in same table.
+- `direction` (optional): `after` or `before` (default `after`).
+- For `date` target columns:
+  - `min_days` (optional, default `0`)
+  - `max_days` (optional, default `min_days`)
+- For `datetime` target columns:
+  - `min_seconds` (optional, default `0`)
+  - `max_seconds` (optional, default `min_seconds`)
+
+Rules:
+- Target column dtype must be `date` or `datetime`.
+- `base_column` must exist, must not be the target column itself, and must have the same dtype as target.
+- Target column must include `base_column` in `depends_on` so generation order is valid.
+- Date columns use day offsets only; datetime columns use second offsets only.
+- Offset bounds must be integers, non-negative, and `min <= max`.
+- Validation/runtime errors must include location + issue + fix hint.
+
+### 2.3 Hierarchical category generator (`hierarchical_category`) (phase 3 implemented)
+
+Definition:
+- Deterministic child-category selection from a parent category column in the same row.
+- Encodes parent->children category trees via params JSON.
+
+Params:
+- `parent_column` (required): source column name in same table.
+- `hierarchy` (required): non-empty object mapping parent values to non-empty child lists.
+- `default_children` (optional): fallback child list used when parent value has no explicit mapping.
+
+Rules:
+- Target column dtype must be `text`.
+- `parent_column` must exist, must not be the target column itself, and must be listed in `depends_on`.
+- Child lists must contain scalar JSON values (no objects/lists).
+- If parent column has explicit `choices`, each choice must be represented in `hierarchy` unless `default_children` is provided.
+- Validation/runtime errors must include location + issue + fix hint.
+
+### 2.4 Ordered choice generator (`ordered_choice`)
+
+Definition:
+- Selects one named order path and then progresses through that path over rows.
+- Movement along the path is controlled by weighted step sizes.
+
+Params:
+- `orders` (required): non-empty object mapping order names to non-empty ordered value lists.
+- `order_weights` (optional): object mapping each order name to a non-negative weight.
+- `move_weights` (optional): non-empty list of non-negative movement weights; index `0` means stay, `1` means move +1, `2` means move +2, and so on.
+- `start_index` (optional): non-negative integer starting position in each order list (default `0`).
+
+Rules:
+- Target column dtype must be `text` or `int`.
+- `orders` keys must be non-empty strings and must map to scalar JSON value lists.
+- If `order_weights` is provided, keys must exactly match `orders` keys and include at least one value > 0.
+- `move_weights` must include at least one value > 0.
+- `start_index` must be within every configured order length.
+- Validation/runtime errors must include location + issue + fix hint.
+
 ---
 
 # 3. Identity Concepts
@@ -215,12 +290,15 @@ Rules:
 Optional behavior fields:
 - `business_key_static_columns`: non-key attributes that should stay constant for the same business key across records.
 - `business_key_changing_columns`: non-key attributes that are expected to change for the same business key across records.
+- `business_key_unique_count`: optional target number of unique business-key combinations for the table (must be <= generated row count).
 
 Validation rules:
 - Static/changing columns must reference existing columns.
 - Static/changing columns must not overlap.
 - Business key columns cannot be listed in `business_key_changing_columns`.
 - When both `business_key_changing_columns` and `scd_tracked_columns` are provided, they must match.
+- `business_key_unique_count` requires `business_key` and must be a positive integer.
+- For explicit row-count tables, `business_key_unique_count` must be <= `row_count`; under `scd1`, it must equal `row_count`.
 
 ## 3.3 Slowly Changing Dimension Type 1 (SCD1) (phase 1 implemented)
 
@@ -274,7 +352,7 @@ Future validation error examples:
 
 Implementation status:
 - Runtime generation, validator enforcement, JSON IO shape, and GUI authoring controls are implemented.
-- Phase 1 scope: `scd2` currently supports root tables only (no incoming FKs).
+- SCD2 supports both root and incoming-FK child tables; child-table version growth is bounded to FK capacity.
 
 ---
 
@@ -311,13 +389,19 @@ Valid for:
 
 ## 5.2 normal
 Params:
-- `mean`, `stddev`
+- `mean`
+- `stdev` (or compatibility alias `stddev`)
+- optional `decimals`, `min`, `max`
 Valid for:
 - `float|decimal`, `int` (rounded)
 Rules:
+- Standard deviation must be positive.
 - Clamp to bounds when bounds exist
 
 ## 5.3 lognormal
+Params:
+- `median` (> 0), `sigma` (> 0)
+- optional `decimals`, `min`, `max`
 Valid for:
 - `float|decimal`, `int` (rounded)
 Rules:
@@ -328,19 +412,28 @@ Valid for:
 - `text`, `int`
 Rules:
 - If weights are provided, length must match choices
+- If weights are provided, they must be numeric, non-negative, and include at least one value > 0
 
 ## 5.5 empirical (`sample_csv`)
 Valid for:
 - `text`, parseable `int`, parseable `float|decimal`
+Params:
+- `path` (required): CSV file path.
+- `column_index` (optional, default `0`): sampled output column index.
+- `match_column` (optional): source column name from the same generated row.
+- `match_column_index` (required when `match_column` is set): CSV column index used to match `match_column` value.
 Rules:
 - Skip header row
 - Deterministic selection
 - Cache source content by path + column
 - `params.path` may be repo-root-relative (for example `tests/fixtures/city_country_pool.csv`) or absolute; repo-root-relative references are preferred for portability.
 - JSON load/save may normalize legacy absolute repo-local paths to repo-root-relative form.
+- When `match_column` is set, the target column must include `match_column` in `depends_on` so source values exist before sampling.
+- When `match_column` is set, only CSV rows where `match_column_index` equals the source row value are eligible for sampling.
 Failure behavior:
 - Missing file -> validation error
 - Empty pool -> validation error
+- No rows matching `match_column` source value -> validation/runtime error with fix hint
 
 ---
 

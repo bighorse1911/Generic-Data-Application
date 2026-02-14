@@ -13,6 +13,7 @@ _DEFAULT_SQL_TYPES: dict[str, str] = {
     "bool": "BOOLEAN",
     "date": "DATE",
     "datetime": "TIMESTAMP",
+    "bytes": "BLOB",
 }
 
 
@@ -97,6 +98,21 @@ def load_project_from_json(path: str) -> SchemaProject:
 
     tables = []
     for t in data["tables"]:
+        raw_business_key_unique_count = t.get("business_key_unique_count")
+        business_key_unique_count = None
+        if raw_business_key_unique_count is not None:
+            if isinstance(raw_business_key_unique_count, bool):
+                raise ValueError(
+                    f"Table '{t.get('table_name', '<unknown>')}': business_key_unique_count must be an integer when provided. "
+                    "Fix: set business_key_unique_count to a positive whole number or omit it."
+                )
+            try:
+                business_key_unique_count = int(raw_business_key_unique_count)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Table '{t.get('table_name', '<unknown>')}': business_key_unique_count must be an integer when provided. "
+                    "Fix: set business_key_unique_count to a positive whole number or omit it."
+                ) from exc
         cols = [ColumnSpec(**c) for c in t["columns"]]
         tables.append(
             TableSpec(
@@ -104,6 +120,7 @@ def load_project_from_json(path: str) -> SchemaProject:
                 columns=cols,
                 row_count=int(t.get("row_count", 100)),
                 business_key=t.get("business_key"),
+                business_key_unique_count=business_key_unique_count,
                 business_key_static_columns=t.get("business_key_static_columns"),
                 business_key_changing_columns=t.get("business_key_changing_columns"),
                 scd_mode=t.get("scd_mode"),

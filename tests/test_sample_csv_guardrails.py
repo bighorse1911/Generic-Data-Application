@@ -72,6 +72,121 @@ class TestSampleCsvGuardrails(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         self.assertTrue(all(isinstance(r["city"], str) and r["city"] for r in rows))
 
+    def test_validate_project_rejects_dependent_sample_csv_without_depends_on(self):
+        project = SchemaProject(
+            name="dependent_sample_csv_missing_depends_on",
+            seed=9,
+            tables=[
+                TableSpec(
+                    table_name="people",
+                    row_count=5,
+                    columns=[
+                        ColumnSpec("id", "int", nullable=False, primary_key=True),
+                        ColumnSpec(
+                            "country",
+                            "text",
+                            nullable=False,
+                            generator="sample_csv",
+                            params={"path": "tests/fixtures/city_country_pool.csv", "column_index": 1},
+                        ),
+                        ColumnSpec(
+                            "city",
+                            "text",
+                            nullable=False,
+                            generator="sample_csv",
+                            params={
+                                "path": "tests/fixtures/city_country_pool.csv",
+                                "column_index": 0,
+                                "match_column": "country",
+                                "match_column_index": 1,
+                            },
+                        ),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            validate_project(project)
+        msg = str(ctx.exception)
+        self.assertIn("Table 'people', column 'city'", msg)
+        self.assertIn("requires depends_on to include 'country'", msg)
+        self.assertIn("Fix:", msg)
+
+    def test_dependent_sample_csv_generation_preserves_city_country_pairs(self):
+        project = SchemaProject(
+            name="dependent_sample_csv",
+            seed=11,
+            tables=[
+                TableSpec(
+                    table_name="people",
+                    row_count=24,
+                    columns=[
+                        ColumnSpec("id", "int", nullable=False, primary_key=True),
+                        ColumnSpec(
+                            "country",
+                            "text",
+                            nullable=False,
+                            generator="sample_csv",
+                            params={"path": "tests/fixtures/city_country_pool.csv", "column_index": 1},
+                        ),
+                        ColumnSpec(
+                            "city",
+                            "text",
+                            nullable=False,
+                            generator="sample_csv",
+                            params={
+                                "path": "tests/fixtures/city_country_pool.csv",
+                                "column_index": 0,
+                                "match_column": "country",
+                                "match_column_index": 1,
+                            },
+                            depends_on=["country"],
+                        ),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        validate_project(project)
+        rows_a = generate_project_rows(project)["people"]
+        rows_b = generate_project_rows(project)["people"]
+
+        self.assertEqual(rows_a, rows_b)
+
+        valid_pairs = {
+            ("Seattle", "US"),
+            ("Portland", "US"),
+            ("Austin", "US"),
+            ("Toronto", "CA"),
+            ("Berlin", "DE"),
+            ("Tokyo", "JP"),
+        }
+        for row in rows_a:
+            self.assertIn((row["city"], row["country"]), valid_pairs)
+
+    def test_dependent_sample_csv_runtime_error_when_no_match_rows(self):
+        gen = get_generator("sample_csv")
+        ctx = GenContext(row_index=1, table="people", row={"country": "XX"}, rng=random.Random(7))
+
+        with self.assertRaises(ValueError) as err:
+            gen(
+                {
+                    "path": "tests/fixtures/city_country_pool.csv",
+                    "column_index": 0,
+                    "match_column": "country",
+                    "match_column_index": 1,
+                },
+                ctx,
+            )
+
+        msg = str(err.exception)
+        self.assertIn("Table 'people', generator 'sample_csv'", msg)
+        self.assertIn("no CSV rows matched", msg)
+        self.assertIn("Fix:", msg)
+
 
 if __name__ == "__main__":
     unittest.main()

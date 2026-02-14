@@ -77,6 +77,12 @@ class FormBuilder:
         self._add_labeled_control(label, text, sticky="nsew")
         return text
 
+    def add_widget(self, label: str, widget: tk.Widget, *, sticky: str = "ew") -> tk.Widget:
+        """Add any custom widget row while preserving label alignment."""
+
+        self._add_labeled_control(label, widget, sticky=sticky)
+        return widget
+
     def _add_labeled_control(self, label: str, widget: tk.Widget, *, sticky: str = "ew") -> None:
         """Add the standard label+widget pair at the next available row."""
 
