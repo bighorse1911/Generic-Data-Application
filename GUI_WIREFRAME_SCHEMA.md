@@ -42,6 +42,11 @@ ad-hoc assumptions.
 - GUI kit modernization phase C update: legacy fallback screen now includes low-risk adoption of Phase B UX patterns (opt-in preview pagination, preview column chooser, inline validation jumps, dirty-state prompts).
 - Business-key cardinality update: table editor now exposes optional `business_key_unique_count` to configure unique business keys separately from table row count.
 - `sample_csv` authoring update: params JSON now supports optional dependent CSV sampling via `match_column` + `match_column_index` (with `depends_on` linkage).
+- Location selector update: Home now routes to `location_selector` for map zoom/pan, point selection, radius-based GeoJSON output, and deterministic sample lat/lon preview.
+- Location selector update: sample lat/lon output now includes one-click CSV save action.
+- ERD designer update: Home now routes to `erd_designer` for schema JSON to ERD rendering with relationship/column/dtype visibility toggles.
+- ERD designer update: ERD preview now includes export actions for SVG/PNG/JPEG output with actionable validation errors.
+- ERD designer update: table nodes can now be dragged to reposition the diagram and relationships auto-redraw to match moved nodes.
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -153,6 +158,8 @@ Examples:
 - open schema project designer kit route (modular parity reference path)
 - open schema project designer legacy fallback route
 - open generation behaviors guide screen
+- open ERD designer screen
+- open location selector screen
 
 ### 4.2 `schema_project` (production modular path)
 
@@ -225,6 +232,46 @@ Examples:
 - include core dtype-driven behavior, generator-driven behavior, depends_on/correlation behavior, and SCD/business-key table behavior notes
 - content is instructional only (no schema mutation controls)
 - navigation returns to `home` via Back button
+
+### 4.6 `location_selector`
+
+- Purpose: map-based geographic selection utility for authoring center+radius area definitions.
+- Required regions:
+- header with explicit back navigation to `home`
+- interactive map canvas with zoom and pan controls
+- selection controls (center latitude/longitude, radius km, GeoJSON resolution, deterministic sample count/seed)
+- GeoJSON output preview panel
+- sample latitude/longitude output preview panel
+- sample latitude/longitude CSV save action
+- status line
+- Required behavior:
+- left-click map selects center point and updates latitude/longitude fields
+- map supports basic navigation actions (zoom in/out, wheel zoom, pan drag, reset view)
+- Build GeoJSON action validates center/radius/resolution and emits a polygon GeoJSON circle
+- Generate sample points action emits deterministic latitude/longitude samples bounded by selected radius
+- Save points CSV action writes generated sample points to a user-selected CSV path
+- validation/errors use actionable `<Location>: <issue>. Fix: <hint>.` messaging
+- output panels are read-only previews intended for downstream copy/use in future geographic workflows
+
+### 4.7 `erd_designer`
+
+- Purpose: render entity relationship diagrams from schema project JSON input for structure review and communication.
+- Required regions:
+- header with explicit back navigation to `home`
+- schema input controls (path entry + browse + render action + export action)
+- ERD visibility controls (show relationships, show column names, show datatypes)
+- scrollable ERD canvas
+- status line
+- Required behavior:
+- loads schema input from project JSON using existing schema IO contracts
+- renders table nodes and FK relationships deterministically from schema content
+- supports display toggles for relationships, columns, and datatypes without mutating schema data
+- supports drag-and-drop table-node repositioning within ERD canvas
+- relationship lines/labels update automatically when connected tables are moved
+- supports ERD export to `.svg`, `.png`, `.jpg`, and `.jpeg`
+- SVG export uses current moved node positions from the interactive layout
+- raster export surfaces actionable errors if required conversion tooling is unavailable
+- uses actionable `<Location>: <issue>. Fix: <hint>.` error messaging for invalid/missing schema input
 
 ## 5. Library-Agnostic Mapping Guide
 

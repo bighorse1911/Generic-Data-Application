@@ -2,6 +2,26 @@
 Direction 1 - Smarter Data
 
 ## Recent Completed Slice (Direction 1)
+- Completed (2026-02-14): ERD designer draggable layout added:
+  - ERD table nodes can now be dragged to reposition entities directly on the canvas,
+  - FK relationship lines and labels now redraw against the moved node positions automatically,
+  - SVG export now respects moved node positions so exported diagrams match the interactive layout.
+- Completed (2026-02-14): ERD designer export options added:
+  - added `Export ERD...` action to save the rendered ERD as `.svg`, `.png`, `.jpg`, or `.jpeg`,
+  - added deterministic SVG export from ERD layout data,
+  - added actionable guardrails for invalid export formats/paths and missing raster conversion prerequisites.
+- Completed (2026-02-14): ERD designer GUI page added:
+  - added Home route `erd_designer`,
+  - added schema JSON input + canvas ERD rendering for tables and foreign-key relationships,
+  - added ERD display controls for relationships, column names, and datatypes.
+- Completed (2026-02-14): Location selector CSV export action added:
+  - added `Save points CSV...` action to persist generated location samples directly from the location selector screen,
+  - added actionable guardrails when save is attempted before point generation or without a valid output path,
+  - added utility/test coverage for deterministic CSV formatting/writes.
+- Completed (2026-02-14): Location selector GUI page added:
+  - added Home route `location_selector`,
+  - added interactive Earth map page with zoom/pan, point selection, and radius-driven GeoJSON circle generation,
+  - added deterministic latitude/longitude sample-point generation inside selected radius for downstream geographic authoring.
 - Completed (2026-02-14): Dependent CSV sampling added for same-row column correlation:
   - `sample_csv` now supports optional params `match_column` + `match_column_index` to filter sampled values by another already-generated column in the same row,
   - validator/runtime guardrails enforce source-column existence, `depends_on` ordering, and actionable errors when CSV matches are unavailable,

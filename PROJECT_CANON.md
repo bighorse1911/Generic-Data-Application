@@ -11,6 +11,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - CSV, SQLite output
 - GUI schema designer
 - GUI data generation behavior reference page
+- GUI location selector page (map point/radius -> GeoJSON + deterministic lat/lon samples + CSV save)
+- GUI ERD designer page (schema JSON -> entity relationship diagram with visibility toggles, draggable table layout, and SVG/PNG/JPEG export)
 
 ## Architecture
 - Tkinter GUI
@@ -46,7 +48,9 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `build_status_bar()`
 - `schema_project` production route now uses the modular `gui_kit` composition path.
 - Legacy pre-modular screen remains available as fallback route `schema_project_legacy` during transition.
-- Home screen includes a dedicated route to a read-only generation behavior guide page.
+- Home screen includes dedicated routes to a read-only generation behavior guide page, the ERD designer page, and the location selector page.
+- ERD designer includes drag-to-reposition table nodes with relationship lines redrawn automatically.
+- ERD designer includes export actions for SVG, PNG, and JPEG diagram outputs with actionable error guidance.
 - Column editor supports add, remove, move, and in-place edit of selected columns.
 - Column editor now includes dtype-aware generator filtering, regex pattern presets, and generator params template fill assistance.
 - Kit-based schema screen now includes debounced table/column/FK search controls, token-style editors for business-key column lists, non-blocking toast feedback, JSON params editor dialog, and a discoverable shortcuts help entry point.

@@ -40,6 +40,11 @@ Direction 3 (float -> decimal) is completed.
 - Generator behavior update (2026-02-14): `ordered_choice` implemented for deterministic sequence progression across named order paths with weighted movement.
 - Business-key cardinality update (2026-02-14): `business_key_unique_count` now allows configuring unique business keys independently from table row count.
 - Generator behavior update (2026-02-14): `sample_csv` now supports optional row-matched sampling via `match_column` + `match_column_index` for same-row correlated CSV values.
+- GUI-only update (2026-02-14): `location_selector` page added for map-based center/radius GeoJSON authoring and deterministic sample lat/lon preview without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `location_selector` now includes one-click CSV save for generated sample points without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `erd_designer` page added for schema visualization without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `erd_designer` now supports ERD export to SVG/PNG/JPEG without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `erd_designer` now supports drag-to-reposition table layout with live relationship redraw and position-aware SVG export, without changing canonical generator semantics.
 
 ## Core design principle
 
