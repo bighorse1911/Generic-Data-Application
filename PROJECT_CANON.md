@@ -15,13 +15,18 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - GUI ERD designer page (schema JSON -> entity relationship diagram with visibility toggles, draggable table layout, in-page schema/table/column/FK authoring including table/column edit, schema JSON export, and SVG/PNG/JPEG export)
 - GUI performance workbench page (completed: schema load, performance profile validation, workload estimate diagnostics, deterministic FK-stage chunk-plan preview, runtime benchmark/generate flows with cancellation, profile save/load)
 - GUI execution orchestrator page (completed: multiprocess config validation, FK-stage partition planning, worker monitor, retry/fallback controls, run-config save/load, and run-ledger save/load/recovery checks)
-- GUI visual redesign routes (completed: `home_v2`, `schema_studio_v2`, `run_center_v2`, plus parity bridge routes `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2`; includes v2 run-center runtime integration and schema-studio guarded navigation)
+- GUI visual redesign routes (completed: `home_v2`, `schema_studio_v2`, `run_center_v2`, plus native v2 specialist routes `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2`; hidden rollback bridge routes `*_v2_bridge` retained temporarily; includes v2 run-center runtime integration and schema-studio guarded navigation)
+- Run workflow convergence (completed): `run_center_v2`, `performance_workbench`, and `execution_orchestrator` now share a common run workflow surface pattern and runtime lifecycle/error/table primitives while preserving route keys and behavior contracts.
+- Schema route consolidation (completed): `schema_project` is the single primary schema authoring route; hidden fallback routes remain `schema_project_kit` (alias to primary) and deprecated rollback route `schema_project_legacy` for one release cycle.
+- Async lifecycle consistency (completed): run screens and schema-kit long jobs now use shared lifecycle + teardown-safe UI dispatch primitives; legacy schema fallback route includes blocker-level teardown-safe callback guards.
+- Validation/error surface consistency (completed): interactive routes use shared actionable error/warning surfaces with route-standardized titles; read-only routes remain intentionally outside runtime error plumbing.
 
 ## Architecture
 - Tkinter GUI
 - Pure-Python backend (no external deps)
 - Schema-first design
 - Generator registry pattern
+- Route policy constants: `src/gui_route_policy.py` defines primary/fallback/deprecated schema route keys.
 - GUI wireframe/design decision canon: `GUI_WIREFRAME_SCHEMA.md` (library-agnostic contract); all GUI design changes must update this file and add decision logs.
 - Reusable GUI kit layer (`src/gui_kit`) for modular screens:
   - `BaseScreen`: common screen behavior (`set_status`, `set_busy`, `safe_threaded_job`) + `DirtyStateGuard` helpers for unsaved-change prompts
@@ -38,6 +43,14 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `ColumnChooserDialog`: modal column visibility + display-order chooser for table previews
   - `InlineValidationSummary`: inline validation issue list with jump-to-editor actions
   - `theme`: optional style helpers (kit screens now use regular/default platform theme)
+  - `run_lifecycle`: shared start/cancel/progress/complete/fail controller and runtime event normalization
+  - `ui_dispatch`: shared teardown-safe Tk callback dispatcher for thread->UI event marshalling
+  - `job_lifecycle`: shared non-run async lifecycle controller for kit long jobs
+  - `error_contract`: shared actionable message shape detection/normalization helpers
+  - `error_surface`: shared actionable error formatter + dialog/status/inline routing adapter
+  - `table_virtual`: shared table adapter for large-row pagination/clear/reset behavior
+  - `run_models`: shared run workflow view model + output/execution mode coercion
+  - `run_commands`: shared adapters delegating to canonical performance/multiprocess runtime modules
 
 ## Screen Composition Standard
 - New modular screens should split UI into dedicated section builders, not giant build methods.
@@ -50,13 +63,15 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `build_generate_panel()`
   - `build_status_bar()`
 - `schema_project` production route now uses the modular `gui_kit` composition path.
-- Legacy pre-modular screen remains available as fallback route `schema_project_legacy` during transition.
+- `schema_project_kit` is a hidden alias fallback route to `schema_project` for rollback safety.
+- Legacy pre-modular screen remains available as hidden deprecated rollback route `schema_project_legacy` for one release cycle.
 - Home screen includes dedicated routes to a read-only generation behavior guide page, the ERD designer page, and the location selector page.
 - Home screen includes a dedicated route to the performance workbench page.
 - Home screen includes a dedicated route to the execution orchestrator page.
-- Home screen includes a dedicated route to the full visual redesign experience (`home_v2`) with additive bridge routes for ERD/location/guide parity.
-- Schema Studio v2 includes dirty-state guarded transitions when opening schema authoring routes.
-- Run Center v2 includes integrated estimate/plan/benchmark/start controls wired to completed performance and multiprocessing runtime modules.
+- Home screen includes a dedicated route to the full visual redesign experience (`home_v2`) with native v2 specialist routes and temporary hidden rollback bridge routes.
+- Schema Studio v2 includes dirty-state guarded transitions to the primary schema authoring route (`schema_project`); fallback schema routes remain hidden rollback paths.
+- Run workflow screens (`run_center_v2`, `performance_workbench`, `execution_orchestrator`) now use a shared section model (config, controls, progress strip, capability-gated results tabs) and shared lifecycle/error/table adapters.
+- Run workflow screens and schema-kit long jobs use teardown-safe thread->UI dispatch and centralized lifecycle transition helpers to reduce callback noise during Tk teardown.
 - ERD designer includes drag-to-reposition table nodes with relationship lines redrawn automatically.
 - ERD designer includes export actions for SVG, PNG, and JPEG diagram outputs with actionable error guidance.
 - ERD designer now supports in-page schema authoring for new schema creation, table creation/edit, column creation/edit (dtype + PK controls), FK relationship creation, and schema JSON export for downstream loading in schema designer routes.
@@ -107,6 +122,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Defensive PK checks
 - GUI validation heatmap provides per-table buckets for PK, Columns, Dependencies, Generator, SCD/BK, and FKs.
 - See DATA_SEMANTICS.md section 8 for canonical error contract
+- Interactive route families use standardized dialog titles for errors/warnings (`schema_project`, `schema_project_legacy`, `erd_designer`, `location_selector`, `performance_workbench`, `execution_orchestrator`, `run_center_v2`).
 
 ## UX Principles
 - Scrollable canvas

@@ -16,9 +16,12 @@ from src.gui_home import (
     PerformanceWorkbenchScreen,
 )
 from src.gui_v2_redesign import (
+    ERDDesignerV2BridgeScreen,
     ERDDesignerV2Screen,
+    GenerationBehaviorsGuideV2BridgeScreen,
     GenerationBehaviorsGuideV2Screen,
     HomeV2Screen,
+    LocationSelectorV2BridgeScreen,
     LocationSelectorV2Screen,
     RunCenterV2Screen,
     SchemaStudioV2Screen,
@@ -347,7 +350,11 @@ class TestInvariants(unittest.TestCase):
             self.assertIn("erd_designer_v2", app.screens)
             self.assertIn("location_selector_v2", app.screens)
             self.assertIn("generation_behaviors_guide_v2", app.screens)
+            self.assertIn("erd_designer_v2_bridge", app.screens)
+            self.assertIn("location_selector_v2_bridge", app.screens)
+            self.assertIn("generation_behaviors_guide_v2_bridge", app.screens)
             self.assertIsInstance(app.screens["schema_project"], SchemaProjectDesignerKitScreen)
+            self.assertIs(app.screens["schema_project"], app.screens["schema_project_kit"])
             self.assertIsInstance(app.screens["generation_behaviors_guide"], GenerationBehaviorsGuideScreen)
             self.assertIsInstance(app.screens["erd_designer"], ERDDesignerScreen)
             self.assertIsInstance(app.screens["location_selector"], LocationSelectorScreen)
@@ -361,6 +368,12 @@ class TestInvariants(unittest.TestCase):
             self.assertIsInstance(
                 app.screens["generation_behaviors_guide_v2"],
                 GenerationBehaviorsGuideV2Screen,
+            )
+            self.assertIsInstance(app.screens["erd_designer_v2_bridge"], ERDDesignerV2BridgeScreen)
+            self.assertIsInstance(app.screens["location_selector_v2_bridge"], LocationSelectorV2BridgeScreen)
+            self.assertIsInstance(
+                app.screens["generation_behaviors_guide_v2_bridge"],
+                GenerationBehaviorsGuideV2BridgeScreen,
             )
             self.assertTrue(hasattr(app.screens["performance_workbench"], "diagnostics_tree"))
             self.assertTrue(hasattr(app.screens["performance_workbench"], "chunk_plan_tree"))
@@ -382,9 +395,12 @@ class TestInvariants(unittest.TestCase):
             self.assertTrue(hasattr(app.screens["run_center_v2"], "run_benchmark_btn"))
             self.assertTrue(hasattr(app.screens["run_center_v2"], "start_run_btn"))
             self.assertTrue(hasattr(app.screens["run_center_v2"], "cancel_run_btn"))
-            self.assertTrue(hasattr(app.screens["erd_designer_v2"], "launch_btn"))
-            self.assertTrue(hasattr(app.screens["location_selector_v2"], "launch_btn"))
-            self.assertTrue(hasattr(app.screens["generation_behaviors_guide_v2"], "launch_btn"))
+            self.assertTrue(hasattr(app.screens["erd_designer_v2"], "tool"))
+            self.assertTrue(hasattr(app.screens["location_selector_v2"], "tool"))
+            self.assertTrue(hasattr(app.screens["generation_behaviors_guide_v2"], "tool"))
+            self.assertTrue(hasattr(app.screens["erd_designer_v2_bridge"], "launch_btn"))
+            self.assertTrue(hasattr(app.screens["location_selector_v2_bridge"], "launch_btn"))
+            self.assertTrue(hasattr(app.screens["generation_behaviors_guide_v2_bridge"], "launch_btn"))
 
             guide_titles = {entry[0] for entry in GENERATION_BEHAVIOR_GUIDE}
             self.assertIn("sample_csv generator", guide_titles)
@@ -405,6 +421,9 @@ class TestInvariants(unittest.TestCase):
             app.show_screen("erd_designer_v2")
             app.show_screen("location_selector_v2")
             app.show_screen("generation_behaviors_guide_v2")
+            app.show_screen("erd_designer_v2_bridge")
+            app.show_screen("location_selector_v2_bridge")
+            app.show_screen("generation_behaviors_guide_v2_bridge")
             app.show_screen("home")
 
             erd_screen = app.screens["erd_designer"]
@@ -512,11 +531,12 @@ class TestInvariants(unittest.TestCase):
             )
 
             schema_screen.seed_var.set("not_a_number")
-            with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
-                schema_screen._run_validation()
-                showerror.assert_called_once()
-                title, message = showerror.call_args.args
-            self.assertEqual(title, "Project error")
+            calls: list[tuple[str, str]] = []
+            schema_screen.error_surface.show_dialog = lambda title, message: calls.append((title, message))
+            schema_screen._run_validation()
+            self.assertEqual(len(calls), 1)
+            title, message = calls[0]
+            self.assertEqual(title, "Schema project error")
             self.assertIn("Project / Seed", message)
             self.assertIn("must be an integer", message)
             self.assertIn("Fix:", message)
@@ -540,11 +560,11 @@ class TestInvariants(unittest.TestCase):
             schema_screen.col_dtype_var.set("int")
             schema_screen.col_min_var.set("abc")
             schema_screen.col_max_var.set("")
-            with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
-                schema_screen._add_column()
-                showerror.assert_called_once()
-                title, message = showerror.call_args.args
-            self.assertEqual(title, "Add column failed")
+            calls.clear()
+            schema_screen._add_column()
+            self.assertEqual(len(calls), 1)
+            title, message = calls[0]
+            self.assertEqual(title, "Schema project error")
             self.assertIn("Add column / Min value", message)
             self.assertIn("must be numeric", message)
             self.assertIn("Fix:", message)
@@ -552,11 +572,11 @@ class TestInvariants(unittest.TestCase):
 
             schema_screen.col_name_var.set("legacy_score")
             schema_screen.col_dtype_var.set("float")
-            with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
-                schema_screen._add_column()
-                showerror.assert_called_once()
-                title, message = showerror.call_args.args
-            self.assertEqual(title, "Add column failed")
+            calls.clear()
+            schema_screen._add_column()
+            self.assertEqual(len(calls), 1)
+            title, message = calls[0]
+            self.assertEqual(title, "Schema project error")
             self.assertIn("Add column / Type", message)
             self.assertIn("dtype 'float' is deprecated", message)
             self.assertIn("dtype='decimal'", message)

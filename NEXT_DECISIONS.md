@@ -17,6 +17,11 @@ Direction 1 - Smarter Data
 - GUI kit modernization phases A/B/C (completed 2026-02-14)
 - Business-key behavior controls and `business_key_unique_count` support (completed 2026-02-14)
 - Canonical spec adoption (`DATA_SEMANTICS.md`, `GUI_WIREFRAME_SCHEMA.md`) (completed 2026-02-14)
+- Priority P1 native v2 specialist tool parity (`erd_designer_v2`, `location_selector_v2`, `generation_behaviors_guide_v2` with hidden `*_v2_bridge` rollback routes) (completed 2026-02-15)
+- Priority P2 run workflow convergence (`run_center_v2`, `performance_workbench`, and `execution_orchestrator` now share lifecycle/runtime/error/table workflow primitives and section model) (completed 2026-02-15)
+- Priority P3 schema route consolidation (`schema_project` is the only primary authoring route; hidden fallback routes `schema_project_kit` alias and deprecated `schema_project_legacy` retained for one release cycle) (completed 2026-02-15)
+- Priority P4 async lifecycle consistency (shared teardown-safe UI dispatch, centralized run lifecycle terminal transitions, schema-kit shared job lifecycle, and legacy callback teardown guards) (completed 2026-02-15)
+- Priority P5 validation/error surface consistency (interactive routes now use shared actionable error/warning surfaces with route-standardized dialog titles; read-only routes remain explicitly excluded) (completed 2026-02-15)
 
 ## Completed Directions
 - Direction 2 - Modular GUI Adoption (incremental, low-risk)
@@ -30,11 +35,6 @@ Direction 1 - Smarter Data
 
 ## Next Candidates
 **Priority 1 (future features):**
-- [P1] Native v2 tool parity: migrate `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2` from bridge screens to native v2 implementations.
-- [P2] Run workflow convergence: align `run_center_v2`, `performance_workbench`, and `execution_orchestrator` around shared config/progress/failure/history UX patterns.
-- [P3] Schema route consolidation: prepare phased retirement criteria for `schema_project_legacy` after parity validation and rollback checks.
-- [P4] Async lifecycle consistency: standardize start/cancel/retry/fallback state handling and reduce Tk callback teardown noise.
-- [P5] Validation/error UX consistency: enforce canonical actionable error format and consistent inline/status/dialog surfaces across all screens.
 - [P6] Accessibility and keyboard flow: improve focus order, traversal, shortcut discoverability, and dense table interaction ergonomics.
 - [P7] Large-data responsiveness: improve paged/virtualized table rendering and non-blocking refresh behavior in heavy views.
 - [P8] GUI regression/usability hardening: expand v2 route/state-transition/cancel-fallback coverage and scenario-based acceptance checks.
@@ -46,21 +46,9 @@ Direction 1 - Smarter Data
 - Keep momentum after Feature C completion with clear execution order and explicit acceptance coverage.
 
 ### Prioritized Next Steps
-- **P1:** Replace v2 bridge pages with native v2 tool pages while preserving behavior contracts.
-- **P2:** Converge run workflows into shared UI/runtime patterns across `run_center_v2`, `performance_workbench`, and `execution_orchestrator`.
-- **P3:** Consolidate schema authoring routes with a deprecation path for `schema_project_legacy` once parity gates pass.
-- **P4:** Standardize async job lifecycle UX and centralize run lifecycle behavior.
-- **P5:** Strengthen validation and error surfacing consistency across all screens.
 - **P6:** Execute accessibility and keyboard-flow pass for power-user navigation.
 - **P7:** Improve large-data UI responsiveness with virtualized/paged grids and non-blocking refresh paths.
 - **P8:** Expand regression/usability hardening for v2 route contracts and state transitions.
-
-### Planned Public API / Interface / Type Additions
-- `src/gui_kit/run_lifecycle.py`: shared run state helpers for start/cancel/progress/fallback semantics.
-- `src/gui_kit/error_surface.py`: unified error presentation adapter for modal/status/inline consistency.
-- `src/gui_kit/table_virtual.py`: shared virtualized/paged table adapter for large result sets.
-- `src/gui_v2/viewmodels.py`: extend v2 viewmodels for native ERD/location/guide states.
-- `src/gui_v2/commands.py`: add command handlers for native v2 ERD/location/guide actions.
 
 ### Test Cases and Scenarios
 - Route contract tests: all v2 routes load, navigate, and expose required controls.
@@ -72,9 +60,10 @@ Direction 1 - Smarter Data
 
 ### Assumptions and Defaults
 - Keep additive rollout and preserve current production routes until parity tests pass.
+- P1 completion default: keep hidden `*_v2_bridge` rollback routes for one release cycle before removal consideration.
 - No external dependencies; Python stdlib + Tkinter only.
 - Deterministic generation and JSON compatibility remain non-negotiable.
-- Prioritization defaults to delivery value plus risk reduction (P1 through P8).
+- Prioritization defaults to delivery value plus risk reduction (P6 through P8 in current backlog).
 
 ## Deferred
 - None.

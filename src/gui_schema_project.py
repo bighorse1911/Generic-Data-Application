@@ -15,8 +15,12 @@ from tkinter import ttk, messagebox, filedialog
 
 from src.config import AppConfig
 from src.gui_kit.column_chooser import ColumnChooserDialog
+from src.gui_kit.error_surface import ErrorSurface
+from src.gui_kit.error_surface import show_error_dialog
+from src.gui_kit.error_surface import show_warning_dialog
 from src.gui_kit.scroll import wheel_units_from_delta
 from src.gui_kit.table import TableView
+from src.gui_kit.ui_dispatch import safe_dispatch
 from src.gui_kit.validation import InlineValidationEntry, InlineValidationSummary
 from src.schema_project_model import (
     SchemaProject,
@@ -547,6 +551,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     - Define FK relationships (parent->child) with cardinality min/max children
     - Save/load full project JSON
     """
+    ERROR_SURFACE_CONTEXT = "Schema project"
+    ERROR_DIALOG_TITLE = "Schema project error"
+    WARNING_DIALOG_TITLE = "Schema project warning"
+
     def __init__(self, parent: tk.Widget, app: "object", cfg: AppConfig) -> None:
         super().__init__(parent)
         self.app = app
@@ -568,6 +576,14 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.project_name_var = tk.StringVar(value=self.project.name)
         self.seed_var = tk.StringVar(value=str(self.project.seed))
         self.status_var = tk.StringVar(value="Ready.")
+        self.error_surface = ErrorSurface(
+            context=self.ERROR_SURFACE_CONTEXT,
+            dialog_title=self.ERROR_DIALOG_TITLE,
+            warning_title=self.WARNING_DIALOG_TITLE,
+            show_dialog=show_error_dialog,
+            show_warning=show_warning_dialog,
+            set_status=self.status_var.set,
+        )
 
         # Table editor vars
         self.table_name_var = tk.StringVar(value="")
@@ -1263,7 +1279,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         except Exception:
             page_size = 100
             self.preview_page_size_var.set("100")
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Preview page size",
                 "Generate / Preview / Export / SQLite panel: preview page size is invalid. "
                 "Fix: choose one of 50, 100, 200, or 500.",
@@ -1285,7 +1301,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         except Exception:
             self.preview_page_size_var.set("100")
             self.preview_table.set_page_size(100)
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Preview page size",
                 "Generate / Preview / Export / SQLite panel: preview page size is invalid. "
                 "Fix: choose one of 50, 100, 200, or 500.",
@@ -1294,7 +1310,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     def _open_preview_column_chooser(self) -> None:
         table_name = self.preview_table_var.get().strip()
         if table_name == "":
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Preview columns",
                 "Generate / Preview / Export / SQLite panel: no preview table selected. "
                 "Fix: choose a preview table before configuring visible columns.",
@@ -1302,7 +1318,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             return
         columns = self._preview_columns_for_table(table_name)
         if not columns:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Preview columns",
                 f"Generate / Preview / Export / SQLite panel: preview table '{table_name}' has no columns. "
                 "Fix: generate rows for the selected table before opening preview columns.",
@@ -1320,6 +1336,22 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self._preview_column_preferences[table_name] = list(selected_columns)
         self._refresh_preview_projection()
         self.status_var.set(f"Applied preview columns for '{table_name}'.")
+
+    def _show_error_dialog(self, location: str, message: object) -> str:
+        return self.error_surface.emit_exception_actionable(
+            message,
+            location=(str(location).strip() or "Schema project"),
+            hint="review the inputs and retry",
+            mode="mixed",
+        )
+
+    def _show_warning_dialog(self, location: str, message: object) -> str:
+        return self.error_surface.emit_warning_actionable(
+            message,
+            location=(str(location).strip() or "Schema project"),
+            hint="review the inputs and retry",
+            mode="mixed",
+        )
 
     # ---------------- Helpers ----------------
     def _set_table_editor_enabled(self, enabled: bool) -> None:
@@ -1461,7 +1493,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     def _apply_generator_params_template(self) -> None:
         generator = self.col_generator_var.get().strip()
         if generator == "":
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Params template",
                 _gui_error(
                     "Column editor / Generator",
@@ -1473,7 +1505,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         template = default_generator_params_template(generator, self.col_dtype_var.get())
         if template is None:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Params template",
                 _gui_error(
                     f"Column editor / Generator '{generator}'",
@@ -1489,7 +1521,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             try:
                 existing = json.loads(existing_raw)
             except Exception as exc:
-                messagebox.showerror(
+                self._show_error_dialog(
                     "Params template",
                     _gui_error(
                         "Column editor / Params JSON",
@@ -1499,7 +1531,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 )
                 return
             if not isinstance(existing, dict):
-                messagebox.showerror(
+                self._show_error_dialog(
                     "Params template",
                     _gui_error(
                         "Column editor / Params JSON",
@@ -1825,7 +1857,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Added table '{name}'.")
             self._mark_dirty_if_project_changed(before_project, reason="table changes")
         except Exception as exc:
-            messagebox.showerror("Add table failed", str(exc))
+            self._show_error_dialog("Add table failed", str(exc))
         self._run_validation()
 
 
@@ -2244,7 +2276,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         try:
             self._apply_project_vars_to_model()
         except Exception as exc:
-            messagebox.showerror("Project error", str(exc))
+            self._show_error_dialog("Project error", str(exc))
             return
 
         issues = self._validate_project_detailed(self.project)
@@ -2315,7 +2347,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     def _on_generate_project(self) -> None:
         if self.last_validation_errors > 0:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Cannot generate",
                 _gui_error(
                     "Generate action",
@@ -2361,7 +2393,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Removed table '{removed}'.")
             self._mark_dirty_if_project_changed(before_project, reason="table changes")
         except Exception as exc:
-            messagebox.showerror("Remove table failed", str(exc))
+            self._show_error_dialog("Remove table failed", str(exc))
 
         self._run_validation()
 
@@ -2534,7 +2566,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set("Applied table changes.")
             self._mark_dirty_if_project_changed(before_project, reason="table properties")
         except Exception as exc:
-            messagebox.showerror("Apply failed", str(exc))
+            self._show_error_dialog("Apply failed", str(exc))
 
         self._run_validation()
 
@@ -2608,7 +2640,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set("Column added.")
             self._mark_dirty_if_project_changed(before_project, reason="column changes")
         except Exception as exc:
-            messagebox.showerror("Add column failed", str(exc))
+            self._show_error_dialog("Add column failed", str(exc))
         self._run_validation()
 
     def _apply_selected_column_changes(self) -> None:
@@ -2695,7 +2727,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Updated column '{old_col.name}'.")
             self._mark_dirty_if_project_changed(before_project, reason="column changes")
         except Exception as exc:
-            messagebox.showerror("Edit column failed", str(exc))
+            self._show_error_dialog("Edit column failed", str(exc))
         self._run_validation()
 
     def _remove_selected_column(self) -> None:
@@ -2764,7 +2796,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Removed column '{removed}'.")
             self._mark_dirty_if_project_changed(before_project, reason="column changes")
         except Exception as exc:
-            messagebox.showerror("Remove column failed", str(exc))
+            self._show_error_dialog("Remove column failed", str(exc))
         self._run_validation()
 
     def _move_selected_column(self, delta: int) -> None:
@@ -2819,7 +2851,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._mark_dirty_if_project_changed(before_project, reason="column order")
 
         except Exception as exc:
-            messagebox.showerror("Move column failed", str(exc))
+            self._show_error_dialog("Move column failed", str(exc))
         self._run_validation()
 
     # ---------------- Relationship actions ----------------
@@ -2948,7 +2980,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set("Relationship added.")
             self._mark_dirty_if_project_changed(before_project, reason="relationship changes")
         except Exception as exc:
-            messagebox.showerror("Add relationship failed", str(exc))
+            self._show_error_dialog("Add relationship failed", str(exc))
         self._run_validation()
 
     def _remove_selected_fk(self) -> None:
@@ -2978,7 +3010,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             )
             self._mark_dirty_if_project_changed(before_project, reason="relationship changes")
         except Exception as exc:
-            messagebox.showerror("Remove relationship failed", str(exc))
+            self._show_error_dialog("Remove relationship failed", str(exc))
         self._run_validation()
 
     def _browse_db_path(self) -> None:
@@ -2989,6 +3021,16 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         )
         if path:
             self.db_path_var.set(path)
+
+    def _ui_alive(self) -> bool:
+        try:
+            return bool(self.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def _post_ui_callback(self, callback) -> None:
+        safe_dispatch(self.after, callback, is_alive=self._ui_alive)
+
     def _set_running(self, running: bool, msg: str) -> None:
         self.is_running = running
         self.status_var.set(msg)
@@ -3025,7 +3067,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._apply_project_vars_to_model()
             validate_project(self.project)
         except Exception as exc:
-            messagebox.showerror("Invalid project", str(exc))
+            self._show_error_dialog("Invalid project", str(exc))
             return
 
         self._set_running(True, "Generating data for all tables…")
@@ -3033,11 +3075,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         def work():
             try:
                 rows = generate_project_rows(self.project)
-                self.after(0, lambda: self._on_generated_ok(rows))
+                self._post_ui_callback(lambda: self._on_generated_ok(rows))
             except Exception as exc:
                 logger.exception("Generation failed: %s", exc)
                 msg = str(exc)
-                self.after(0, lambda m=msg: self._on_job_failed(m))
+                self._post_ui_callback(lambda m=msg: self._on_job_failed(m))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -3097,7 +3139,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         try:
             export_option = validate_export_option(self.export_option_var.get())
         except ValueError as exc:
-            messagebox.showerror("Invalid export option", str(exc))
+            self._show_error_dialog("Invalid export option", str(exc))
             return
 
         if export_option == EXPORT_OPTION_CSV:
@@ -3108,7 +3150,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             return
 
         # Defensive fallback: export options are validated above.
-        messagebox.showerror(
+        self._show_error_dialog(
             "Invalid export option",
             _gui_error(
                 "Generate / Preview / Export / SQLite panel",
@@ -3121,7 +3163,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         if self.is_running:
             return
         if not self.generated_rows:
-            messagebox.showwarning("Nothing to export", "Generate data first.")
+            self._show_warning_dialog("Nothing to export", "Generate data first.")
             return
 
         folder = filedialog.askdirectory(title="Choose a folder to export CSVs into")
@@ -3144,18 +3186,18 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Exported CSVs to: {folder}")
             messagebox.showinfo("Export complete", f"Exported one CSV per table into:\n{folder}")
         except Exception as exc:
-            messagebox.showerror("Export failed", str(exc))
+            self._show_error_dialog("Export failed", str(exc))
 
     def _on_create_insert_sqlite(self) -> None:
         if self.is_running:
             return
         if not self.generated_rows:
-            messagebox.showwarning("No data", "Generate data first.")
+            self._show_warning_dialog("No data", "Generate data first.")
             return
 
         db_path = self.db_path_var.get().strip()
         if not db_path:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Missing DB path",
                 _gui_error(
                     "Generate / Preview / Export / SQLite panel",
@@ -3169,7 +3211,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._apply_project_vars_to_model()
             validate_project(self.project)
         except Exception as exc:
-            messagebox.showerror("Invalid project", str(exc))
+            self._show_error_dialog("Invalid project", str(exc))
             return
 
         self._set_running(True, "Creating tables and inserting rows into SQLite…")
@@ -3178,11 +3220,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             try:
                 create_tables(db_path, self.project)
                 counts = insert_project_rows(db_path, self.project, self.generated_rows, chunk_size=5000)
-                self.after(0, lambda: self._on_sqlite_ok(db_path, counts))
+                self._post_ui_callback(lambda: self._on_sqlite_ok(db_path, counts))
             except Exception as exc:
                 logger.exception("SQLite insert failed: %s", exc)
                 msg = str(exc)
-                self.after(0, lambda m=msg: self._on_job_failed(m))
+                self._post_ui_callback(lambda m=msg: self._on_job_failed(m))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -3201,7 +3243,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     def _on_job_failed(self, msg: str) -> None:
         self._set_running(False, "Failed.")
-        messagebox.showerror("Error", msg)
+        self._show_error_dialog("Error", msg)
 
     def _update_generate_enabled(self) -> None:
         """
@@ -3264,7 +3306,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             return
 
         if self.last_validation_errors > 0:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Cannot generate",
                 _gui_error(
                     "Generate sample action",
@@ -3278,7 +3320,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._apply_project_vars_to_model()
             validate_project(self.project)
         except Exception as exc:
-            messagebox.showerror("Invalid project", str(exc))
+            self._show_error_dialog("Invalid project", str(exc))
             return
 
         sample_project = self._make_sample_project(10)
@@ -3288,11 +3330,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         def work():
             try:
                 rows = generate_project_rows(sample_project)
-                self.after(0, lambda: self._on_generated_ok(rows))
+                self._post_ui_callback(lambda: self._on_generated_ok(rows))
             except Exception as exc:
                 logger.exception("Sample generation failed: %s", exc)
                 msg = str(exc)  # capture for Python 3.13 (exception var lifetime)
-                self.after(0, lambda m=msg: self._on_job_failed(m))
+                self._post_ui_callback(lambda m=msg: self._on_job_failed(m))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -3316,7 +3358,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._mark_clean()
             return True
         except Exception as exc:
-            messagebox.showerror("Save failed", str(exc))
+            self._show_error_dialog("Save failed", str(exc))
             return False
 
     def _load_project(self) -> None:
@@ -3351,7 +3393,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.status_var.set(f"Loaded project: {path}")
         except Exception as exc:
             self._suspend_dirty_tracking = False
-            messagebox.showerror("Load failed", str(exc))
+            self._show_error_dialog("Load failed", str(exc))
 
 
 

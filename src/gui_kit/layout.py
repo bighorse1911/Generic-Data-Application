@@ -6,6 +6,8 @@ from threading import Thread
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from src.gui_kit.ui_dispatch import UIDispatcher
+
 __all__ = ["BaseScreen"]
 
 
@@ -80,9 +82,13 @@ class BaseScreen(ttk.Frame):
     ) -> None:
         """Run work in a background thread and marshal result callbacks to Tk."""
 
+        dispatcher = UIDispatcher.from_widget(self)
         queue: Queue[tuple[str, object]] = Queue(maxsize=1)
         Thread(target=self._run_job, args=(queue, fn), daemon=True).start()
-        self.after(25, self._poll_job_queue, queue, on_ok, on_err)
+        dispatcher.post(
+            lambda: self._poll_job_queue(queue, on_ok, on_err, dispatcher=dispatcher),
+            delay_ms=25,
+        )
 
     @staticmethod
     def _run_job(queue: Queue[tuple[str, object]], fn: Callable[[], object]) -> None:
@@ -96,11 +102,15 @@ class BaseScreen(ttk.Frame):
         queue: Queue[tuple[str, object]],
         on_ok: Callable[[object], None],
         on_err: Callable[[Exception], None] | None,
+        dispatcher: UIDispatcher,
     ) -> None:
         try:
             state, payload = queue.get_nowait()
         except Empty:
-            self.after(25, self._poll_job_queue, queue, on_ok, on_err)
+            dispatcher.post(
+                lambda: self._poll_job_queue(queue, on_ok, on_err, dispatcher=dispatcher),
+                delay_ms=25,
+            )
             return
 
         if state == "ok":

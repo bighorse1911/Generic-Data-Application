@@ -1,29 +1,40 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
-import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 from src.config import AppConfig
-from src.gui_v2.commands import run_benchmark
-from src.gui_v2.commands import run_build_partition_plan
-from src.gui_v2.commands import run_estimate
-from src.gui_v2.commands import run_generation
+from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
+from src.gui_kit.error_surface import ErrorSurface
+from src.gui_kit.error_surface import show_error_dialog
+from src.gui_kit.error_surface import show_warning_dialog
+from src.gui_kit.run_commands import apply_run_center_payload
+from src.gui_kit.run_commands import build_profile_from_model
+from src.gui_kit.run_commands import run_benchmark as run_shared_benchmark
+from src.gui_kit.run_commands import run_build_partition_plan as run_shared_build_partition_plan
+from src.gui_kit.run_commands import run_center_payload
+from src.gui_kit.run_commands import run_estimate as run_shared_estimate
+from src.gui_kit.run_commands import run_generation_multiprocess
+from src.gui_kit.run_lifecycle import RunLifecycleController
+from src.gui_kit.ui_dispatch import UIDispatcher
+from src.gui_tools import ERDDesignerToolFrame
+from src.gui_tools import GenerationGuideToolFrame
+from src.gui_tools import LocationSelectorToolFrame
+from src.gui_tools.run_workflow_view import RunWorkflowCapabilities
+from src.gui_tools.run_workflow_view import RunWorkflowSurface
 from src.gui_v2.navigation import DirtyRouteGuard
 from src.gui_v2.navigation import guarded_navigation
+from src.gui_v2.viewmodels import ERDDesignerV2ViewModel
+from src.gui_v2.viewmodels import GenerationGuideV2ViewModel
+from src.gui_v2.viewmodels import LocationSelectorV2ViewModel
 from src.gui_v2.viewmodels import RunCenterViewModel
 from src.gui_v2.viewmodels import SchemaStudioViewModel
-from src.gui_v2.viewmodels import coerce_execution_mode
-from src.gui_v2.viewmodels import coerce_output_mode
-from src.multiprocessing_runtime import EXECUTION_MODES
 from src.multiprocessing_runtime import MultiprocessEvent
 from src.multiprocessing_runtime import MultiprocessRunCancelled
 from src.multiprocessing_runtime import MultiprocessRunResult
-from src.performance_scaling import FK_CACHE_MODES
-from src.performance_scaling import OUTPUT_MODES
 from src.performance_scaling import BenchmarkResult
 from src.performance_scaling import PerformanceRunCancelled
 from src.performance_scaling import RuntimeEvent
@@ -39,6 +50,16 @@ V2_INSPECTOR_BG = "#e9deca"
 
 def _v2_error(location: str, issue: str, hint: str) -> str:
     return f"Run Center v2 / {location}: {issue}. Fix: {hint}."
+
+
+class _BackToRouteAdapter:
+    """Adapter so shared tool frames can call app.go_home() to a target route."""
+
+    def __init__(self, navigate) -> None:
+        self._navigate = navigate
+
+    def go_home(self) -> None:
+        self._navigate()
 
 
 class V2ShellFrame(tk.Frame):
@@ -183,7 +204,7 @@ class V2ShellFrame(tk.Frame):
 
 
 class HomeV2Screen(tk.Frame):
-    """Feature-C home with v2 routes for authoring, runtime, and parity bridges."""
+    """Feature-C home with v2 routes for authoring, runtime, and native specialist tools."""
 
     def __init__(self, parent: tk.Widget, app: object) -> None:
         super().__init__(parent, bg=V2_BG)
@@ -215,8 +236,8 @@ class HomeV2Screen(tk.Frame):
         tk.Label(
             self,
             text=(
-                "Feature C is routed through v2 pages with runtime integration and parity bridges "
-                "for specialist tools."
+                "Feature C routes through v2 pages with runtime integration and native specialist "
+                "tool pages."
             ),
             bg=V2_BG,
             fg="#2a2a2a",
@@ -242,20 +263,20 @@ class HomeV2Screen(tk.Frame):
         )
         self._add_card(
             cards,
-            "ERD Designer v2 Bridge",
-            "V2 parity bridge layout that launches the current ERD designer route.",
+            "ERD Designer v2",
+            "Native v2 ERD workflow with canonical schema/render/export behavior contracts.",
             lambda: self.app.show_screen("erd_designer_v2"),
         )
         self._add_card(
             cards,
-            "Location Selector v2 Bridge",
-            "V2 parity bridge layout that launches the current location selector route.",
+            "Location Selector v2",
+            "Native v2 location workflow for map selection, GeoJSON output, and deterministic samples.",
             lambda: self.app.show_screen("location_selector_v2"),
         )
         self._add_card(
             cards,
-            "Generation Guide v2 Bridge",
-            "V2 parity bridge layout that launches the current behavior guide route.",
+            "Generation Guide v2",
+            "Native v2 read-only guide for generation configuration patterns.",
             lambda: self.app.show_screen("generation_behaviors_guide_v2"),
         )
 
@@ -325,19 +346,35 @@ class SchemaStudioV2Screen(tk.Frame):
         self._inspector_by_section = {
             "project": [
                 "Project metadata and seed configuration live in schema routes.",
-                "Use production route for full schema editing and validation.",
-                "Navigation from v2 applies dirty-state guard when possible.",
+                "Use primary schema route for full schema editing and validation.",
+                "Fallback schema routes are hidden and rollback-only in this cycle.",
             ],
-            "tables": ["Open schema routes for table authoring and SCD/business-key controls."],
-            "columns": ["Open schema routes for column generator and params authoring."],
-            "relationships": ["Open schema routes for FK relationship mapping and constraints."],
+            "tables": ["Open primary schema route for table authoring and SCD/business-key controls."],
+            "columns": ["Open primary schema route for column generator and params authoring."],
+            "relationships": ["Open primary schema route for FK relationship mapping and constraints."],
             "run": ["Use Run Center v2 for diagnostics, plan, and execution."],
         }
 
-        self._build_tab("project", "Project", lambda: self._navigate_with_guard("schema_project", "opening schema project designer"))
-        self._build_tab("tables", "Tables", lambda: self._navigate_with_guard("schema_project_kit", "opening schema kit route"))
-        self._build_tab("columns", "Columns", lambda: self._navigate_with_guard("schema_project", "opening column workflow"))
-        self._build_tab("relationships", "Relationships", lambda: self._navigate_with_guard("schema_project", "opening relationship workflow"))
+        self._build_tab(
+            "project",
+            "Project",
+            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening schema project designer"),
+        )
+        self._build_tab(
+            "tables",
+            "Tables",
+            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening table workflow"),
+        )
+        self._build_tab(
+            "columns",
+            "Columns",
+            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening column workflow"),
+        )
+        self._build_tab(
+            "relationships",
+            "Relationships",
+            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening relationship workflow"),
+        )
         self._build_tab("run", "Run", lambda: self._navigate_with_guard("run_center_v2", "opening Run Center"))
 
         for key in ("project", "tables", "columns", "relationships", "run"):
@@ -358,12 +395,9 @@ class SchemaStudioV2Screen(tk.Frame):
         ttk.Button(frame, text=f"Open {title} workflow", command=command).pack(anchor="w", pady=(10, 0))
 
     def _linked_dirty_screen(self) -> object | None:
-        for route in ("schema_project", "schema_project_kit", "schema_project_legacy"):
-            screen = getattr(self.app, "screens", {}).get(route)
-            if screen is None:
-                continue
-            if bool(getattr(screen, "is_dirty", False)):
-                return screen
+        screen = getattr(self.app, "screens", {}).get(SCHEMA_PRIMARY_ROUTE)
+        if screen is not None and bool(getattr(screen, "is_dirty", False)):
+            return screen
         return None
 
     def _navigate_with_guard(self, target_route: str, action_name: str) -> None:
@@ -393,38 +427,13 @@ class RunCenterV2Screen(tk.Frame):
         self.app = app
         self.project = None
         self._loaded_schema_path = ""
-        self._is_running = False
-        self._cancel_requested = False
-        self._run_started_at = 0.0
 
         self.view_model = RunCenterViewModel()
-        self.schema_path_var = tk.StringVar(value="")
-        self.target_tables_var = tk.StringVar(value="")
-        self.row_overrides_var = tk.StringVar(value="")
-        self.preview_row_target_var = tk.StringVar(value="500")
-        self.output_mode_var = tk.StringVar(value=OUTPUT_MODES[0])
-        self.chunk_size_rows_var = tk.StringVar(value="10000")
-        self.preview_page_size_var = tk.StringVar(value="500")
-        self.sqlite_batch_size_var = tk.StringVar(value="5000")
-        self.csv_buffer_rows_var = tk.StringVar(value="5000")
-        self.fk_cache_mode_var = tk.StringVar(value=FK_CACHE_MODES[0])
-        self.strict_chunking_var = tk.BooleanVar(value=True)
-        self.execution_mode_var = tk.StringVar(value=EXECUTION_MODES[0])
-        self.worker_count_var = tk.StringVar(value="1")
-        self.max_inflight_chunks_var = tk.StringVar(value="4")
-        self.ipc_queue_size_var = tk.StringVar(value="128")
-        self.retry_limit_var = tk.StringVar(value="1")
-        self.profile_name_var = tk.StringVar(value="default_v2_profile")
-
-        self.live_phase_var = tk.StringVar(value="Idle")
-        self.live_rows_var = tk.StringVar(value="Rows processed: 0")
-        self.live_eta_var = tk.StringVar(value="ETA: --")
 
         self.shell = V2ShellFrame(self, title="Run Center v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
         self.shell.add_header_action("Schema Studio", lambda: self.app.show_screen("schema_studio_v2"))
         self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
-        self.shell.set_status("Run Center v2 ready.")
 
         self.shell.add_nav_button("config", "Run Config", lambda: self._set_focus("config"))
         self.shell.add_nav_button("diagnostics", "Diagnostics", lambda: self._set_focus("diagnostics"))
@@ -433,340 +442,244 @@ class RunCenterV2Screen(tk.Frame):
         self.shell.add_nav_button("history", "History", lambda: self._set_focus("history"))
         self.shell.set_nav_active("config")
 
-        self._build_config_card()
-        self.progress = ttk.Progressbar(self.shell.workspace, mode="determinate", maximum=100.0, value=0.0)
-        self.progress.pack(fill="x", padx=10, pady=(0, 4))
+        self.surface = RunWorkflowSurface(
+            self.shell.workspace,
+            model=self.view_model,
+            capabilities=RunWorkflowCapabilities(
+                estimate=True,
+                build_plan=True,
+                benchmark=True,
+                start_run=True,
+                start_fallback=True,
+                failures_tab=True,
+                history_tab=True,
+                show_status_label=False,
+            ),
+            status_callback=self.shell.set_status,
+        )
+        self.surface.pack(fill="both", expand=True, padx=10, pady=10)
 
-        live = ttk.Frame(self.shell.workspace)
-        live.pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Label(live, textvariable=self.live_phase_var).pack(side="left", padx=(0, 12))
-        ttk.Label(live, textvariable=self.live_rows_var).pack(side="left", padx=(0, 12))
-        ttk.Label(live, textvariable=self.live_eta_var).pack(side="left")
+        self.surface.browse_btn.configure(command=self._browse_schema_path)
+        self.surface.load_schema_btn.configure(command=self._load_schema)
+        self.surface.estimate_btn.configure(command=self._run_estimate)
+        self.surface.build_plan_btn.configure(command=self._run_build_plan)
+        self.surface.run_benchmark_btn.configure(command=self._start_benchmark)
+        self.surface.start_run_btn.configure(command=self._start_generation)
+        self.surface.start_fallback_btn.configure(command=lambda: self._start_generation(fallback_to_single_process=True))
+        self.surface.cancel_run_btn.configure(command=self._cancel_run)
+        self.surface.save_btn.configure(command=self._save_profile)
+        self.surface.load_btn.configure(command=self._load_profile)
 
-        self._build_results_workspace()
+        self.progress = self.surface.progress
+        self.preview_table = self.surface.preview_table
+        self.diagnostics_tree = self.surface.diagnostics_tree
+        self.failures_tree = self.surface.failures_tree
+        self.history_tree = self.surface.history_tree
+        self.estimate_btn = self.surface.estimate_btn
+        self.build_plan_btn = self.surface.build_plan_btn
+        self.run_benchmark_btn = self.surface.run_benchmark_btn
+        self.start_run_btn = self.surface.start_run_btn
+        self.start_fallback_btn = self.surface.start_fallback_btn
+        self.cancel_run_btn = self.surface.cancel_run_btn
+        self.live_phase_var = self.surface.live_phase_var
+        self.live_rows_var = self.surface.live_rows_var
+        self.live_eta_var = self.surface.live_eta_var
+
+        self.error_surface = ErrorSurface(
+            context="Run Center v2",
+            dialog_title="Run Center v2 error",
+            warning_title="Run Center v2 warning",
+            show_dialog=show_error_dialog,
+            show_warning=show_warning_dialog,
+            set_status=self.shell.set_status,
+            set_inline=self.surface.set_inline_error,
+        )
+        self.ui_dispatch = UIDispatcher.from_widget(self)
+
+        self.lifecycle = RunLifecycleController(
+            set_phase=self.live_phase_var.set,
+            set_rows=self.live_rows_var.set,
+            set_eta=self.live_eta_var.set,
+            set_progress=lambda value: self.progress.configure(value=value),
+            set_status=self.shell.set_status,
+            action_buttons=self.surface.run_action_buttons,
+            cancel_button=self.surface.cancel_run_btn,
+        )
+
         self._set_inspector_for_config()
-
-    def _build_config_card(self) -> None:
-        self.config_card = ttk.LabelFrame(self.shell.workspace, text="Run Config", padding=10)
-        self.config_card.pack(fill="x", padx=10, pady=(10, 6))
-        for idx in (1, 3):
-            self.config_card.columnconfigure(idx, weight=1)
-
-        ttk.Label(self.config_card, text="Schema JSON").grid(row=0, column=0, sticky="w")
-        ttk.Entry(self.config_card, textvariable=self.schema_path_var).grid(row=0, column=1, columnspan=3, sticky="ew", padx=(8, 8))
-        ttk.Button(self.config_card, text="Browse...", command=self._browse_schema_path).grid(row=0, column=4, sticky="ew", padx=(0, 8))
-        ttk.Button(self.config_card, text="Load", command=self._load_schema).grid(row=0, column=5, sticky="ew")
-
-        ttk.Label(self.config_card, text="Target tables").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.target_tables_var).grid(row=1, column=1, sticky="ew", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="Row overrides JSON").grid(row=1, column=2, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.row_overrides_var).grid(row=1, column=3, columnspan=3, sticky="ew", padx=(8, 0), pady=(6, 0))
-
-        ttk.Label(self.config_card, text="Output").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        ttk.Combobox(self.config_card, textvariable=self.output_mode_var, state="readonly", values=OUTPUT_MODES, width=12).grid(row=2, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="Execution mode").grid(row=2, column=2, sticky="w", pady=(6, 0))
-        ttk.Combobox(self.config_card, textvariable=self.execution_mode_var, state="readonly", values=EXECUTION_MODES, width=20).grid(row=2, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="Profile").grid(row=2, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.profile_name_var, width=16).grid(row=2, column=5, sticky="w", pady=(6, 0))
-
-        ttk.Label(self.config_card, text="Chunk").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.chunk_size_rows_var, width=10).grid(row=3, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="Workers").grid(row=3, column=2, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.worker_count_var, width=10).grid(row=3, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="Inflight").grid(row=3, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.max_inflight_chunks_var, width=10).grid(row=3, column=5, sticky="w", pady=(6, 0))
-
-        ttk.Label(self.config_card, text="Preview target").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.preview_row_target_var, width=10).grid(row=4, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="Page size").grid(row=4, column=2, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.preview_page_size_var, width=10).grid(row=4, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="SQLite batch").grid(row=4, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.sqlite_batch_size_var, width=10).grid(row=4, column=5, sticky="w", pady=(6, 0))
-
-        ttk.Label(self.config_card, text="CSV buffer").grid(row=5, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.csv_buffer_rows_var, width=10).grid(row=5, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="FK cache").grid(row=5, column=2, sticky="w", pady=(6, 0))
-        ttk.Combobox(self.config_card, textvariable=self.fk_cache_mode_var, state="readonly", values=FK_CACHE_MODES, width=12).grid(row=5, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Label(self.config_card, text="Retry").grid(row=5, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.retry_limit_var, width=10).grid(row=5, column=5, sticky="w", pady=(6, 0))
-
-        ttk.Label(self.config_card, text="IPC queue").grid(row=6, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.ipc_queue_size_var, width=10).grid(row=6, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Checkbutton(self.config_card, text="Strict deterministic chunking", variable=self.strict_chunking_var).grid(row=6, column=2, columnspan=3, sticky="w", pady=(6, 0))
-
-        actions = ttk.Frame(self.config_card)
-        actions.grid(row=7, column=0, columnspan=6, sticky="ew", pady=(10, 0))
-        for idx in range(8):
-            actions.columnconfigure(idx, weight=1)
-
-        self.estimate_btn = ttk.Button(actions, text="Estimate", command=self._run_estimate)
-        self.estimate_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        self.build_plan_btn = ttk.Button(actions, text="Build plan", command=self._run_build_plan)
-        self.build_plan_btn.grid(row=0, column=1, sticky="ew", padx=4)
-        self.run_benchmark_btn = ttk.Button(actions, text="Benchmark", command=self._start_benchmark)
-        self.run_benchmark_btn.grid(row=0, column=2, sticky="ew", padx=4)
-        self.start_run_btn = ttk.Button(actions, text="Start", command=self._start_generation)
-        self.start_run_btn.grid(row=0, column=3, sticky="ew", padx=4)
-        self.start_fallback_btn = ttk.Button(actions, text="Start + Fallback", command=lambda: self._start_generation(fallback_to_single_process=True))
-        self.start_fallback_btn.grid(row=0, column=4, sticky="ew", padx=4)
-        self.cancel_run_btn = ttk.Button(actions, text="Cancel", command=self._cancel_run, state=tk.DISABLED)
-        self.cancel_run_btn.grid(row=0, column=5, sticky="ew", padx=4)
-        ttk.Button(actions, text="Save config", command=self._save_profile).grid(row=0, column=6, sticky="ew", padx=4)
-        ttk.Button(actions, text="Load config", command=self._load_profile).grid(row=0, column=7, sticky="ew", padx=(4, 0))
-
-    def _build_results_workspace(self) -> None:
-        self.results_tabs = ttk.Notebook(self.shell.workspace)
-        self.results_tabs.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        diagnostics_tab = ttk.Frame(self.results_tabs, padding=8)
-        plan_tab = ttk.Frame(self.results_tabs, padding=8)
-        failures_tab = ttk.Frame(self.results_tabs, padding=8)
-        history_tab = ttk.Frame(self.results_tabs, padding=8)
-        self.results_tabs.add(diagnostics_tab, text="Diagnostics")
-        self.results_tabs.add(plan_tab, text="Plan")
-        self.results_tabs.add(failures_tab, text="Failures")
-        self.results_tabs.add(history_tab, text="History")
-
-        for tab in (diagnostics_tab, plan_tab, failures_tab, history_tab):
-            tab.columnconfigure(0, weight=1)
-            tab.rowconfigure(0, weight=1)
-
-        self.diagnostics_tree = ttk.Treeview(diagnostics_tab, columns=("table", "rows", "memory", "write", "time", "risk", "recommendation"), show="headings", height=8)
-        self.diagnostics_tree.grid(row=0, column=0, sticky="nsew")
-        for column, text, width in (("table", "Table", 140), ("rows", "Rows", 90), ("memory", "Memory", 90), ("write", "Write", 90), ("time", "Time", 80), ("risk", "Risk", 70), ("recommendation", "Recommendation", 360)):
-            self.diagnostics_tree.heading(column, text=text, anchor="w")
-            self.diagnostics_tree.column(column, width=width, anchor="w")
-
-        self.preview_table = ttk.Treeview(plan_tab, columns=("table", "partition", "row_range", "stage", "worker", "status"), show="headings", height=8)
-        self.preview_table.grid(row=0, column=0, sticky="nsew")
-        for column, text, width in (("table", "Table", 120), ("partition", "Partition", 260), ("row_range", "Row range", 120), ("stage", "Stage", 70), ("worker", "Worker", 80), ("status", "Status", 90)):
-            self.preview_table.heading(column, text=text, anchor="w")
-            self.preview_table.column(column, width=width, anchor="w")
-
-        self.failures_tree = ttk.Treeview(failures_tab, columns=("partition", "error", "retry", "action"), show="headings", height=8)
-        self.failures_tree.grid(row=0, column=0, sticky="nsew")
-        for column, text, width in (("partition", "Partition", 240), ("error", "Error", 430), ("retry", "Retry", 80), ("action", "Action", 100)):
-            self.failures_tree.heading(column, text=text, anchor="w")
-            self.failures_tree.column(column, width=width, anchor="w")
-
-        self.history_tree = ttk.Treeview(history_tab, columns=("timestamp", "status", "mode", "fallback", "rows"), show="headings", height=8)
-        self.history_tree.grid(row=0, column=0, sticky="nsew")
-        for column, text, width in (("timestamp", "Timestamp", 170), ("status", "Status", 170), ("mode", "Mode", 150), ("fallback", "Fallback", 90), ("rows", "Rows", 100)):
-            self.history_tree.heading(column, text=text, anchor="w")
-            self.history_tree.column(column, width=width, anchor="w")
+        self.shell.set_status("Run Center v2 ready.")
 
     def _set_inspector_for_config(self) -> None:
-        self.shell.set_inspector("Run Center Notes", [
-            "Run Center v2 is wired to performance + multiprocessing runtimes.",
-            "Estimate/plan/benchmark/start preserve canonical validation and deterministic semantics.",
-            "Errors preserve location + fix hints.",
-        ])
+        self.shell.set_inspector(
+            "Run Center Notes",
+            [
+                "Run Center v2 is wired to performance + multiprocessing runtimes.",
+                "Estimate/plan/benchmark/start preserve canonical validation and deterministic semantics.",
+                "Errors preserve location + fix hints.",
+            ],
+        )
 
     def _set_focus(self, key: str) -> None:
         self.shell.set_nav_active(key)
-        if key == "diagnostics":
-            self.results_tabs.select(0)
-        elif key == "plan":
-            self.results_tabs.select(1)
-        elif key == "failures":
-            self.results_tabs.select(2)
-        elif key == "history":
-            self.results_tabs.select(3)
+        if key in {"diagnostics", "plan", "failures", "history"}:
+            self.surface.set_focus(key)
         self.shell.set_status(f"Run Center v2: focus set to {key}.")
 
-    def _sync_viewmodel_from_vars(self) -> None:
-        self.view_model.schema_path = self.schema_path_var.get().strip()
-        self.view_model.target_tables = self.target_tables_var.get().strip()
-        self.view_model.row_overrides_json = self.row_overrides_var.get().strip()
-        self.view_model.preview_row_target = self.preview_row_target_var.get().strip()
-        self.view_model.output_mode = coerce_output_mode(self.output_mode_var.get())
-        self.view_model.chunk_size_rows = self.chunk_size_rows_var.get().strip()
-        self.view_model.preview_page_size = self.preview_page_size_var.get().strip()
-        self.view_model.sqlite_batch_size = self.sqlite_batch_size_var.get().strip()
-        self.view_model.csv_buffer_rows = self.csv_buffer_rows_var.get().strip()
-        self.view_model.fk_cache_mode = self.fk_cache_mode_var.get().strip()
-        self.view_model.strict_deterministic_chunking = bool(self.strict_chunking_var.get())
-        self.view_model.execution_mode = coerce_execution_mode(self.execution_mode_var.get())
-        self.view_model.worker_count = self.worker_count_var.get().strip()
-        self.view_model.max_inflight_chunks = self.max_inflight_chunks_var.get().strip()
-        self.view_model.ipc_queue_size = self.ipc_queue_size_var.get().strip()
-        self.view_model.retry_limit = self.retry_limit_var.get().strip()
-        self.view_model.profile_name = self.profile_name_var.get().strip() or "default_v2_profile"
+    def _sync_viewmodel_from_vars(self) -> RunCenterViewModel:
+        return self.surface.sync_model_from_vars()
 
     def _browse_schema_path(self) -> None:
-        path = filedialog.askopenfilename(title="Select schema project JSON", filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
+        path = filedialog.askopenfilename(
+            title="Select schema project JSON",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
         if path:
-            self.schema_path_var.set(path)
+            self.surface.schema_path_var.set(path)
 
     def _load_schema(self) -> bool:
-        self._sync_viewmodel_from_vars()
-        path = self.view_model.schema_path
-        if path == "":
-            messagebox.showerror("Run Center v2 error", _v2_error("Schema path", "path is required", "choose an existing schema project JSON file"))
+        model = self._sync_viewmodel_from_vars()
+        if model.schema_path == "":
+            self.error_surface.emit(
+                location="Schema path",
+                issue="path is required",
+                hint="choose an existing schema project JSON file",
+                mode="mixed",
+            )
             return False
         try:
-            loaded = load_project_from_json(path)
+            loaded = load_project_from_json(model.schema_path)
         except (ValueError, OSError) as exc:
-            messagebox.showerror("Run Center v2 error", str(exc))
+            self.error_surface.emit_exception_actionable(
+                exc,
+                location="Load schema",
+                hint="choose a valid schema project JSON file",
+                mode="mixed",
+            )
             return False
         self.project = loaded
-        self._loaded_schema_path = path
+        self._loaded_schema_path = model.schema_path
         self.shell.set_status(f"Loaded schema '{loaded.name}' with {len(loaded.tables)} tables.")
+        self.surface.set_inline_error("")
         return True
 
     def _ensure_project(self) -> bool:
-        self._sync_viewmodel_from_vars()
-        path_now = self.view_model.schema_path
+        model = self._sync_viewmodel_from_vars()
         if self.project is None:
             return self._load_schema()
-        if path_now == "":
+        if model.schema_path == "":
             return True
-        if path_now != self._loaded_schema_path:
+        if model.schema_path != self._loaded_schema_path:
             return self._load_schema()
         return True
 
-    def _clear_tree(self, tree: ttk.Treeview) -> None:
-        for item in tree.get_children():
-            tree.delete(item)
+    def _clear_tree(self, tree: ttk.Treeview | None) -> None:
+        self.surface.clear_tree(tree)
 
     def _set_running(self, running: bool, phase: str) -> None:
-        self._is_running = running
-        self.live_phase_var.set(phase)
-        if running:
-            self._run_started_at = time.monotonic()
-            self._cancel_requested = False
-            self.cancel_run_btn.configure(state=tk.NORMAL)
-            for button in (self.estimate_btn, self.build_plan_btn, self.run_benchmark_btn, self.start_run_btn, self.start_fallback_btn):
-                button.configure(state=tk.DISABLED)
-        else:
-            self.cancel_run_btn.configure(state=tk.DISABLED)
-            for button in (self.estimate_btn, self.build_plan_btn, self.run_benchmark_btn, self.start_run_btn, self.start_fallback_btn):
-                button.configure(state=tk.NORMAL)
+        self.lifecycle.set_running(running, phase)
 
     def _cancel_run(self) -> None:
-        if not self._is_running:
-            return
-        self._cancel_requested = True
-        self.live_phase_var.set("Cancelling...")
-        self.shell.set_status("Cancellation requested. Waiting for current step to stop...")
+        self.lifecycle.request_cancel("Cancellation requested. Waiting for current step to stop...")
 
     def _is_cancel_requested(self) -> bool:
-        return self._cancel_requested
+        return self.lifecycle.is_cancel_requested()
 
     def _append_history(self, status: str, mode: str, fallback: bool, rows: int) -> None:
-        self.history_tree.insert("", 0, values=(time.strftime("%Y-%m-%d %H:%M:%S"), status, mode, "yes" if fallback else "no", str(rows)))
+        if self.history_tree is None:
+            return
+        self.history_tree.insert(
+            "",
+            0,
+            values=(time.strftime("%Y-%m-%d %H:%M:%S"), status, mode, "yes" if fallback else "no", str(rows)),
+        )
 
     def _on_runtime_event(self, event: RuntimeEvent) -> None:
-        if event.kind == "started":
-            self.progress.configure(value=0.0)
-            self.live_phase_var.set(event.message or "Benchmark started.")
-            self.live_rows_var.set(f"Rows processed: 0/{event.total_rows}")
-            self.live_eta_var.set("ETA: calculating...")
-            return
-        if event.kind in {"progress", "table_done"}:
-            total_rows = max(1, event.total_rows)
-            processed = max(0, event.rows_processed)
-            percent = min(100.0, (float(processed) / float(total_rows)) * 100.0)
-            self.progress.configure(value=percent)
-            self.live_phase_var.set(event.message or "Benchmark running...")
-            self.live_rows_var.set(f"Rows processed: {processed}/{event.total_rows}")
-            return
-        if event.kind == "run_done":
-            self.progress.configure(value=100.0)
-            self.live_phase_var.set(event.message or "Benchmark complete.")
-            self.live_rows_var.set(f"Rows processed: {event.rows_processed}/{event.total_rows}")
+        self.lifecycle.handle_runtime_event(event)
 
     def _on_multiprocess_event(self, event: MultiprocessEvent) -> None:
-        if event.kind == "started":
-            self.progress.configure(value=0.0)
-            self.live_phase_var.set(event.message or "Run started.")
-            self.live_rows_var.set(f"Rows processed: 0/{event.total_rows}")
-            self.live_eta_var.set("ETA: calculating...")
-            return
-        if event.kind == "progress":
-            total_rows = max(1, event.total_rows)
-            processed = max(0, event.rows_processed)
-            percent = min(100.0, (float(processed) / float(total_rows)) * 100.0)
-            self.progress.configure(value=percent)
-            self.live_phase_var.set(event.message or "Run progress.")
-            self.live_rows_var.set(f"Rows processed: {processed}/{event.total_rows}")
-            return
-        if event.kind == "partition_failed":
-            if event.partition_id:
-                self.failures_tree.insert("", "end", values=(event.partition_id, event.message, str(event.retry_count), "retry"))
-            return
-        if event.kind == "fallback":
-            self.live_phase_var.set(event.message or "Fallback mode.")
-            self.live_eta_var.set("ETA: fallback")
-            return
-        if event.kind == "run_done":
-            self.progress.configure(value=100.0)
-            self.live_phase_var.set(event.message or "Run complete.")
-            self.live_rows_var.set(f"Rows processed: {event.rows_processed}/{event.total_rows}")
-
-    def _run_async(self, *, phase_label: str, worker, on_done) -> None:
-        if self._is_running:
-            return
-        self._set_running(True, phase_label)
-
-        def work() -> None:
-            try:
-                result = worker()
-            except (PerformanceRunCancelled, MultiprocessRunCancelled) as exc:
-                self.after(0, lambda message=str(exc): self._on_run_cancelled(message))
-                return
-            except ValueError as exc:
-                self.after(0, lambda message=str(exc): self._on_run_failed(message))
-                return
-            except Exception as exc:
-                self.after(0, lambda message=str(exc): self._on_run_failed(message))
-                return
-            self.after(0, lambda payload=result: on_done(payload))
-
-        threading.Thread(target=work, daemon=True).start()
+        self.lifecycle.handle_multiprocess_event(event)
+        if event.kind == "partition_failed" and event.partition_id and self.failures_tree is not None:
+            self.failures_tree.insert(
+                "",
+                "end",
+                values=(event.partition_id, event.message, str(event.retry_count), "retry"),
+            )
 
     def _on_run_failed(self, message: str) -> None:
-        self._set_running(False, "Failed")
-        self.shell.set_status(message)
-        messagebox.showerror("Run Center v2 error", message)
-        self._append_history("failed", self.execution_mode_var.get(), False, 0)
+        self.lifecycle.transition_failed(message, phase="Failed")
+        self.error_surface.emit_formatted(message, mode="mixed")
+        self._append_history("failed", self.surface.execution_mode_var.get(), False, 0)
 
     def _on_run_cancelled(self, message: str) -> None:
-        self._set_running(False, "Cancelled")
+        self.lifecycle.transition_cancelled(message, phase="Cancelled")
         self.live_phase_var.set("Run cancelled.")
         self.live_eta_var.set("ETA: cancelled")
-        self.shell.set_status(message)
-        self._append_history("cancelled", self.execution_mode_var.get(), False, 0)
+        self._append_history("cancelled", self.surface.execution_mode_var.get(), False, 0)
 
     def _run_estimate(self) -> None:
-        if self._is_running or not self._ensure_project():
+        if self.lifecycle.state.is_running or not self._ensure_project():
             return
         assert self.project is not None
-        self._sync_viewmodel_from_vars()
+        model = self._sync_viewmodel_from_vars()
         try:
-            diagnostics = run_estimate(self.project, self.view_model)
+            diagnostics = run_shared_estimate(self.project, model)
         except ValueError as exc:
-            messagebox.showerror("Run Center v2 error", str(exc))
+            self.error_surface.emit_exception_actionable(
+                exc,
+                location="Estimate workload",
+                hint="review run profile values and retry",
+                mode="mixed",
+            )
             return
         self._clear_tree(self.diagnostics_tree)
-        for estimate in diagnostics.estimates:
-            self.diagnostics_tree.insert("", "end", values=(estimate.table_name, str(estimate.estimated_rows), f"{estimate.estimated_memory_mb:.3f}", f"{estimate.estimated_write_mb:.3f}", f"{estimate.estimated_seconds:.3f}", estimate.risk_level, estimate.recommendation))
+        if self.diagnostics_tree is not None:
+            for estimate in diagnostics.estimates:
+                self.diagnostics_tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        estimate.table_name,
+                        str(estimate.estimated_rows),
+                        f"{estimate.estimated_memory_mb:.3f}",
+                        f"{estimate.estimated_write_mb:.3f}",
+                        f"{estimate.estimated_seconds:.3f}",
+                        estimate.risk_level,
+                        estimate.recommendation,
+                    ),
+                )
         self.shell.set_status(f"Estimate complete: rows={diagnostics.summary.total_rows}, risk={diagnostics.summary.highest_risk}.")
         self._set_focus("diagnostics")
 
     def _run_build_plan(self) -> None:
-        if self._is_running or not self._ensure_project():
+        if self.lifecycle.state.is_running or not self._ensure_project():
             return
         assert self.project is not None
-        self._sync_viewmodel_from_vars()
+        model = self._sync_viewmodel_from_vars()
         try:
-            entries = run_build_partition_plan(self.project, self.view_model)
+            entries = run_shared_build_partition_plan(self.project, model)
         except ValueError as exc:
-            messagebox.showerror("Run Center v2 error", str(exc))
+            self.error_surface.emit_exception_actionable(
+                exc,
+                location="Build partition plan",
+                hint="review execution settings and retry",
+                mode="mixed",
+            )
             return
         self._clear_tree(self.preview_table)
-        for entry in entries:
-            self.preview_table.insert("", "end", values=(entry.table_name, entry.partition_id, f"{entry.start_row}-{entry.end_row}", str(entry.stage), str(entry.assigned_worker), entry.status))
+        if self.preview_table is not None:
+            for entry in entries:
+                self.preview_table.insert(
+                    "",
+                    "end",
+                    values=(
+                        entry.table_name,
+                        entry.partition_id,
+                        f"{entry.start_row}-{entry.end_row}",
+                        str(entry.stage),
+                        str(entry.assigned_worker),
+                        entry.status,
+                    ),
+                )
         self.shell.set_status(f"Partition plan ready: partitions={len(entries)}.")
         self._set_focus("plan")
 
@@ -774,37 +687,82 @@ class RunCenterV2Screen(tk.Frame):
         if not self._ensure_project():
             return
         assert self.project is not None
-        self._sync_viewmodel_from_vars()
+        model = self._sync_viewmodel_from_vars()
 
-        def worker():
-            return run_benchmark(
+        def worker() -> BenchmarkResult:
+            return run_shared_benchmark(
                 self.project,
-                self.view_model,
-                on_event=lambda event: self.after(0, lambda evt=event: self._on_runtime_event(evt)),
+                model,
+                on_event=self.ui_dispatch.marshal(self._on_runtime_event),
                 cancel_requested=self._is_cancel_requested,
             )
 
         def on_done(result: BenchmarkResult) -> None:
-            self._set_running(False, "Benchmark complete")
+            self.lifecycle.transition_complete("Benchmark complete")
             self._clear_tree(self.diagnostics_tree)
-            for estimate in result.estimates:
-                self.diagnostics_tree.insert("", "end", values=(estimate.table_name, str(estimate.estimated_rows), f"{estimate.estimated_memory_mb:.3f}", f"{estimate.estimated_write_mb:.3f}", f"{estimate.estimated_seconds:.3f}", estimate.risk_level, estimate.recommendation))
+            if self.diagnostics_tree is not None:
+                for estimate in result.estimates:
+                    self.diagnostics_tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            estimate.table_name,
+                            str(estimate.estimated_rows),
+                            f"{estimate.estimated_memory_mb:.3f}",
+                            f"{estimate.estimated_write_mb:.3f}",
+                            f"{estimate.estimated_seconds:.3f}",
+                            estimate.risk_level,
+                            estimate.recommendation,
+                        ),
+                    )
             self._clear_tree(self.preview_table)
-            for entry in result.chunk_plan:
-                part = f"{entry.table_name}|stage={entry.stage}|chunk={entry.chunk_index}"
-                self.preview_table.insert("", "end", values=(entry.table_name, part, f"{entry.start_row}-{entry.end_row}", str(entry.stage), "-", "planned"))
+            if self.preview_table is not None:
+                for entry in result.chunk_plan:
+                    partition_id = f"{entry.table_name}|stage={entry.stage}|chunk={entry.chunk_index}"
+                    self.preview_table.insert(
+                        "",
+                        "end",
+                        values=(
+                            entry.table_name,
+                            partition_id,
+                            f"{entry.start_row}-{entry.end_row}",
+                            str(entry.stage),
+                            "-",
+                            "planned",
+                        ),
+                    )
             self.shell.set_status(f"Benchmark complete: chunks={result.chunk_summary.total_chunks}, rows={result.chunk_summary.total_rows}.")
-            self._append_history("benchmark_complete", self.execution_mode_var.get(), False, result.chunk_summary.total_rows)
+            self._append_history("benchmark_complete", self.surface.execution_mode_var.get(), False, result.chunk_summary.total_rows)
 
-        self._run_async(phase_label="Running benchmark...", worker=worker, on_done=on_done)
+        self.lifecycle.run_async(
+            after=self.after,
+            worker=worker,
+            on_done=lambda payload: on_done(payload),
+            on_failed=self._on_run_failed,
+            on_cancelled=self._on_run_cancelled,
+            phase_label="Running benchmark...",
+            cancel_exceptions=(PerformanceRunCancelled,),
+            dispatcher=self.ui_dispatch,
+        )
 
     def _start_generation(self, fallback_to_single_process: bool = False) -> None:
         if not self._ensure_project():
             return
         assert self.project is not None
-        self._sync_viewmodel_from_vars()
+        model = self._sync_viewmodel_from_vars()
 
-        output_mode = self.view_model.output_mode
+        try:
+            profile = build_profile_from_model(model)
+        except ValueError as exc:
+            self.error_surface.emit_exception_actionable(
+                exc,
+                location="Start generation",
+                hint="fix invalid run profile values and retry",
+                mode="mixed",
+            )
+            return
+
+        output_mode = profile.output_mode
         output_csv_folder: str | None = None
         output_sqlite_path: str | None = None
 
@@ -824,25 +782,42 @@ class RunCenterV2Screen(tk.Frame):
                 self.shell.set_status("Run cancelled (no SQLite output path selected).")
                 return
 
-        def worker():
-            return run_generation(
+        def worker() -> MultiprocessRunResult:
+            return run_generation_multiprocess(
                 self.project,
-                self.view_model,
+                model,
                 output_csv_folder=output_csv_folder,
                 output_sqlite_path=output_sqlite_path,
-                on_event=lambda event: self.after(0, lambda evt=event: self._on_multiprocess_event(evt)),
+                on_event=self.ui_dispatch.marshal(self._on_multiprocess_event),
                 cancel_requested=self._is_cancel_requested,
                 fallback_to_single_process=fallback_to_single_process,
             )
 
         def on_done(result: MultiprocessRunResult) -> None:
-            self._set_running(False, "Run complete")
+            self.lifecycle.transition_complete("Run complete")
             self._clear_tree(self.preview_table)
-            for entry in result.partition_plan:
-                self.preview_table.insert("", "end", values=(entry.table_name, entry.partition_id, f"{entry.start_row}-{entry.end_row}", str(entry.stage), str(entry.assigned_worker), entry.status))
+            if self.preview_table is not None:
+                for entry in result.partition_plan:
+                    self.preview_table.insert(
+                        "",
+                        "end",
+                        values=(
+                            entry.table_name,
+                            entry.partition_id,
+                            f"{entry.start_row}-{entry.end_row}",
+                            str(entry.stage),
+                            str(entry.assigned_worker),
+                            entry.status,
+                        ),
+                    )
             self._clear_tree(self.failures_tree)
-            for failure in result.failures:
-                self.failures_tree.insert("", "end", values=(failure.partition_id, failure.error, str(failure.retry_count), failure.action))
+            if self.failures_tree is not None:
+                for failure in result.failures:
+                    self.failures_tree.insert(
+                        "",
+                        "end",
+                        values=(failure.partition_id, failure.error, str(failure.retry_count), failure.action),
+                    )
 
             csv_count = len(result.strategy_result.csv_paths)
             sqlite_rows = sum(result.strategy_result.sqlite_counts.values())
@@ -852,76 +827,71 @@ class RunCenterV2Screen(tk.Frame):
             self._append_history("run_complete", result.mode, result.fallback_used, result.total_rows)
 
         label = "Running with fallback..." if fallback_to_single_process else "Running..."
-        self._run_async(phase_label=label, worker=worker, on_done=on_done)
+        self.lifecycle.run_async(
+            after=self.after,
+            worker=worker,
+            on_done=lambda payload: on_done(payload),
+            on_failed=self._on_run_failed,
+            on_cancelled=self._on_run_cancelled,
+            phase_label=label,
+            cancel_exceptions=(MultiprocessRunCancelled,),
+            dispatcher=self.ui_dispatch,
+        )
 
     def _save_profile(self) -> None:
-        self._sync_viewmodel_from_vars()
+        model = self._sync_viewmodel_from_vars()
         output_path = filedialog.asksaveasfilename(
             title="Save Run Center v2 config JSON",
             defaultextension=".json",
-            initialfile=f"{self.view_model.profile_name}.json",
+            initialfile=f"{model.profile_name}.json",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
         )
         if output_path == "":
             self.shell.set_status("Save config cancelled.")
             return
-        payload = {
-            "schema_path": self.view_model.schema_path,
-            "target_tables": self.view_model.target_tables,
-            "row_overrides_json": self.view_model.row_overrides_json,
-            "preview_row_target": self.view_model.preview_row_target,
-            "output_mode": self.view_model.output_mode,
-            "chunk_size_rows": self.view_model.chunk_size_rows,
-            "preview_page_size": self.view_model.preview_page_size,
-            "sqlite_batch_size": self.view_model.sqlite_batch_size,
-            "csv_buffer_rows": self.view_model.csv_buffer_rows,
-            "fk_cache_mode": self.view_model.fk_cache_mode,
-            "strict_deterministic_chunking": self.view_model.strict_deterministic_chunking,
-            "execution_mode": self.view_model.execution_mode,
-            "worker_count": self.view_model.worker_count,
-            "max_inflight_chunks": self.view_model.max_inflight_chunks,
-            "ipc_queue_size": self.view_model.ipc_queue_size,
-            "retry_limit": self.view_model.retry_limit,
-            "profile_name": self.view_model.profile_name,
-        }
+
+        payload = run_center_payload(model)
         try:
             Path(output_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except OSError as exc:
-            messagebox.showerror("Run Center v2 error", _v2_error("Save config", f"could not write config file ({exc})", "choose a writable output path"))
+            self.error_surface.emit(
+                location="Save config",
+                issue=f"could not write config file ({exc})",
+                hint="choose a writable output path",
+                mode="mixed",
+            )
             return
         self.shell.set_status(f"Saved config to {output_path}.")
 
     def _load_profile(self) -> None:
-        input_path = filedialog.askopenfilename(title="Load Run Center v2 config JSON", filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
+        input_path = filedialog.askopenfilename(
+            title="Load Run Center v2 config JSON",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
         if input_path == "":
             self.shell.set_status("Load config cancelled.")
             return
         try:
             payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            messagebox.showerror("Run Center v2 error", _v2_error("Load config", f"failed to read JSON ({exc})", "choose a valid JSON config file"))
+            self.error_surface.emit(
+                location="Load config",
+                issue=f"failed to read JSON ({exc})",
+                hint="choose a valid JSON config file",
+                mode="mixed",
+            )
             return
         if not isinstance(payload, dict):
-            messagebox.showerror("Run Center v2 error", _v2_error("Load config", "config JSON must be an object", "store config fields in a JSON object"))
+            self.error_surface.emit(
+                location="Load config",
+                issue="config JSON must be an object",
+                hint="store config fields in a JSON object",
+                mode="mixed",
+            )
             return
 
-        self.schema_path_var.set(str(payload.get("schema_path", "")))
-        self.target_tables_var.set(str(payload.get("target_tables", "")))
-        self.row_overrides_var.set(str(payload.get("row_overrides_json", "")))
-        self.preview_row_target_var.set(str(payload.get("preview_row_target", "500")))
-        self.output_mode_var.set(coerce_output_mode(str(payload.get("output_mode", OUTPUT_MODES[0]))))
-        self.chunk_size_rows_var.set(str(payload.get("chunk_size_rows", "10000")))
-        self.preview_page_size_var.set(str(payload.get("preview_page_size", "500")))
-        self.sqlite_batch_size_var.set(str(payload.get("sqlite_batch_size", "5000")))
-        self.csv_buffer_rows_var.set(str(payload.get("csv_buffer_rows", "5000")))
-        self.fk_cache_mode_var.set(str(payload.get("fk_cache_mode", FK_CACHE_MODES[0])))
-        self.strict_chunking_var.set(bool(payload.get("strict_deterministic_chunking", True)))
-        self.execution_mode_var.set(coerce_execution_mode(str(payload.get("execution_mode", EXECUTION_MODES[0]))))
-        self.worker_count_var.set(str(payload.get("worker_count", "1")))
-        self.max_inflight_chunks_var.set(str(payload.get("max_inflight_chunks", "4")))
-        self.ipc_queue_size_var.set(str(payload.get("ipc_queue_size", "128")))
-        self.retry_limit_var.set(str(payload.get("retry_limit", "1")))
-        self.profile_name_var.set(str(payload.get("profile_name", "default_v2_profile")))
+        apply_run_center_payload(self.view_model, payload)
+        self.surface.sync_vars_from_model()
         self.shell.set_status(f"Loaded config from {input_path}.")
 
 
@@ -975,58 +945,202 @@ class ToolBridgeV2Screen(tk.Frame):
         self.app.show_screen(self.launch_route)
 
 
-class ERDDesignerV2Screen(ToolBridgeV2Screen):
-    """Feature-C parity bridge for ERD designer."""
+class ERDDesignerV2Screen(tk.Frame):
+    """Native v2 route for ERD designer behavior."""
+
+    def __init__(self, parent: tk.Widget, app: object, cfg: AppConfig) -> None:
+        super().__init__(parent, bg=V2_BG)
+        self.app = app
+        self.view_model = ERDDesignerV2ViewModel()
+        self.shell = V2ShellFrame(self, title="ERD Designer v2", on_back=lambda: self.app.show_screen("home_v2"))
+        self.shell.pack(fill="both", expand=True)
+        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
+        self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
+        self.shell.add_nav_button("tool", "ERD Tool", command=self._show_tool)
+        self.shell.add_nav_button("overview", "Overview", command=self._show_overview)
+
+        self.tool = ERDDesignerToolFrame(
+            self.shell.workspace,
+            _BackToRouteAdapter(lambda: self.app.show_screen("home_v2")),
+            cfg,
+            show_header=False,
+            title_text="ERD Designer v2",
+        )
+        self.tool.pack(fill="both", expand=True, padx=8, pady=8)
+        self._show_tool()
+
+    def _show_tool(self) -> None:
+        self.view_model.selected_section = "erd"
+        self.shell.set_nav_active("tool")
+        self.shell.set_inspector(
+            "ERD Inspector",
+            [
+                "Native v2 page uses canonical ERD authoring/render/export contracts.",
+                "Schema render, drag layout, and export behavior remain deterministic.",
+            ],
+        )
+        self.shell.set_status("ERD Designer v2 ready.")
+
+    def _show_overview(self) -> None:
+        self.shell.set_nav_active("overview")
+        self.shell.set_inspector(
+            "ERD Overview",
+            [
+                "Use this page to load or author schema tables/columns/FKs and render ERD.",
+                "Exports support SVG/PNG/JPEG with actionable validation feedback.",
+            ],
+        )
+        self.shell.set_status("ERD Designer v2 overview.")
+
+
+class LocationSelectorV2Screen(tk.Frame):
+    """Native v2 route for location selector behavior."""
+
+    def __init__(self, parent: tk.Widget, app: object, cfg: AppConfig) -> None:
+        super().__init__(parent, bg=V2_BG)
+        self.app = app
+        self.view_model = LocationSelectorV2ViewModel()
+        self.shell = V2ShellFrame(self, title="Location Selector v2", on_back=lambda: self.app.show_screen("home_v2"))
+        self.shell.pack(fill="both", expand=True)
+        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
+        self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
+        self.shell.add_nav_button("tool", "Location Tool", command=self._show_tool)
+        self.shell.add_nav_button("overview", "Overview", command=self._show_overview)
+
+        self.tool = LocationSelectorToolFrame(
+            self.shell.workspace,
+            _BackToRouteAdapter(lambda: self.app.show_screen("home_v2")),
+            cfg,
+            show_header=False,
+            title_text="Location Selector v2",
+        )
+        self.tool.pack(fill="both", expand=True, padx=8, pady=8)
+        self._show_tool()
+
+    def _show_tool(self) -> None:
+        self.view_model.selected_section = "location"
+        self.shell.set_nav_active("tool")
+        self.shell.set_inspector(
+            "Location Inspector",
+            [
+                "Native v2 page uses canonical map/GeoJSON/sample contracts.",
+                "Sample output remains deterministic for seed + inputs.",
+            ],
+        )
+        self.shell.set_status("Location Selector v2 ready.")
+
+    def _show_overview(self) -> None:
+        self.shell.set_nav_active("overview")
+        self.shell.set_inspector(
+            "Location Overview",
+            [
+                "Select a center point and radius to build GeoJSON output.",
+                "Generate and save deterministic latitude/longitude sample points.",
+            ],
+        )
+        self.shell.set_status("Location Selector v2 overview.")
+
+
+class GenerationBehaviorsGuideV2Screen(tk.Frame):
+    """Native v2 route for generation guide behavior."""
+
+    def __init__(self, parent: tk.Widget, app: object, _cfg: AppConfig) -> None:
+        super().__init__(parent, bg=V2_BG)
+        self.app = app
+        self.view_model = GenerationGuideV2ViewModel()
+        self.shell = V2ShellFrame(self, title="Generation Guide v2", on_back=lambda: self.app.show_screen("home_v2"))
+        self.shell.pack(fill="both", expand=True)
+        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
+        self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
+        self.shell.add_nav_button("guide", "Guide", command=self._show_guide)
+        self.shell.add_nav_button("overview", "Overview", command=self._show_overview)
+
+        self.tool = GenerationGuideToolFrame(
+            self.shell.workspace,
+            _BackToRouteAdapter(lambda: self.app.show_screen("home_v2")),
+            show_header=False,
+            title_text="Generation Guide v2",
+        )
+        self.tool.pack(fill="both", expand=True, padx=8, pady=8)
+        self._show_guide()
+
+    def _show_guide(self) -> None:
+        self.view_model.selected_section = "guide"
+        self.shell.set_nav_active("guide")
+        self.shell.set_inspector(
+            "Guide Inspector",
+            [
+                "Read-only generation behavior reference for schema authoring.",
+                "No schema mutation controls are exposed on this route.",
+            ],
+        )
+        self.shell.set_status("Generation Guide v2 ready.")
+
+    def _show_overview(self) -> None:
+        self.shell.set_nav_active("overview")
+        self.shell.set_inspector(
+            "Guide Overview",
+            [
+                "Covers dtype defaults, generator params, dependency flows, and SCD/BK guidance.",
+                "Behavior definitions remain aligned with canonical semantics docs.",
+            ],
+        )
+        self.shell.set_status("Generation Guide v2 overview.")
+
+
+class ERDDesignerV2BridgeScreen(ToolBridgeV2Screen):
+    """Hidden fallback bridge route for ERD designer."""
 
     def __init__(self, parent: tk.Widget, app: object, _cfg: AppConfig) -> None:
         super().__init__(
             parent,
             app,
-            title="ERD Designer v2",
+            title="ERD Designer v2 Bridge",
             launch_label="Open current ERD Designer",
             launch_route="erd_designer",
-            description="This v2 bridge keeps redesign navigation consistent while ERD canvas parity remains additive.",
+            description="Fallback bridge route to the production ERD designer.",
             inspector_title="ERD Bridge Notes",
             inspector_lines=[
-                "Current ERD route remains source of truth for schema rendering and editing.",
-                "Bridge preserves additive rollout safety for Feature C.",
+                "This route is retained temporarily for rollback safety.",
+                "Primary v2 ERD behavior now lives on erd_designer_v2.",
             ],
         )
 
 
-class LocationSelectorV2Screen(ToolBridgeV2Screen):
-    """Feature-C parity bridge for location selector."""
+class LocationSelectorV2BridgeScreen(ToolBridgeV2Screen):
+    """Hidden fallback bridge route for location selector."""
 
     def __init__(self, parent: tk.Widget, app: object, _cfg: AppConfig) -> None:
         super().__init__(
             parent,
             app,
-            title="Location Selector v2",
+            title="Location Selector v2 Bridge",
             launch_label="Open current Location Selector",
             launch_route="location_selector",
-            description="This v2 bridge preserves deterministic map/GeoJSON/sample behavior through the production route.",
+            description="Fallback bridge route to the production location selector.",
             inspector_title="Location Bridge Notes",
             inspector_lines=[
-                "Production location selector remains unchanged for deterministic behavior.",
-                "Bridge route keeps users in v2 navigation without behavior regressions.",
+                "This route is retained temporarily for rollback safety.",
+                "Primary v2 location behavior now lives on location_selector_v2.",
             ],
         )
 
 
-class GenerationBehaviorsGuideV2Screen(ToolBridgeV2Screen):
-    """Feature-C parity bridge for generation behaviors guide."""
+class GenerationBehaviorsGuideV2BridgeScreen(ToolBridgeV2Screen):
+    """Hidden fallback bridge route for generation guide."""
 
     def __init__(self, parent: tk.Widget, app: object, _cfg: AppConfig) -> None:
         super().__init__(
             parent,
             app,
-            title="Generation Guide v2",
+            title="Generation Guide v2 Bridge",
             launch_label="Open current Generation Behaviors Guide",
             launch_route="generation_behaviors_guide",
-            description="This v2 bridge keeps guidance discoverable while guide content remains canonical and read-only.",
+            description="Fallback bridge route to the production generation guide.",
             inspector_title="Guide Bridge Notes",
             inspector_lines=[
-                "Current guide content remains canonical and read-only.",
-                "Bridge route supports phased migration without semantic changes.",
+                "This route is retained temporarily for rollback safety.",
+                "Primary v2 guide behavior now lives on generation_behaviors_guide_v2.",
             ],
         )
+

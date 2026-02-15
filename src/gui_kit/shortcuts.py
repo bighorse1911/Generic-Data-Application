@@ -3,21 +3,39 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import tkinter as tk
 from tkinter import ttk
 
 __all__ = ["ShortcutManager"]
 
 
+@dataclass(frozen=True)
+class _ShortcutSpec:
+    sequences: tuple[str, ...]
+    description: str
+    callback: Callable[[], None]
+
+
 class ShortcutManager:
-    """Centralized shortcut registration with a built-in help dialog."""
+    """Centralized, route-scoped shortcut registration with a help dialog."""
 
     def __init__(self, widget: tk.Widget) -> None:
         self.widget = widget
-        self._items: list[tuple[str, str, Callable[[], None]]] = []
+        self._items: list[_ShortcutSpec] = []
         self._help_dialog: tk.Toplevel | None = None
+        self._active = False
+        self._bound_root: tk.Misc | None = None
+        self._bound_ids: dict[str, list[str]] = {}
 
-    def register(self, sequence: str, description: str, callback: Callable[[], None]) -> None:
+    def register(
+        self,
+        sequence: str,
+        description: str,
+        callback: Callable[[], None],
+        *,
+        aliases: list[str] | tuple[str, ...] | None = None,
+    ) -> None:
         seq = sequence.strip()
         desc = description.strip()
         if seq == "" or desc == "":
@@ -25,16 +43,72 @@ class ShortcutManager:
                 "Shortcut manager: sequence and description are required. "
                 "Fix: provide non-empty shortcut sequence and description."
             )
+        sequence_list = [seq]
+        if aliases:
+            for alias in aliases:
+                alias_seq = str(alias).strip()
+                if alias_seq and alias_seq not in sequence_list:
+                    sequence_list.append(alias_seq)
+        self._items.append(_ShortcutSpec(tuple(sequence_list), desc, callback))
+        if self._active:
+            self._bind_spec(self._items[-1])
 
-        def _wrapped(_event=None):
-            callback()
-            return "break"
+    def register_ctrl_cmd(
+        self,
+        key: str,
+        description: str,
+        callback: Callable[[], None],
+        *,
+        shift: bool = False,
+    ) -> None:
+        key_token = str(key).strip()
+        if key_token == "":
+            raise ValueError(
+                "Shortcut manager: key token is required for register_ctrl_cmd. "
+                "Fix: provide a non-empty key token such as 's' or 'Return'."
+            )
+        shift_prefix = "Shift-" if shift else ""
+        primary = f"<Control-{shift_prefix}{key_token}>"
+        alias = f"<Command-{shift_prefix}{key_token}>"
+        self.register(primary, description, callback, aliases=[alias])
 
-        self.widget.bind_all(seq, _wrapped, add="+")
-        self._items.append((seq, desc, callback))
+    def activate(self) -> None:
+        if self._active:
+            return
+        root = self.widget.winfo_toplevel()
+        self._bound_root = root
+        self._active = True
+        self._bound_ids.clear()
+        for spec in self._items:
+            self._bind_spec(spec)
+
+    def deactivate(self) -> None:
+        if not self._active:
+            return
+        root = self._bound_root
+        if root is not None:
+            for sequence, bind_ids in list(self._bound_ids.items()):
+                for bind_id in bind_ids:
+                    root.unbind(sequence, bind_id)
+        self._bound_ids.clear()
+        self._bound_root = None
+        self._active = False
+
+    def _bind_spec(self, spec: _ShortcutSpec) -> None:
+        if not self._active or self._bound_root is None:
+            return
+        root = self._bound_root
+        for sequence in spec.sequences:
+            def _wrapped(_event=None, callback=spec.callback):
+                callback()
+                return "break"
+
+            bind_id = root.bind(sequence, _wrapped, add="+")
+            if bind_id:
+                self._bound_ids.setdefault(sequence, []).append(bind_id)
 
     def items(self) -> list[tuple[str, str]]:
-        return [(seq, desc) for (seq, desc, _cb) in self._items]
+        return [(spec.sequences[0], spec.description) for spec in self._items]
 
     def show_help_dialog(self, *, title: str = "Keyboard shortcuts") -> None:
         if self._help_dialog is not None and self._help_dialog.winfo_exists():

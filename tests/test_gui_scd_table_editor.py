@@ -164,12 +164,13 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         self._add_non_nullable_column(screen, "city", "text")
         screen.columns_tree.selection_remove(screen.columns_tree.selection())
 
-        with mock.patch("src.gui_schema_project.messagebox.showerror") as showerror:
-            screen._apply_selected_column_changes()
-            showerror.assert_called_once()
-            title, message = showerror.call_args.args
+        calls: list[tuple[str, str]] = []
+        screen.error_surface.show_dialog = lambda title, message: calls.append((title, message))
+        screen._apply_selected_column_changes()
+        self.assertEqual(len(calls), 1)
+        title, message = calls[0]
 
-        self.assertEqual(title, "Edit column failed")
+        self.assertEqual(title, "Schema project error")
         self.assertIn("Edit column", message)
         self.assertIn("no column is selected", message)
         self.assertIn("Fix:", message)

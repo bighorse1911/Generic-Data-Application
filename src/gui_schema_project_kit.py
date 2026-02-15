@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from src.generator_project import generate_project_rows
 from src.gui_kit.column_chooser import ColumnChooserDialog
 from src.gui_kit.feedback import ToastCenter
 from src.gui_kit.forms import FormBuilder
+from src.gui_kit.job_lifecycle import JobLifecycleController
 from src.gui_kit.json_editor import JsonEditorDialog
 from src.gui_kit.layout import BaseScreen
 from src.gui_kit.panels import CollapsiblePanel, Tabs
@@ -67,9 +68,16 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.seed_var.trace_add("write", self._on_project_meta_changed)
         self.enable_dirty_state_guard(context="Schema Project Designer", on_save=self._save_project)
         self.mark_clean()
+        self.job_lifecycle = JobLifecycleController(
+            set_running=self._set_running,
+            run_async=self._run_job_async,
+        )
 
         # Keep default platform theme; dark mode is intentionally disabled.
         self.kit_dark_mode_enabled = False
+
+    def _run_job_async(self, worker, on_done, on_failed) -> None:
+        self.safe_threaded_job(worker, on_done, on_failed)
 
     def build_header(self) -> ttk.Frame:
         header = BaseScreen.build_header(
@@ -615,7 +623,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
             page_size = int(self.preview_page_size_var.get().strip())
             self.preview_table.set_page_size(page_size)
         except Exception as exc:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Preview page size",
                 f"Preview page size: invalid value '{self.preview_page_size_var.get()}'. "
                 f"Fix: choose one of 50, 100, 200, or 500. Details: {exc}",
@@ -625,7 +633,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
     def _open_preview_column_chooser(self) -> None:
         table_name = self.preview_table_var.get().strip()
         if table_name == "":
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Preview columns",
                 "Preview columns: no preview table is selected. "
                 "Fix: choose a preview table first.",
@@ -634,7 +642,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
 
         columns = self._preview_columns_for_table(table_name)
         if not columns:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Preview columns",
                 f"Preview columns: table '{table_name}' has no columns to configure. "
                 "Fix: select a table with generated preview data.",
@@ -883,14 +891,14 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
             self._apply_project_vars_to_model()
             validate_project(self.project)
         except Exception as exc:
-            messagebox.showerror("Invalid project", str(exc))
+            self._show_error_dialog("Invalid project", str(exc))
             return
 
-        self._set_running(True, "Generating data for all tables...")
-        self.safe_threaded_job(
-            lambda: generate_project_rows(self.project),
-            self._on_generated_ok,
-            lambda exc: self._on_job_failed(str(exc)),
+        self.job_lifecycle.run_async(
+            worker=lambda: generate_project_rows(self.project),
+            on_done=self._on_generated_ok,
+            on_failed=self._on_job_failed,
+            phase_label="Generating data for all tables...",
         )
 
     def _on_generated_ok(self, rows: dict[str, list[dict[str, object]]]) -> None:
@@ -902,12 +910,12 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         if self.is_running:
             return
         if not self.generated_rows:
-            messagebox.showwarning("No data", "Generate data first.")
+            self._show_warning_dialog("No data", "Generate data first.")
             return
 
         db_path = self.db_path_var.get().strip()
         if not db_path:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Missing DB path",
                 "Generate / Preview / Export / SQLite panel: SQLite DB path is required. "
                 "Fix: choose a SQLite database file path.",
@@ -918,19 +926,18 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
             self._apply_project_vars_to_model()
             validate_project(self.project)
         except Exception as exc:
-            messagebox.showerror("Invalid project", str(exc))
+            self._show_error_dialog("Invalid project", str(exc))
             return
-
-        self._set_running(True, "Creating tables and inserting rows into SQLite...")
 
         def _sqlite_job() -> dict[str, int]:
             create_tables(db_path, self.project)
             return insert_project_rows(db_path, self.project, self.generated_rows, chunk_size=5000)
 
-        self.safe_threaded_job(
-            _sqlite_job,
-            lambda counts: self._on_sqlite_ok(db_path, counts),
-            lambda exc: self._on_job_failed(str(exc)),
+        self.job_lifecycle.run_async(
+            worker=_sqlite_job,
+            on_done=lambda counts: self._on_sqlite_ok(db_path, counts),
+            on_failed=self._on_job_failed,
+            phase_label="Creating tables and inserting rows into SQLite...",
         )
 
     def _on_sqlite_ok(self, db_path: str, counts: dict[str, int]) -> None:
@@ -947,7 +954,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
             return
 
         if self.last_validation_errors > 0:
-            messagebox.showerror(
+            self._show_error_dialog(
                 "Cannot generate",
                 "Generate sample action: schema has validation errors. "
                 "Fix: run validation and resolve all error cells first.",
@@ -958,13 +965,13 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
             self._apply_project_vars_to_model()
             validate_project(self.project)
         except Exception as exc:
-            messagebox.showerror("Invalid project", str(exc))
+            self._show_error_dialog("Invalid project", str(exc))
             return
 
         sample_project = self._make_sample_project(10)
-        self._set_running(True, "Generating sample data (10 rows per root table)...")
-        self.safe_threaded_job(
-            lambda: generate_project_rows(sample_project),
-            self._on_generated_ok,
-            lambda exc: self._on_job_failed(str(exc)),
+        self.job_lifecycle.run_async(
+            worker=lambda: generate_project_rows(sample_project),
+            on_done=self._on_generated_ok,
+            on_failed=self._on_job_failed,
+            phase_label="Generating sample data (10 rows per root table)...",
         )

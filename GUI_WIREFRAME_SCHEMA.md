@@ -14,11 +14,11 @@ this project. It is authoritative for:
 If GUI behavior is unclear, this document and `PROJECT_CANON.md` override
 ad-hoc assumptions.
 
-## Implementation Status (2026-02-14)
+## Implementation Status (2026-02-15)
 
 - Current runtime GUI: Tkinter (`src/gui_home.py`)
 - Production modular route: `schema_project` uses `src/gui_schema_project_kit.py` with `src/gui_kit`.
-- Legacy fallback route: `schema_project_legacy` uses `src/gui_schema_project.py`.
+- Hidden legacy rollback fallback route: `schema_project_legacy` uses `src/gui_schema_project.py` and is deprecated for one release cycle.
 - Direction 3 status: completed (`float` -> `decimal` migration and semantic numeric generator migration).
 - SCD1/SCD2 support is implemented end-to-end (generator + validator + JSON IO + GUI authoring controls in both schema designer screens).
 - Business-key behavior controls are implemented in both schema designer screens:
@@ -54,8 +54,13 @@ ad-hoc assumptions.
 - Performance scaling phase-1B update: `performance_workbench` now includes deterministic FK-stage chunk-plan preview from profile settings.
 - Performance scaling phase-1C update: `performance_workbench` now includes benchmark/generate runtime actions with cancellation and live progress metrics, plus CSV/SQLite strategy output integration.
 - Multiprocessing feature update: Home now routes to `execution_orchestrator` for multiprocess configuration, FK-stage partition planning, worker monitoring, retry/fallback handling, and run-config persistence.
-- Full visual redesign feature completion update: Home now routes to fully integrated v2 screens (`home_v2`, `schema_studio_v2`, `run_center_v2`) plus parity bridge routes (`erd_designer_v2`, `location_selector_v2`, `generation_behaviors_guide_v2`).
+- Full visual redesign feature completion update: Home now routes to fully integrated v2 screens (`home_v2`, `schema_studio_v2`, `run_center_v2`) plus native specialist routes (`erd_designer_v2`, `location_selector_v2`, `generation_behaviors_guide_v2`).
+- Native v2 parity update: hidden rollback fallback routes (`erd_designer_v2_bridge`, `location_selector_v2_bridge`, `generation_behaviors_guide_v2_bridge`) remain temporarily available for release-safety rollback.
 - Full visual redesign core update: `schema_studio_v2` now applies dirty-state guarded navigation for schema route transitions; `run_center_v2` now integrates estimate/plan/benchmark/multiprocess execution flows using canonical runtime modules.
+- Run workflow convergence update: `run_center_v2`, `performance_workbench`, and `execution_orchestrator` now share one run-workflow section model (config panel, run controls, progress strip, results tabs) with capability-gated tabs/actions and shared lifecycle/error/table primitives.
+- Schema route consolidation update: `schema_project` is the only primary schema authoring route in Home and `schema_studio_v2`; hidden fallback routes remain `schema_project_kit` (alias) and deprecated `schema_project_legacy` (rollback only).
+- Async lifecycle consistency update: shared teardown-safe UI dispatch now backs run-screen terminal callbacks and modular schema long jobs; legacy schema fallback includes blocker-level teardown-safe callback guards.
+- Validation/error surface consistency update: interactive routes now route blocking errors and warnings through shared `ErrorSurface` pathways with canonical actionable shape and route-standardized titles; read-only routes are explicitly out of runtime error-plumbing scope.
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -157,6 +162,19 @@ Examples:
 - `Add column / Type: dtype 'float' is deprecated for new GUI columns. Fix: choose dtype='decimal' for new numeric columns; keep legacy float only in loaded JSON schemas.`
 - `Table 'orders', column 'amount': min_value cannot exceed max_value. Fix: set min_value <= max_value.`
 
+P5 standardization rules:
+- Blocking errors and non-blocking warnings both use the same actionable contract (`<Location>: <issue>. Fix: <hint>.`).
+- Route families use standardized dialog titles:
+  - Schema project: `Schema project error` / `Schema project warning`
+  - Schema project legacy: `Schema project legacy error` / `Schema project legacy warning`
+  - ERD designer: `ERD designer error` / `ERD designer warning`
+  - Location selector: `Location selector error` / `Location selector warning`
+  - Performance workbench: `Performance workbench error` / `Performance workbench warning`
+  - Execution orchestrator: `Execution orchestrator error` / `Execution orchestrator warning`
+  - Run Center v2: `Run Center v2 error` / `Run Center v2 warning`
+- Read-only routes are excluded from runtime error-surface wiring in this slice:
+  - `home`, `home_v2`, `schema_studio_v2`, `generation_behaviors_guide`, `generation_behaviors_guide_v2`, and `*_v2_bridge` fallback routes.
+
 ## 4. Current Screen Inventory (Authoritative Baseline)
 
 ### 4.1 `home`
@@ -164,8 +182,6 @@ Examples:
 - Purpose: entry navigation to available tools/screens.
 - Required actions:
 - open schema project designer (production modular route)
-- open schema project designer kit route (modular parity reference path)
-- open schema project designer legacy fallback route
 - open generation behaviors guide screen
 - open ERD designer screen
 - open location selector screen
@@ -214,25 +230,28 @@ Examples:
 - Screen-level dirty-state behavior prompts on unsaved back/load navigation and exposes an unsaved indicator.
 - Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`, `Tabs`, `FormBuilder`, `TableView`, `ColumnChooserDialog`, `InlineValidationSummary`).
 
-### 4.3 `schema_project_kit` (modular parity reference path)
+### 4.3 `schema_project_kit` (hidden alias fallback path)
 
-- Mirrors modular production behavior for parity/regression checks.
+- Hidden fallback route alias to the same screen instance as `schema_project`.
 - Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`,
   `Tabs`, `FormBuilder`, `TableView`, `ColumnChooserDialog`, `InlineValidationSummary`).
 - Uses default platform theme styling (no forced dark mode).
-- Additive navigation path from Home.
-- Long-running actions on this screen (`Generate data`, `Generate sample`, `SQLite insert`) run via `BaseScreen.safe_threaded_job` to preserve busy/progress behavior and avoid duplicate-trigger races.
+- Not a primary navigation target from Home or `schema_studio_v2`.
+- Long-running actions on this screen (`Generate data`, `Generate sample`, `SQLite insert`) run through shared `gui_kit.job_lifecycle.JobLifecycleController` with `BaseScreen.safe_threaded_job` dispatch to preserve busy/progress behavior and avoid duplicate-trigger races.
+- Thread->UI callback dispatch for long-running actions must be teardown-safe (drop callbacks silently when widget/root is no longer alive).
 
-### 4.4 `schema_project_legacy` (fallback path)
+### 4.4 `schema_project_legacy` (deprecated hidden rollback path)
 
-- Purpose: low-risk fallback route while modular production path is adopted.
+- Purpose: temporary hidden rollback fallback for one release cycle while consolidated modular route remains primary.
 - Must preserve business-logic compatibility with modular production path for validation/generation/export/JSON IO flows.
 - Uses pre-modular UI implementation from `src/gui_schema_project.py`.
+- Not a primary navigation target from Home or `schema_studio_v2`.
 - Includes low-risk Phase C adoption of selected gui_kit components:
   - `TableView` for preview table rendering with opt-in pagination controls,
   - `ColumnChooserDialog` for preview column visibility/order,
   - `InlineValidationSummary` panel with quick-jump actions,
   - dirty-state prompts for unsaved back/load navigation.
+- Legacy async worker callbacks must use teardown-safe scheduling guards to avoid uncaught `_tkinter.TclError` during shutdown/destruction.
 
 ### 4.5 `generation_behaviors_guide`
 
@@ -295,27 +314,35 @@ Examples:
 
 ### 4.8 `performance_workbench`
 
-- Purpose: completed performance scaling workbench for planning, benchmark, and strategy-driven generation/export.
+- Purpose: completed performance scaling workbench using the shared run-workflow surface for planning, benchmark, and strategy-driven generation/export.
 - Required regions:
 - header with explicit back navigation to `home`
-- schema input controls (path entry + browse + load schema)
-- workload profile controls (target tables, row overrides JSON, preview row target, output mode)
-- execution strategy controls (`chunk_size_rows`, `preview_page_size`, `sqlite_batch_size`, `csv_buffer_rows`, `fk_cache_mode`, strict deterministic chunking toggle)
-- diagnostics table (`table`, estimated rows/memory/write/time, risk, recommendation)
-- chunk plan preview table (`table`, `stage`, `chunk`, `start_row`, `end_row`, `rows`)
-- run controls (`Run benchmark`, `Generate with strategy`, `Cancel run`)
-- live status panel (progress bar, phase/status text, rows processed, ETA/throughput)
-- profile save/load controls
+- shared run config panel:
+  - schema input controls
+  - workload profile controls
+  - execution strategy controls
+  - profile save/load controls
+- shared run controls strip (capability-gated actions)
+- shared progress strip (progress bar + phase/status + rows + ETA/throughput)
+- shared results tab host with capability tabs:
+  - diagnostics tab (`table`, estimated rows/memory/write/time, risk, recommendation)
+  - chunk plan tab (`table`, `stage`, `chunk`, `start_row`, `end_row`, `rows`)
 - status line
+- Capability matrix (enabled actions/tabs):
+- actions: `estimate`, `build plan`, `benchmark`, `generate(strategy)`, `cancel`
+- tabs: `diagnostics`, `plan`
+- omitted in this route: `workers`, `failures`, `history`
 - Required behavior:
+- uses shared lifecycle/state handling for start/cancel/progress/complete/failure transitions
+- runtime terminal callbacks and event marshalling use teardown-safe UI dispatch so callback scheduling is dropped safely if the UI host is destroyed
 - profile fields validate with actionable `<Location>: <issue>. Fix: <hint>.` errors before estimate run
 - row override validation enforces existing-table keys and FK minimum-row guardrails
 - strict deterministic chunking cannot be disabled while deterministic generation contract is required
 - estimate action computes deterministic per-table diagnostics from loaded schema + profile
-- diagnostics table updates in-place and status line reports aggregated summary
-- chunk plan action computes deterministic FK-stage-aware table chunk ranges and renders chunk table preview
-- chunk plan action rejects cyclic selected-table FK dependency graphs with actionable fix-hint errors
-- run benchmark action emits live progress updates while evaluating chunk plan execution flow
+- diagnostics tab updates in-place and status line reports aggregated summary
+- build plan action computes deterministic FK-stage-aware table chunk ranges and renders chunk table preview
+- build plan action rejects cyclic selected-table FK dependency graphs with actionable fix-hint errors
+- run benchmark action emits live progress updates while evaluating chunk-plan execution flow
 - generate with strategy action runs deterministic generation using selected profile and supports output modes (`preview|csv|sqlite|all`)
 - cancel action signals runtime cancellation and returns UI to ready state without blocking the main thread
 - CSV strategy mode writes one CSV per selected/required table using buffered row writes
@@ -324,20 +351,28 @@ Examples:
 
 ### 4.9 `execution_orchestrator`
 
-- Purpose: completed multiprocessing execution planner/runner for staged partition monitoring with retry/fallback controls.
+- Purpose: completed multiprocessing execution planner/runner using the shared run-workflow surface for staged partition monitoring with retry/fallback controls.
 - Required regions:
 - header with explicit back navigation to `home`
-- schema input controls (path entry + browse + load schema)
-- workload profile controls (target tables, row overrides JSON, preview/output/chunking fields reused from performance profile)
-- execution mode controls (`mode`, `worker_count`, `max_inflight_chunks`, `ipc_queue_size`, `retry_limit`)
-- run controls (`Build plan`, `Start`, `Start with fallback`, `Cancel`)
-- live status panel (progress bar, phase/status text, rows processed, ETA/throughput)
-- partition plan table (`table`, `partition_id`, `row range`, `stage`, `assigned worker`, `status`)
-- worker monitor table (`worker`, current table/partition, rows, throughput, memory, heartbeat, state)
-- failure table (`partition_id`, `error`, `retry_count`, `action`)
-- run-config save/load controls
+- shared run config panel:
+  - schema input controls
+  - workload profile controls
+  - execution mode controls
+  - run-config save/load controls
+- shared run controls strip (capability-gated actions)
+- shared progress strip (progress bar + phase/status + rows + ETA/throughput)
+- shared results tab host with capability tabs:
+  - partition plan tab (`table`, `partition_id`, `row range`, `stage`, `assigned worker`, `status`)
+  - worker monitor tab (`worker`, current table/partition, rows, throughput, memory, heartbeat, state)
+  - failures tab (`partition_id`, `error`, `retry_count`, `action`)
 - status line
+- Capability matrix (enabled actions/tabs):
+- actions: `build plan`, `start`, `start+fallback`, `cancel`
+- tabs: `plan`, `workers`, `failures`
+- omitted in this route: `diagnostics`, `history`
 - Required behavior:
+- uses shared lifecycle/state handling for start/cancel/progress/complete/failure transitions
+- runtime terminal callbacks and event marshalling use teardown-safe UI dispatch so callback scheduling is dropped safely if the UI host is destroyed
 - execution mode fields validate with actionable `<Location>: <issue>. Fix: <hint>.` errors before plan/run
 - worker count must respect mode/platform bounds (`single_process` requires worker_count=1; multiprocess count must be <= CPU count)
 - max inflight and queue size must remain capacity-safe (`max_inflight_chunks >= worker_count`, `ipc_queue_size >= max_inflight_chunks`)
@@ -354,7 +389,7 @@ Examples:
 - Required regions:
 - header with explicit back navigation to `home`
 - primary route cards for `schema_studio_v2` and `run_center_v2`
-- bridge route cards for `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2`
+- specialist route cards for `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2`
 - Required behavior:
 - additive route only; does not replace classic home routes
 - visual redesign routes remain non-destructive and preserve canonical app behavior
@@ -371,66 +406,89 @@ Examples:
 - Required behavior:
 - section navigation updates selected workspace tab and inspector content
 - route includes explicit navigation to `run_center_v2` and classic home
-- transitions to schema authoring routes (`schema_project`, `schema_project_kit`, `schema_project_legacy`) use dirty-state guarded navigation when unsaved schema changes exist
+- schema section transitions (`project|tables|columns|relationships`) route to `schema_project` only
+- schema transitions use dirty-state guarded navigation based on primary schema route dirty state
+- hidden fallback routes (`schema_project_kit`, `schema_project_legacy`) remain rollback-only and are not primary section targets
 - v2 page is navigation-first and does not change canonical data semantics
 
 ### 4.12 `run_center_v2`
 
-- Purpose: redesign run-focused workflow (config/progress/diagnostics/plan/failures/history).
+- Purpose: redesign run-focused workflow and shared baseline for converged run UX across run screens.
 - Required regions:
 - v2 shell header/action bar
 - left navigation rail
-- run config card
-- progress strip
-- diagnostics/plan/failures/history workspace
+- shared run config card
+- shared run controls strip (capability-gated actions)
+- shared progress strip
+- shared results tab host
 - right inspector panel
 - status strip
+- Capability matrix (enabled actions/tabs):
+- actions: `estimate`, `build plan`, `benchmark`, `start`, `start+fallback`, `cancel`
+- tabs: `diagnostics`, `plan`, `failures`, `history`
 - Required behavior:
 - run config fields map to canonical performance and multiprocessing config parsers/validators
+- uses shared lifecycle/state handling for start/cancel/progress/complete/failure transitions
+- runtime terminal callbacks and event marshalling use teardown-safe UI dispatch so callback scheduling is dropped safely if the UI host is destroyed
 - estimate action computes deterministic workload diagnostics and summary
 - build plan action computes deterministic FK-stage partition plan preview
 - benchmark action runs canonical performance benchmark flow with progress updates and cancellation
 - start action runs canonical multiprocessing orchestration flow (including retry/fallback handling)
+- history tab remains intentionally visible only on `run_center_v2` in the convergence scope
 - config save/load uses JSON payload and rehydrates run-center form state
 
 ### 4.13 `erd_designer_v2`
 
-- Purpose: phased parity bridge route that keeps users in the v2 navigation model before native ERD v2 panel migration.
+- Purpose: native v2 ERD designer route for schema visualization, authoring, and export workflows.
 - Required regions:
 - v2 shell header/action bar
-- left navigation rail (`overview`, `open current tool`)
-- central bridge card describing parity intent + launch action
+- left navigation rail (`erd tool`, `overview`)
+- central native ERD tool workspace (shared canonical behavior contract)
 - right inspector panel
 - status strip
 - Required behavior:
-- launch action navigates to current `erd_designer` route without mutating schema state
-- additive route only; current `erd_designer` remains source of truth for ERD behavior
+- supports schema JSON load/render, visibility toggles, drag table layout, in-page schema authoring/editing, schema JSON export, and SVG/PNG/JPEG export
+- preserves canonical actionable error contract and deterministic rendering behavior
+- additive route only; classic `erd_designer` remains available
 
 ### 4.14 `location_selector_v2`
 
-- Purpose: phased parity bridge route for map/location workflow under v2 navigation.
+- Purpose: native v2 location selector route for map/location workflows.
 - Required regions:
 - v2 shell header/action bar
-- left navigation rail (`overview`, `open current tool`)
-- central bridge card describing parity intent + launch action
+- left navigation rail (`location tool`, `overview`)
+- central native location tool workspace (shared canonical behavior contract)
 - right inspector panel
 - status strip
 - Required behavior:
-- launch action navigates to current `location_selector` route without mutating generated data
-- additive route only; current `location_selector` remains source of truth for map/GeoJSON/sample behavior
+- supports map zoom/pan/click center selection, radius/GeoJSON generation, deterministic sample-point generation, and CSV save
+- preserves canonical actionable error contract and deterministic sample behavior
+- additive route only; classic `location_selector` remains available
 
 ### 4.15 `generation_behaviors_guide_v2`
 
-- Purpose: phased parity bridge route for read-only behavior guidance under v2 navigation.
+- Purpose: native v2 read-only generation behavior guide route.
 - Required regions:
 - v2 shell header/action bar
-- left navigation rail (`overview`, `open current tool`)
-- central bridge card describing parity intent + launch action
+- left navigation rail (`guide`, `overview`)
+- central native guide workspace (shared canonical content)
 - right inspector panel
 - status strip
 - Required behavior:
-- launch action navigates to current `generation_behaviors_guide` route
-- additive route only; current guide content remains canonical and read-only
+- renders canonical read-only behavior guide content without schema mutation controls
+- additive route only; classic `generation_behaviors_guide` remains available
+
+### 4.16 `*_v2_bridge` (rollback fallback routes)
+
+- Purpose: temporary hidden rollback routes retained for one release cycle.
+- Routes:
+- `erd_designer_v2_bridge`
+- `location_selector_v2_bridge`
+- `generation_behaviors_guide_v2_bridge`
+- Required behavior:
+- provide launch-through fallback to corresponding classic production routes
+- not primary navigation targets from `home_v2`
+- removal is allowed after parity and regression gates are stable
 
 ## 5. Library-Agnostic Mapping Guide
 

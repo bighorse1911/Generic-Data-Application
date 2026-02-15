@@ -4,6 +4,8 @@ from collections.abc import Sequence
 import tkinter as tk
 from tkinter import ttk
 
+from src.gui_kit.table_keyboard import install_treeview_keyboard_support
+
 __all__ = ["TableView", "estimate_column_widths", "normalize_rows", "paginate_rows"]
 
 
@@ -115,6 +117,7 @@ class TableView(ttk.Frame):
         self.columnconfigure(0, weight=1)
 
         self.tree = ttk.Treeview(self, show="headings", height=height)
+        install_treeview_keyboard_support(self.tree, include_headers=True)
         self.v_scroll = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
         self.h_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
