@@ -6,15 +6,22 @@ from unittest import mock
 
 from src.erd_designer import (
     ERDEdge,
+    add_column_to_erd_project,
+    add_relationship_to_erd_project,
+    add_table_to_erd_project,
     apply_node_position_overrides,
     build_erd_layout,
     build_erd_svg,
     build_table_detail_lines,
     compute_diagram_size,
     edge_label,
+    export_schema_project_to_json,
     export_erd_file,
     load_project_schema_for_erd,
+    new_erd_schema_project,
     table_for_edge,
+    update_column_in_erd_project,
+    update_table_in_erd_project,
 )
 from src.schema_project_io import save_project_to_json
 from src.schema_project_model import ColumnSpec, ForeignKeySpec, SchemaProject, TableSpec
@@ -48,6 +55,200 @@ class TestERDDesigner(unittest.TestCase):
                 ForeignKeySpec("orders", "customer_id", "customers", "customer_id", 1, 3),
             ],
         )
+
+    def test_new_erd_schema_project_requires_name_and_integer_seed(self):
+        project = new_erd_schema_project(name_value=" draft_schema ", seed_value="42")
+        self.assertEqual(project.name, "draft_schema")
+        self.assertEqual(project.seed, 42)
+        self.assertEqual(project.tables, [])
+        self.assertEqual(project.foreign_keys, [])
+
+        with self.assertRaises(ValueError) as name_ctx:
+            new_erd_schema_project(name_value="", seed_value=1)
+        self.assertIn("ERD Designer / Schema name", str(name_ctx.exception))
+        self.assertIn("Fix:", str(name_ctx.exception))
+
+        with self.assertRaises(ValueError) as seed_ctx:
+            new_erd_schema_project(name_value="ok", seed_value="not_a_seed")
+        self.assertIn("ERD Designer / Schema seed", str(seed_ctx.exception))
+        self.assertIn("Fix:", str(seed_ctx.exception))
+
+    def test_add_table_to_erd_project_adds_unique_table(self):
+        project = new_erd_schema_project(name_value="demo", seed_value=123)
+        updated = add_table_to_erd_project(project, table_name_value="customers", row_count_value="25")
+        self.assertEqual(len(updated.tables), 1)
+        self.assertEqual(updated.tables[0].table_name, "customers")
+        self.assertEqual(updated.tables[0].row_count, 25)
+
+        with self.assertRaises(ValueError) as ctx:
+            add_table_to_erd_project(updated, table_name_value="customers", row_count_value=10)
+        self.assertIn("ERD Designer / Add table / Name", str(ctx.exception))
+        self.assertIn("Fix:", str(ctx.exception))
+
+    def test_add_column_to_erd_project_enforces_dtype_and_pk_rules(self):
+        project = new_erd_schema_project(name_value="demo", seed_value=1)
+        project = add_table_to_erd_project(project, table_name_value="customers")
+        project = add_column_to_erd_project(
+            project,
+            table_name_value="customers",
+            column_name_value="customer_id",
+            dtype_value="int",
+            primary_key=True,
+            nullable=True,
+        )
+        self.assertEqual(project.tables[0].columns[0].name, "customer_id")
+        self.assertTrue(project.tables[0].columns[0].primary_key)
+        self.assertFalse(project.tables[0].columns[0].nullable)
+
+        with self.assertRaises(ValueError) as float_ctx:
+            add_column_to_erd_project(
+                project,
+                table_name_value="customers",
+                column_name_value="amount",
+                dtype_value="float",
+                primary_key=False,
+                nullable=True,
+            )
+        self.assertIn("ERD Designer / Add column / DType", str(float_ctx.exception))
+        self.assertIn("Fix:", str(float_ctx.exception))
+
+        with self.assertRaises(ValueError) as second_pk_ctx:
+            add_column_to_erd_project(
+                project,
+                table_name_value="customers",
+                column_name_value="other_id",
+                dtype_value="int",
+                primary_key=True,
+                nullable=False,
+            )
+        self.assertIn("ERD Designer / Add column / Primary key", str(second_pk_ctx.exception))
+        self.assertIn("Fix:", str(second_pk_ctx.exception))
+
+    def test_add_relationship_to_erd_project_adds_fk_and_rejects_invalid(self):
+        project = new_erd_schema_project(name_value="demo", seed_value=1)
+        project = add_table_to_erd_project(project, table_name_value="customers")
+        project = add_table_to_erd_project(project, table_name_value="orders")
+        project = add_column_to_erd_project(
+            project,
+            table_name_value="customers",
+            column_name_value="customer_id",
+            dtype_value="int",
+            primary_key=True,
+            nullable=False,
+        )
+        project = add_column_to_erd_project(
+            project,
+            table_name_value="orders",
+            column_name_value="order_id",
+            dtype_value="int",
+            primary_key=True,
+            nullable=False,
+        )
+        project = add_column_to_erd_project(
+            project,
+            table_name_value="orders",
+            column_name_value="customer_id",
+            dtype_value="int",
+            primary_key=False,
+            nullable=False,
+        )
+        project = add_relationship_to_erd_project(
+            project,
+            child_table_value="orders",
+            child_column_value="customer_id",
+            parent_table_value="customers",
+            parent_column_value="customer_id",
+            min_children_value=1,
+            max_children_value=4,
+        )
+        self.assertEqual(len(project.foreign_keys), 1)
+        self.assertEqual(project.foreign_keys[0].child_table, "orders")
+
+        with self.assertRaises(ValueError) as duplicate_ctx:
+            add_relationship_to_erd_project(
+                project,
+                child_table_value="orders",
+                child_column_value="customer_id",
+                parent_table_value="customers",
+                parent_column_value="customer_id",
+            )
+        self.assertIn("ERD Designer / Add relationship", str(duplicate_ctx.exception))
+        self.assertIn("Fix:", str(duplicate_ctx.exception))
+
+        invalid_project = add_column_to_erd_project(
+            project,
+            table_name_value="orders",
+            column_name_value="bad_parent_ref",
+            dtype_value="text",
+            primary_key=False,
+            nullable=True,
+        )
+        with self.assertRaises(ValueError) as bad_dtype_ctx:
+            add_relationship_to_erd_project(
+                invalid_project,
+                child_table_value="orders",
+                child_column_value="bad_parent_ref",
+                parent_table_value="customers",
+                parent_column_value="customer_id",
+            )
+        self.assertIn("ERD Designer / Add relationship / Child column", str(bad_dtype_ctx.exception))
+        self.assertIn("Fix:", str(bad_dtype_ctx.exception))
+
+    def test_update_table_in_erd_project_renames_table_and_updates_fks(self):
+        project = update_table_in_erd_project(
+            self._project(),
+            current_table_name_value="customers",
+            new_table_name_value="clients",
+            row_count_value="12",
+        )
+        table_names = [table.table_name for table in project.tables]
+        self.assertIn("clients", table_names)
+        self.assertNotIn("customers", table_names)
+        clients = next(table for table in project.tables if table.table_name == "clients")
+        self.assertEqual(clients.row_count, 12)
+        self.assertEqual(project.foreign_keys[0].parent_table, "clients")
+
+    def test_update_column_in_erd_project_updates_relationship_references(self):
+        project = update_column_in_erd_project(
+            self._project(),
+            table_name_value="customers",
+            current_column_name_value="customer_id",
+            new_column_name_value="client_id",
+            dtype_value="int",
+            primary_key=True,
+            nullable=False,
+        )
+        customers = next(table for table in project.tables if table.table_name == "customers")
+        self.assertEqual(customers.columns[0].name, "client_id")
+        self.assertTrue(customers.columns[0].primary_key)
+        self.assertEqual(project.foreign_keys[0].parent_column, "client_id")
+
+    def test_update_column_in_erd_project_rejects_dropping_referenced_parent_pk(self):
+        with self.assertRaises(ValueError) as ctx:
+            update_column_in_erd_project(
+                self._project(),
+                table_name_value="customers",
+                current_column_name_value="customer_id",
+                new_column_name_value="customer_id",
+                dtype_value="int",
+                primary_key=False,
+                nullable=False,
+            )
+        msg = str(ctx.exception)
+        self.assertIn("ERD Designer / Edit column / Primary key", msg)
+        self.assertIn("Fix:", msg)
+
+    def test_export_schema_project_to_json_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "erd_schema.json"
+            saved = export_schema_project_to_json(
+                project=self._project(),
+                output_path_value=str(output_path),
+            )
+            self.assertEqual(saved, output_path)
+            self.assertTrue(output_path.exists())
+            loaded = load_project_schema_for_erd(str(output_path))
+            self.assertEqual(loaded.name, "erd_demo")
 
     def test_load_project_schema_for_erd_requires_existing_path(self):
         with self.assertRaises(ValueError) as ctx:

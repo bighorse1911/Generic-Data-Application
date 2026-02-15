@@ -1,4 +1,4 @@
-﻿# Generic Data Application - Project Canon
+# Generic Data Application - Project Canon
 
 ## Purpose
 A GUI-driven synthetic data generator capable of producing realistic,
@@ -12,7 +12,10 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - GUI schema designer
 - GUI data generation behavior reference page
 - GUI location selector page (map point/radius -> GeoJSON + deterministic lat/lon samples + CSV save)
-- GUI ERD designer page (schema JSON -> entity relationship diagram with visibility toggles, draggable table layout, and SVG/PNG/JPEG export)
+- GUI ERD designer page (schema JSON -> entity relationship diagram with visibility toggles, draggable table layout, in-page schema/table/column/FK authoring including table/column edit, schema JSON export, and SVG/PNG/JPEG export)
+- GUI performance workbench page (completed: schema load, performance profile validation, workload estimate diagnostics, deterministic FK-stage chunk-plan preview, runtime benchmark/generate flows with cancellation, profile save/load)
+- GUI execution orchestrator page (completed: multiprocess config validation, FK-stage partition planning, worker monitor, retry/fallback controls, run-config save/load, and run-ledger save/load/recovery checks)
+- GUI visual redesign routes (completed: `home_v2`, `schema_studio_v2`, `run_center_v2`, plus parity bridge routes `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2`; includes v2 run-center runtime integration and schema-studio guarded navigation)
 
 ## Architecture
 - Tkinter GUI
@@ -49,8 +52,15 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - `schema_project` production route now uses the modular `gui_kit` composition path.
 - Legacy pre-modular screen remains available as fallback route `schema_project_legacy` during transition.
 - Home screen includes dedicated routes to a read-only generation behavior guide page, the ERD designer page, and the location selector page.
+- Home screen includes a dedicated route to the performance workbench page.
+- Home screen includes a dedicated route to the execution orchestrator page.
+- Home screen includes a dedicated route to the full visual redesign experience (`home_v2`) with additive bridge routes for ERD/location/guide parity.
+- Schema Studio v2 includes dirty-state guarded transitions when opening schema authoring routes.
+- Run Center v2 includes integrated estimate/plan/benchmark/start controls wired to completed performance and multiprocessing runtime modules.
 - ERD designer includes drag-to-reposition table nodes with relationship lines redrawn automatically.
 - ERD designer includes export actions for SVG, PNG, and JPEG diagram outputs with actionable error guidance.
+- ERD designer now supports in-page schema authoring for new schema creation, table creation/edit, column creation/edit (dtype + PK controls), FK relationship creation, and schema JSON export for downstream loading in schema designer routes.
+- ERD designer schema authoring panel now supports collapse/expand and compact shared table/column save flows (blank selection = add new, selected item = edit existing).
 - Column editor supports add, remove, move, and in-place edit of selected columns.
 - Column editor now includes dtype-aware generator filtering, regex pattern presets, and generator params template fill assistance.
 - Kit-based schema screen now includes debounced table/column/FK search controls, token-style editors for business-key column lists, non-blocking toast feedback, JSON params editor dialog, and a discoverable shortcuts help entry point.
@@ -75,6 +85,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - Business-key cardinality supports optional `business_key_unique_count` per table (for example 200 unique keys across 2000 rows).
   - GUI authoring/editing controls for business key, business-key static columns, business-key changing columns, SCD mode, tracked columns, and SCD2 active-period columns are available in both schema designer screens.
 - Supports:
+  - Performance scaling runtime helpers (`src/performance_scaling.py`) for profile validation, deterministic workload diagnostics/planning, benchmark orchestration, and strategy-driven generation/export flows
+  - Multiprocessing runtime helpers (`src/multiprocessing_runtime.py`) for execution-mode validation, deterministic FK-stage partition planning, worker orchestration events, retry/fallback handling, and run-ledger persistence checks
   - CSV sampling
   - CSV row-matched sampling (`sample_csv` optional `match_column` + `match_column_index` with `depends_on` for same-row linkage)
   - Repo-root-relative CSV sample paths in schema JSON (legacy absolute paths normalized when possible)

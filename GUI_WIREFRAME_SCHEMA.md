@@ -47,6 +47,15 @@ ad-hoc assumptions.
 - ERD designer update: Home now routes to `erd_designer` for schema JSON to ERD rendering with relationship/column/dtype visibility toggles.
 - ERD designer update: ERD preview now includes export actions for SVG/PNG/JPEG output with actionable validation errors.
 - ERD designer update: table nodes can now be dragged to reposition the diagram and relationships auto-redraw to match moved nodes.
+- ERD designer update: page now includes in-place schema authoring controls for creating a new schema, adding tables, adding columns (dtype + PK), and adding FK relationships.
+- ERD designer update: page now supports schema JSON export and in-place edit controls for existing tables and columns.
+- ERD designer update: schema authoring panel is collapsible and table/column add+edit controls are compacted into shared save workflows.
+- Performance scaling phase-1 update: Home now routes to `performance_workbench` for schema-linked performance profile validation and workload estimate diagnostics.
+- Performance scaling phase-1B update: `performance_workbench` now includes deterministic FK-stage chunk-plan preview from profile settings.
+- Performance scaling phase-1C update: `performance_workbench` now includes benchmark/generate runtime actions with cancellation and live progress metrics, plus CSV/SQLite strategy output integration.
+- Multiprocessing feature update: Home now routes to `execution_orchestrator` for multiprocess configuration, FK-stage partition planning, worker monitoring, retry/fallback handling, and run-config persistence.
+- Full visual redesign feature completion update: Home now routes to fully integrated v2 screens (`home_v2`, `schema_studio_v2`, `run_center_v2`) plus parity bridge routes (`erd_designer_v2`, `location_selector_v2`, `generation_behaviors_guide_v2`).
+- Full visual redesign core update: `schema_studio_v2` now applies dirty-state guarded navigation for schema route transitions; `run_center_v2` now integrates estimate/plan/benchmark/multiprocess execution flows using canonical runtime modules.
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -160,6 +169,9 @@ Examples:
 - open generation behaviors guide screen
 - open ERD designer screen
 - open location selector screen
+- open performance workbench screen
+- open execution orchestrator screen
+- open visual redesign preview home (`home_v2`)
 
 ### 4.2 `schema_project` (production modular path)
 
@@ -258,7 +270,8 @@ Examples:
 - Purpose: render entity relationship diagrams from schema project JSON input for structure review and communication.
 - Required regions:
 - header with explicit back navigation to `home`
-- schema input controls (path entry + browse + render action + export action)
+- schema input controls (path entry + browse + render action + ERD export action + schema JSON export action)
+- schema authoring controls (new schema name/seed, compact shared add/edit table + column controls, add relationship) with collapse/expand toggle
 - ERD visibility controls (show relationships, show column names, show datatypes)
 - scrollable ERD canvas
 - status line
@@ -268,10 +281,156 @@ Examples:
 - supports display toggles for relationships, columns, and datatypes without mutating schema data
 - supports drag-and-drop table-node repositioning within ERD canvas
 - relationship lines/labels update automatically when connected tables are moved
+- supports in-page schema authoring without leaving `erd_designer`:
+  - create a new empty schema project (name + seed),
+  - add/edit tables with row-count hints via shared save controls (blank table selection adds new; selected table updates existing),
+  - add/edit columns with canonical GUI dtypes and PK/nullability controls via shared save controls (blank column selection adds new; selected column updates existing),
+  - add FK relationships with child/parent mapping and min/max children.
+- supports collapsing schema authoring panel so ERD canvas review can use more vertical space.
+- supports schema project JSON export from the authored ERD state for downstream load in schema designer flows.
 - supports ERD export to `.svg`, `.png`, `.jpg`, and `.jpeg`
 - SVG export uses current moved node positions from the interactive layout
 - raster export surfaces actionable errors if required conversion tooling is unavailable
 - uses actionable `<Location>: <issue>. Fix: <hint>.` error messaging for invalid/missing schema input
+
+### 4.8 `performance_workbench`
+
+- Purpose: completed performance scaling workbench for planning, benchmark, and strategy-driven generation/export.
+- Required regions:
+- header with explicit back navigation to `home`
+- schema input controls (path entry + browse + load schema)
+- workload profile controls (target tables, row overrides JSON, preview row target, output mode)
+- execution strategy controls (`chunk_size_rows`, `preview_page_size`, `sqlite_batch_size`, `csv_buffer_rows`, `fk_cache_mode`, strict deterministic chunking toggle)
+- diagnostics table (`table`, estimated rows/memory/write/time, risk, recommendation)
+- chunk plan preview table (`table`, `stage`, `chunk`, `start_row`, `end_row`, `rows`)
+- run controls (`Run benchmark`, `Generate with strategy`, `Cancel run`)
+- live status panel (progress bar, phase/status text, rows processed, ETA/throughput)
+- profile save/load controls
+- status line
+- Required behavior:
+- profile fields validate with actionable `<Location>: <issue>. Fix: <hint>.` errors before estimate run
+- row override validation enforces existing-table keys and FK minimum-row guardrails
+- strict deterministic chunking cannot be disabled while deterministic generation contract is required
+- estimate action computes deterministic per-table diagnostics from loaded schema + profile
+- diagnostics table updates in-place and status line reports aggregated summary
+- chunk plan action computes deterministic FK-stage-aware table chunk ranges and renders chunk table preview
+- chunk plan action rejects cyclic selected-table FK dependency graphs with actionable fix-hint errors
+- run benchmark action emits live progress updates while evaluating chunk plan execution flow
+- generate with strategy action runs deterministic generation using selected profile and supports output modes (`preview|csv|sqlite|all`)
+- cancel action signals runtime cancellation and returns UI to ready state without blocking the main thread
+- CSV strategy mode writes one CSV per selected/required table using buffered row writes
+- SQLite strategy mode creates tables and inserts rows using configured batch size
+- profile save/load uses JSON object payload and re-validates loaded values before apply
+
+### 4.9 `execution_orchestrator`
+
+- Purpose: completed multiprocessing execution planner/runner for staged partition monitoring with retry/fallback controls.
+- Required regions:
+- header with explicit back navigation to `home`
+- schema input controls (path entry + browse + load schema)
+- workload profile controls (target tables, row overrides JSON, preview/output/chunking fields reused from performance profile)
+- execution mode controls (`mode`, `worker_count`, `max_inflight_chunks`, `ipc_queue_size`, `retry_limit`)
+- run controls (`Build plan`, `Start`, `Start with fallback`, `Cancel`)
+- live status panel (progress bar, phase/status text, rows processed, ETA/throughput)
+- partition plan table (`table`, `partition_id`, `row range`, `stage`, `assigned worker`, `status`)
+- worker monitor table (`worker`, current table/partition, rows, throughput, memory, heartbeat, state)
+- failure table (`partition_id`, `error`, `retry_count`, `action`)
+- run-config save/load controls
+- status line
+- Required behavior:
+- execution mode fields validate with actionable `<Location>: <issue>. Fix: <hint>.` errors before plan/run
+- worker count must respect mode/platform bounds (`single_process` requires worker_count=1; multiprocess count must be <= CPU count)
+- max inflight and queue size must remain capacity-safe (`max_inflight_chunks >= worker_count`, `ipc_queue_size >= max_inflight_chunks`)
+- build plan action computes deterministic FK-stage partition assignments and worker allocation
+- start action executes staged partition workers and emits live progress events to status/monitor panels
+- retry behavior uses configured `retry_limit`; failures are listed in failure panel with actionable recovery hints
+- start-with-fallback action switches to deterministic single-process strategy run if multiprocess partition execution exhausts retries
+- cancel action requests cancellation and returns UI to ready state without blocking the main thread
+- run-config save/load uses JSON object payload and re-validates loaded values before apply
+
+### 4.10 `home_v2`
+
+- Purpose: entry screen for the completed visual redesign route set while preserving classic-home access.
+- Required regions:
+- header with explicit back navigation to `home`
+- primary route cards for `schema_studio_v2` and `run_center_v2`
+- bridge route cards for `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2`
+- Required behavior:
+- additive route only; does not replace classic home routes
+- visual redesign routes remain non-destructive and preserve canonical app behavior
+
+### 4.11 `schema_studio_v2`
+
+- Purpose: phased redesign shell for schema authoring workflow (`project|tables|columns|relationships|run` sections).
+- Required regions:
+- v2 shell header/action bar
+- left navigation rail
+- central workspace tabs
+- right inspector panel
+- bottom status strip
+- Required behavior:
+- section navigation updates selected workspace tab and inspector content
+- route includes explicit navigation to `run_center_v2` and classic home
+- transitions to schema authoring routes (`schema_project`, `schema_project_kit`, `schema_project_legacy`) use dirty-state guarded navigation when unsaved schema changes exist
+- v2 page is navigation-first and does not change canonical data semantics
+
+### 4.12 `run_center_v2`
+
+- Purpose: redesign run-focused workflow (config/progress/diagnostics/plan/failures/history).
+- Required regions:
+- v2 shell header/action bar
+- left navigation rail
+- run config card
+- progress strip
+- diagnostics/plan/failures/history workspace
+- right inspector panel
+- status strip
+- Required behavior:
+- run config fields map to canonical performance and multiprocessing config parsers/validators
+- estimate action computes deterministic workload diagnostics and summary
+- build plan action computes deterministic FK-stage partition plan preview
+- benchmark action runs canonical performance benchmark flow with progress updates and cancellation
+- start action runs canonical multiprocessing orchestration flow (including retry/fallback handling)
+- config save/load uses JSON payload and rehydrates run-center form state
+
+### 4.13 `erd_designer_v2`
+
+- Purpose: phased parity bridge route that keeps users in the v2 navigation model before native ERD v2 panel migration.
+- Required regions:
+- v2 shell header/action bar
+- left navigation rail (`overview`, `open current tool`)
+- central bridge card describing parity intent + launch action
+- right inspector panel
+- status strip
+- Required behavior:
+- launch action navigates to current `erd_designer` route without mutating schema state
+- additive route only; current `erd_designer` remains source of truth for ERD behavior
+
+### 4.14 `location_selector_v2`
+
+- Purpose: phased parity bridge route for map/location workflow under v2 navigation.
+- Required regions:
+- v2 shell header/action bar
+- left navigation rail (`overview`, `open current tool`)
+- central bridge card describing parity intent + launch action
+- right inspector panel
+- status strip
+- Required behavior:
+- launch action navigates to current `location_selector` route without mutating generated data
+- additive route only; current `location_selector` remains source of truth for map/GeoJSON/sample behavior
+
+### 4.15 `generation_behaviors_guide_v2`
+
+- Purpose: phased parity bridge route for read-only behavior guidance under v2 navigation.
+- Required regions:
+- v2 shell header/action bar
+- left navigation rail (`overview`, `open current tool`)
+- central bridge card describing parity intent + launch action
+- right inspector panel
+- status strip
+- Required behavior:
+- launch action navigates to current `generation_behaviors_guide` route
+- additive route only; current guide content remains canonical and read-only
 
 ## 5. Library-Agnostic Mapping Guide
 

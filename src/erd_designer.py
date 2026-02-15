@@ -7,12 +7,809 @@ import subprocess
 import tempfile
 from typing import Any
 
-from src.schema_project_io import load_project_from_json
-from src.schema_project_model import ForeignKeySpec, SchemaProject, TableSpec
+from src.schema_project_io import load_project_from_json, save_project_to_json
+from src.schema_project_model import ColumnSpec, ForeignKeySpec, SchemaProject, TableSpec
 
 
 def _erd_error(field: str, issue: str, hint: str) -> str:
     return f"ERD Designer / {field}: {issue}. Fix: {hint}."
+
+
+ERD_AUTHORING_DTYPES: tuple[str, ...] = (
+    "int",
+    "decimal",
+    "text",
+    "bool",
+    "date",
+    "datetime",
+    "bytes",
+)
+
+
+def _parse_non_empty_name(value: Any, *, field: str, hint: str) -> str:
+    if not isinstance(value, str) or value.strip() == "":
+        raise ValueError(_erd_error(field, "value is required", hint))
+    return value.strip()
+
+
+def _parse_positive_int(value: Any, *, field: str, hint: str, allow_zero: bool = False) -> int:
+    if isinstance(value, bool):
+        raise ValueError(_erd_error(field, "must be an integer", hint))
+    try:
+        out = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(_erd_error(field, "must be an integer", hint)) from exc
+    if allow_zero:
+        if out < 0:
+            raise ValueError(_erd_error(field, "must be >= 0", hint))
+    elif out <= 0:
+        raise ValueError(_erd_error(field, "must be > 0", hint))
+    return out
+
+
+def _parse_seed(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(
+            _erd_error(
+                "Schema seed",
+                "must be an integer",
+                "enter a whole-number seed value (for example 12345)",
+            )
+        )
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            _erd_error(
+                "Schema seed",
+                "must be an integer",
+                "enter a whole-number seed value (for example 12345)",
+            )
+        ) from exc
+
+
+def _require_project(project: Any) -> SchemaProject:
+    if isinstance(project, SchemaProject):
+        return project
+    raise ValueError(
+        _erd_error(
+            "Schema state",
+            "schema project is not initialized",
+            "create a new schema or load an existing schema before editing",
+        )
+    )
+
+
+def _parse_authoring_dtype(
+    dtype_value: Any,
+    *,
+    field: str,
+) -> str:
+    if not isinstance(dtype_value, str) or dtype_value.strip() == "":
+        raise ValueError(
+            _erd_error(
+                field,
+                "dtype is required",
+                f"choose one of: {', '.join(ERD_AUTHORING_DTYPES)}",
+            )
+        )
+    dtype = dtype_value.strip().lower()
+    if dtype == "float":
+        raise ValueError(
+            _erd_error(
+                field,
+                "dtype 'float' is deprecated for new GUI columns",
+                "choose dtype='decimal' for new numeric columns",
+            )
+        )
+    if dtype not in ERD_AUTHORING_DTYPES:
+        raise ValueError(
+            _erd_error(
+                field,
+                f"unsupported dtype '{dtype}'",
+                f"choose one of: {', '.join(ERD_AUTHORING_DTYPES)}",
+            )
+        )
+    return dtype
+
+
+def new_erd_schema_project(
+    *,
+    name_value: Any,
+    seed_value: Any = 12345,
+) -> SchemaProject:
+    name = _parse_non_empty_name(
+        name_value,
+        field="Schema name",
+        hint="enter a non-empty schema project name",
+    )
+    seed = _parse_seed(seed_value)
+    return SchemaProject(name=name, seed=seed, tables=[], foreign_keys=[])
+
+
+def add_table_to_erd_project(
+    project: Any,
+    *,
+    table_name_value: Any,
+    row_count_value: Any = 100,
+) -> SchemaProject:
+    current = _require_project(project)
+    table_name = _parse_non_empty_name(
+        table_name_value,
+        field="Add table / Name",
+        hint="enter a non-empty table name",
+    )
+    if any(t.table_name == table_name for t in current.tables):
+        raise ValueError(
+            _erd_error(
+                "Add table / Name",
+                f"table '{table_name}' already exists",
+                "choose a unique table name",
+            )
+        )
+    row_count = _parse_positive_int(
+        row_count_value,
+        field="Add table / Row count",
+        hint="enter a positive integer row count",
+    )
+    new_table = TableSpec(table_name=table_name, row_count=row_count, columns=[])
+    return SchemaProject(
+        name=current.name,
+        seed=current.seed,
+        tables=[*current.tables, new_table],
+        foreign_keys=list(current.foreign_keys),
+    )
+
+
+def add_column_to_erd_project(
+    project: Any,
+    *,
+    table_name_value: Any,
+    column_name_value: Any,
+    dtype_value: Any,
+    primary_key: bool = False,
+    nullable: bool = True,
+) -> SchemaProject:
+    current = _require_project(project)
+    table_name = _parse_non_empty_name(
+        table_name_value,
+        field="Add column / Table",
+        hint="choose the table where the column should be added",
+    )
+    column_name = _parse_non_empty_name(
+        column_name_value,
+        field="Add column / Name",
+        hint="enter a non-empty column name",
+    )
+
+    table: TableSpec | None = None
+    for candidate in current.tables:
+        if candidate.table_name == table_name:
+            table = candidate
+            break
+    if table is None:
+        raise ValueError(
+            _erd_error(
+                "Add column / Table",
+                f"table '{table_name}' was not found",
+                "choose an existing table before adding columns",
+            )
+        )
+    if any(c.name == column_name for c in table.columns):
+        raise ValueError(
+            _erd_error(
+                "Add column / Name",
+                f"column '{column_name}' already exists on table '{table_name}'",
+                "choose a unique column name for this table",
+            )
+        )
+
+    dtype = _parse_authoring_dtype(dtype_value, field="Add column / DType")
+
+    wants_pk = bool(primary_key)
+    nullable_value = bool(nullable)
+    if wants_pk and dtype != "int":
+        raise ValueError(
+            _erd_error(
+                "Add column / Primary key",
+                f"primary key column '{column_name}' must be dtype=int",
+                "set dtype='int' or disable the Primary key option",
+            )
+        )
+    existing_pk = next((c for c in table.columns if c.primary_key), None)
+    if wants_pk and existing_pk is not None:
+        raise ValueError(
+            _erd_error(
+                "Add column / Primary key",
+                f"table '{table_name}' already has primary key column '{existing_pk.name}'",
+                "add this column as non-primary key or remove the existing PK first",
+            )
+        )
+    if wants_pk:
+        nullable_value = False
+
+    next_columns = [
+        *table.columns,
+        ColumnSpec(
+            name=column_name,
+            dtype=dtype,
+            nullable=nullable_value,
+            primary_key=wants_pk,
+        ),
+    ]
+
+    next_tables: list[TableSpec] = []
+    for candidate in current.tables:
+        if candidate.table_name == table_name:
+            next_tables.append(
+                TableSpec(
+                    table_name=candidate.table_name,
+                    columns=next_columns,
+                    row_count=candidate.row_count,
+                    business_key=candidate.business_key,
+                    business_key_unique_count=candidate.business_key_unique_count,
+                    business_key_static_columns=candidate.business_key_static_columns,
+                    business_key_changing_columns=candidate.business_key_changing_columns,
+                    scd_mode=candidate.scd_mode,
+                    scd_tracked_columns=candidate.scd_tracked_columns,
+                    scd_active_from_column=candidate.scd_active_from_column,
+                    scd_active_to_column=candidate.scd_active_to_column,
+                )
+            )
+        else:
+            next_tables.append(candidate)
+
+    return SchemaProject(
+        name=current.name,
+        seed=current.seed,
+        tables=next_tables,
+        foreign_keys=list(current.foreign_keys),
+    )
+
+
+def add_relationship_to_erd_project(
+    project: Any,
+    *,
+    child_table_value: Any,
+    child_column_value: Any,
+    parent_table_value: Any,
+    parent_column_value: Any,
+    min_children_value: Any = 1,
+    max_children_value: Any = 3,
+) -> SchemaProject:
+    current = _require_project(project)
+    child_table_name = _parse_non_empty_name(
+        child_table_value,
+        field="Add relationship / Child table",
+        hint="choose an existing child table",
+    )
+    child_column_name = _parse_non_empty_name(
+        child_column_value,
+        field="Add relationship / Child column",
+        hint="choose an existing child column",
+    )
+    parent_table_name = _parse_non_empty_name(
+        parent_table_value,
+        field="Add relationship / Parent table",
+        hint="choose an existing parent table",
+    )
+    parent_column_name = _parse_non_empty_name(
+        parent_column_value,
+        field="Add relationship / Parent column",
+        hint="choose an existing parent column",
+    )
+
+    table_map = {table.table_name: table for table in current.tables}
+    child_table = table_map.get(child_table_name)
+    if child_table is None:
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Child table",
+                f"table '{child_table_name}' was not found",
+                "choose an existing child table",
+            )
+        )
+    parent_table = table_map.get(parent_table_name)
+    if parent_table is None:
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Parent table",
+                f"table '{parent_table_name}' was not found",
+                "choose an existing parent table",
+            )
+        )
+
+    child_cols = {c.name: c for c in child_table.columns}
+    parent_cols = {c.name: c for c in parent_table.columns}
+    child_col = child_cols.get(child_column_name)
+    if child_col is None:
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Child column",
+                f"column '{child_column_name}' was not found on table '{child_table_name}'",
+                "choose an existing child column",
+            )
+        )
+    parent_col = parent_cols.get(parent_column_name)
+    if parent_col is None:
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Parent column",
+                f"column '{parent_column_name}' was not found on table '{parent_table_name}'",
+                "choose an existing parent column",
+            )
+        )
+    if child_col.dtype != "int":
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Child column",
+                f"column '{child_table_name}.{child_column_name}' must be dtype=int for FK",
+                "change the child column dtype to int or choose another column",
+            )
+        )
+    if child_col.primary_key:
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Child column",
+                f"column '{child_table_name}.{child_column_name}' is a primary key",
+                "choose a non-primary-key child column for FK relationships",
+            )
+        )
+    if not parent_col.primary_key:
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Parent column",
+                f"column '{parent_table_name}.{parent_column_name}' must be primary key",
+                "choose the parent table primary-key column",
+            )
+        )
+
+    min_children = _parse_positive_int(
+        min_children_value,
+        field="Add relationship / Min children",
+        hint="enter a positive integer min_children value",
+    )
+    max_children = _parse_positive_int(
+        max_children_value,
+        field="Add relationship / Max children",
+        hint="enter a positive integer max_children value",
+    )
+    if min_children > max_children:
+        raise ValueError(
+            _erd_error(
+                "Add relationship / Child cardinality",
+                "min_children cannot exceed max_children",
+                "set min_children <= max_children",
+            )
+        )
+
+    for fk in current.foreign_keys:
+        if (
+            fk.child_table == child_table_name
+            and fk.child_column == child_column_name
+            and fk.parent_table == parent_table_name
+            and fk.parent_column == parent_column_name
+        ):
+            raise ValueError(
+                _erd_error(
+                    "Add relationship",
+                    (
+                        "relationship "
+                        f"'{child_table_name}.{child_column_name} -> "
+                        f"{parent_table_name}.{parent_column_name}' already exists"
+                    ),
+                    "remove the duplicate or choose different table/column mapping",
+                )
+            )
+
+    next_fk = ForeignKeySpec(
+        child_table=child_table_name,
+        child_column=child_column_name,
+        parent_table=parent_table_name,
+        parent_column=parent_column_name,
+        min_children=min_children,
+        max_children=max_children,
+    )
+    return SchemaProject(
+        name=current.name,
+        seed=current.seed,
+        tables=list(current.tables),
+        foreign_keys=[*current.foreign_keys, next_fk],
+    )
+
+
+def _replace_name_in_list(values: list[str] | None, *, old_name: str, new_name: str) -> list[str] | None:
+    if values is None:
+        return None
+    return [new_name if value == old_name else value for value in values]
+
+
+def _replace_name_in_optional_value(value: str | None, *, old_name: str, new_name: str) -> str | None:
+    if value is None:
+        return None
+    return new_name if value == old_name else value
+
+
+def update_table_in_erd_project(
+    project: Any,
+    *,
+    current_table_name_value: Any,
+    new_table_name_value: Any,
+    row_count_value: Any,
+) -> SchemaProject:
+    current = _require_project(project)
+    current_table_name = _parse_non_empty_name(
+        current_table_name_value,
+        field="Edit table / Current table",
+        hint="choose an existing table to edit",
+    )
+    new_table_name = _parse_non_empty_name(
+        new_table_name_value,
+        field="Edit table / New name",
+        hint="enter a non-empty table name",
+    )
+    row_count = _parse_positive_int(
+        row_count_value,
+        field="Edit table / Row count",
+        hint="enter a positive integer row count",
+    )
+
+    target_table: TableSpec | None = None
+    for table in current.tables:
+        if table.table_name == current_table_name:
+            target_table = table
+            break
+    if target_table is None:
+        raise ValueError(
+            _erd_error(
+                "Edit table / Current table",
+                f"table '{current_table_name}' was not found",
+                "choose an existing table to edit",
+            )
+        )
+
+    if new_table_name != current_table_name:
+        if any(table.table_name == new_table_name for table in current.tables):
+            raise ValueError(
+                _erd_error(
+                    "Edit table / New name",
+                    f"table '{new_table_name}' already exists",
+                    "choose a unique table name",
+                )
+            )
+
+    next_tables: list[TableSpec] = []
+    for table in current.tables:
+        if table.table_name != current_table_name:
+            next_tables.append(table)
+            continue
+        next_tables.append(
+            TableSpec(
+                table_name=new_table_name,
+                columns=list(table.columns),
+                row_count=row_count,
+                business_key=table.business_key,
+                business_key_unique_count=table.business_key_unique_count,
+                business_key_static_columns=table.business_key_static_columns,
+                business_key_changing_columns=table.business_key_changing_columns,
+                scd_mode=table.scd_mode,
+                scd_tracked_columns=table.scd_tracked_columns,
+                scd_active_from_column=table.scd_active_from_column,
+                scd_active_to_column=table.scd_active_to_column,
+            )
+        )
+
+    next_foreign_keys: list[ForeignKeySpec] = []
+    for fk in current.foreign_keys:
+        next_foreign_keys.append(
+            ForeignKeySpec(
+                child_table=new_table_name if fk.child_table == current_table_name else fk.child_table,
+                child_column=fk.child_column,
+                parent_table=new_table_name if fk.parent_table == current_table_name else fk.parent_table,
+                parent_column=fk.parent_column,
+                min_children=fk.min_children,
+                max_children=fk.max_children,
+            )
+        )
+
+    return SchemaProject(
+        name=current.name,
+        seed=current.seed,
+        tables=next_tables,
+        foreign_keys=next_foreign_keys,
+    )
+
+
+def update_column_in_erd_project(
+    project: Any,
+    *,
+    table_name_value: Any,
+    current_column_name_value: Any,
+    new_column_name_value: Any,
+    dtype_value: Any,
+    primary_key: bool,
+    nullable: bool,
+) -> SchemaProject:
+    current = _require_project(project)
+    table_name = _parse_non_empty_name(
+        table_name_value,
+        field="Edit column / Table",
+        hint="choose an existing table",
+    )
+    current_column_name = _parse_non_empty_name(
+        current_column_name_value,
+        field="Edit column / Current column",
+        hint="choose an existing column",
+    )
+    new_column_name = _parse_non_empty_name(
+        new_column_name_value,
+        field="Edit column / Name",
+        hint="enter a non-empty column name",
+    )
+    dtype = _parse_authoring_dtype(dtype_value, field="Edit column / DType")
+
+    target_table: TableSpec | None = None
+    for table in current.tables:
+        if table.table_name == table_name:
+            target_table = table
+            break
+    if target_table is None:
+        raise ValueError(
+            _erd_error(
+                "Edit column / Table",
+                f"table '{table_name}' was not found",
+                "choose an existing table",
+            )
+        )
+
+    current_column: ColumnSpec | None = None
+    for column in target_table.columns:
+        if column.name == current_column_name:
+            current_column = column
+            break
+    if current_column is None:
+        raise ValueError(
+            _erd_error(
+                "Edit column / Current column",
+                f"column '{current_column_name}' was not found on table '{table_name}'",
+                "choose an existing column",
+            )
+        )
+
+    if new_column_name != current_column_name:
+        if any(c.name == new_column_name for c in target_table.columns):
+            raise ValueError(
+                _erd_error(
+                    "Edit column / Name",
+                    f"column '{new_column_name}' already exists on table '{table_name}'",
+                    "choose a unique column name for this table",
+                )
+            )
+
+    wants_pk = bool(primary_key)
+    nullable_value = bool(nullable)
+    if wants_pk and dtype != "int":
+        raise ValueError(
+            _erd_error(
+                "Edit column / Primary key",
+                f"primary key column '{new_column_name}' must be dtype=int",
+                "set dtype='int' or disable the Primary key option",
+            )
+        )
+    other_pk = next(
+        (c for c in target_table.columns if c.primary_key and c.name != current_column_name),
+        None,
+    )
+    if wants_pk and other_pk is not None:
+        raise ValueError(
+            _erd_error(
+                "Edit column / Primary key",
+                f"table '{table_name}' already has primary key column '{other_pk.name}'",
+                "disable Primary key on this edit or change the existing PK first",
+            )
+        )
+    if wants_pk:
+        nullable_value = False
+
+    child_fk_refs = [
+        fk
+        for fk in current.foreign_keys
+        if fk.child_table == table_name and fk.child_column == current_column_name
+    ]
+    parent_fk_refs = [
+        fk
+        for fk in current.foreign_keys
+        if fk.parent_table == table_name and fk.parent_column == current_column_name
+    ]
+
+    if child_fk_refs and dtype != "int":
+        raise ValueError(
+            _erd_error(
+                "Edit column / DType",
+                f"column '{table_name}.{current_column_name}' is used as an FK child column",
+                "keep dtype='int' for FK child columns or remove the relationship first",
+            )
+        )
+    if child_fk_refs and wants_pk:
+        raise ValueError(
+            _erd_error(
+                "Edit column / Primary key",
+                f"column '{table_name}.{current_column_name}' is used as an FK child column",
+                "child FK columns cannot be primary keys; disable Primary key for this column",
+            )
+        )
+    if parent_fk_refs and not wants_pk:
+        raise ValueError(
+            _erd_error(
+                "Edit column / Primary key",
+                f"column '{table_name}.{current_column_name}' is referenced by FK relationships",
+                "keep this column as primary key or remove dependent relationships first",
+            )
+        )
+
+    next_columns: list[ColumnSpec] = []
+    for column in target_table.columns:
+        if column.name == current_column_name:
+            next_columns.append(
+                ColumnSpec(
+                    name=new_column_name,
+                    dtype=dtype,
+                    nullable=nullable_value,
+                    primary_key=wants_pk,
+                    unique=column.unique,
+                    min_value=column.min_value,
+                    max_value=column.max_value,
+                    choices=(list(column.choices) if column.choices is not None else None),
+                    pattern=column.pattern,
+                    generator=column.generator,
+                    params=(dict(column.params) if isinstance(column.params, dict) else column.params),
+                    depends_on=(list(column.depends_on) if column.depends_on is not None else None),
+                )
+            )
+            continue
+
+        next_depends_on = _replace_name_in_list(
+            column.depends_on,
+            old_name=current_column_name,
+            new_name=new_column_name,
+        )
+        next_columns.append(
+            ColumnSpec(
+                name=column.name,
+                dtype=column.dtype,
+                nullable=column.nullable,
+                primary_key=column.primary_key,
+                unique=column.unique,
+                min_value=column.min_value,
+                max_value=column.max_value,
+                choices=(list(column.choices) if column.choices is not None else None),
+                pattern=column.pattern,
+                generator=column.generator,
+                params=(dict(column.params) if isinstance(column.params, dict) else column.params),
+                depends_on=next_depends_on,
+            )
+        )
+
+    next_tables: list[TableSpec] = []
+    for table in current.tables:
+        if table.table_name != table_name:
+            next_tables.append(table)
+            continue
+        next_tables.append(
+            TableSpec(
+                table_name=table.table_name,
+                columns=next_columns,
+                row_count=table.row_count,
+                business_key=_replace_name_in_list(
+                    table.business_key,
+                    old_name=current_column_name,
+                    new_name=new_column_name,
+                ),
+                business_key_unique_count=table.business_key_unique_count,
+                business_key_static_columns=_replace_name_in_list(
+                    table.business_key_static_columns,
+                    old_name=current_column_name,
+                    new_name=new_column_name,
+                ),
+                business_key_changing_columns=_replace_name_in_list(
+                    table.business_key_changing_columns,
+                    old_name=current_column_name,
+                    new_name=new_column_name,
+                ),
+                scd_mode=table.scd_mode,
+                scd_tracked_columns=_replace_name_in_list(
+                    table.scd_tracked_columns,
+                    old_name=current_column_name,
+                    new_name=new_column_name,
+                ),
+                scd_active_from_column=_replace_name_in_optional_value(
+                    table.scd_active_from_column,
+                    old_name=current_column_name,
+                    new_name=new_column_name,
+                ),
+                scd_active_to_column=_replace_name_in_optional_value(
+                    table.scd_active_to_column,
+                    old_name=current_column_name,
+                    new_name=new_column_name,
+                ),
+            )
+        )
+
+    next_foreign_keys: list[ForeignKeySpec] = []
+    for fk in current.foreign_keys:
+        next_foreign_keys.append(
+            ForeignKeySpec(
+                child_table=fk.child_table,
+                child_column=(
+                    new_column_name
+                    if fk.child_table == table_name and fk.child_column == current_column_name
+                    else fk.child_column
+                ),
+                parent_table=fk.parent_table,
+                parent_column=(
+                    new_column_name
+                    if fk.parent_table == table_name and fk.parent_column == current_column_name
+                    else fk.parent_column
+                ),
+                min_children=fk.min_children,
+                max_children=fk.max_children,
+            )
+        )
+
+    return SchemaProject(
+        name=current.name,
+        seed=current.seed,
+        tables=next_tables,
+        foreign_keys=next_foreign_keys,
+    )
+
+
+def export_schema_project_to_json(
+    *,
+    project: Any,
+    output_path_value: Any,
+) -> Path:
+    current = _require_project(project)
+
+    if not isinstance(output_path_value, str) or output_path_value.strip() == "":
+        raise ValueError(
+            _erd_error(
+                "Schema export path",
+                "output path is required",
+                "choose a destination .json file path",
+            )
+        )
+
+    output_path = Path(output_path_value.strip())
+    if output_path.suffix.lower() != ".json":
+        raise ValueError(
+            _erd_error(
+                "Schema export path",
+                f"unsupported extension '{output_path.suffix or '<none>'}'",
+                "use a .json output file extension",
+            )
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        save_project_to_json(current, str(output_path))
+    except ValueError as exc:
+        raise ValueError(
+            _erd_error(
+                "Schema export",
+                f"schema is invalid for export ({exc})",
+                "fix schema validation issues and retry export",
+            )
+        ) from exc
+    except OSError as exc:
+        raise ValueError(
+            _erd_error(
+                "Schema export",
+                f"failed to write schema JSON ({exc})",
+                "check destination path permissions and retry",
+            )
+        ) from exc
+    return output_path
 
 
 @dataclass(frozen=True)

@@ -9,9 +9,19 @@ from src.generator_project import generate_project_rows
 from src.gui_home import (
     App,
     ERDDesignerScreen,
+    ExecutionOrchestratorScreen,
     GENERATION_BEHAVIOR_GUIDE,
     GenerationBehaviorsGuideScreen,
     LocationSelectorScreen,
+    PerformanceWorkbenchScreen,
+)
+from src.gui_v2_redesign import (
+    ERDDesignerV2Screen,
+    GenerationBehaviorsGuideV2Screen,
+    HomeV2Screen,
+    LocationSelectorV2Screen,
+    RunCenterV2Screen,
+    SchemaStudioV2Screen,
 )
 from src.gui_schema_project import (
     DTYPES,
@@ -329,10 +339,52 @@ class TestInvariants(unittest.TestCase):
             self.assertIn("generation_behaviors_guide", app.screens)
             self.assertIn("erd_designer", app.screens)
             self.assertIn("location_selector", app.screens)
+            self.assertIn("performance_workbench", app.screens)
+            self.assertIn("execution_orchestrator", app.screens)
+            self.assertIn("home_v2", app.screens)
+            self.assertIn("schema_studio_v2", app.screens)
+            self.assertIn("run_center_v2", app.screens)
+            self.assertIn("erd_designer_v2", app.screens)
+            self.assertIn("location_selector_v2", app.screens)
+            self.assertIn("generation_behaviors_guide_v2", app.screens)
             self.assertIsInstance(app.screens["schema_project"], SchemaProjectDesignerKitScreen)
             self.assertIsInstance(app.screens["generation_behaviors_guide"], GenerationBehaviorsGuideScreen)
             self.assertIsInstance(app.screens["erd_designer"], ERDDesignerScreen)
             self.assertIsInstance(app.screens["location_selector"], LocationSelectorScreen)
+            self.assertIsInstance(app.screens["performance_workbench"], PerformanceWorkbenchScreen)
+            self.assertIsInstance(app.screens["execution_orchestrator"], ExecutionOrchestratorScreen)
+            self.assertIsInstance(app.screens["home_v2"], HomeV2Screen)
+            self.assertIsInstance(app.screens["schema_studio_v2"], SchemaStudioV2Screen)
+            self.assertIsInstance(app.screens["run_center_v2"], RunCenterV2Screen)
+            self.assertIsInstance(app.screens["erd_designer_v2"], ERDDesignerV2Screen)
+            self.assertIsInstance(app.screens["location_selector_v2"], LocationSelectorV2Screen)
+            self.assertIsInstance(
+                app.screens["generation_behaviors_guide_v2"],
+                GenerationBehaviorsGuideV2Screen,
+            )
+            self.assertTrue(hasattr(app.screens["performance_workbench"], "diagnostics_tree"))
+            self.assertTrue(hasattr(app.screens["performance_workbench"], "chunk_plan_tree"))
+            self.assertTrue(hasattr(app.screens["performance_workbench"], "run_benchmark_btn"))
+            self.assertTrue(hasattr(app.screens["performance_workbench"], "run_generate_btn"))
+            self.assertTrue(hasattr(app.screens["performance_workbench"], "cancel_run_btn"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator"], "partition_tree"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator"], "worker_tree"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator"], "failures_tree"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator"], "start_run_btn"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator"], "start_fallback_btn"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator"], "cancel_run_btn"))
+            self.assertTrue(hasattr(app.screens["schema_studio_v2"], "shell"))
+            self.assertTrue(hasattr(app.screens["schema_studio_v2"], "section_tabs"))
+            self.assertTrue(hasattr(app.screens["run_center_v2"], "progress"))
+            self.assertTrue(hasattr(app.screens["run_center_v2"], "preview_table"))
+            self.assertTrue(hasattr(app.screens["run_center_v2"], "diagnostics_tree"))
+            self.assertTrue(hasattr(app.screens["run_center_v2"], "estimate_btn"))
+            self.assertTrue(hasattr(app.screens["run_center_v2"], "run_benchmark_btn"))
+            self.assertTrue(hasattr(app.screens["run_center_v2"], "start_run_btn"))
+            self.assertTrue(hasattr(app.screens["run_center_v2"], "cancel_run_btn"))
+            self.assertTrue(hasattr(app.screens["erd_designer_v2"], "launch_btn"))
+            self.assertTrue(hasattr(app.screens["location_selector_v2"], "launch_btn"))
+            self.assertTrue(hasattr(app.screens["generation_behaviors_guide_v2"], "launch_btn"))
 
             guide_titles = {entry[0] for entry in GENERATION_BEHAVIOR_GUIDE}
             self.assertIn("sample_csv generator", guide_titles)
@@ -345,7 +397,112 @@ class TestInvariants(unittest.TestCase):
             app.show_screen("generation_behaviors_guide")
             app.show_screen("erd_designer")
             app.show_screen("location_selector")
+            app.show_screen("performance_workbench")
+            app.show_screen("execution_orchestrator")
+            app.show_screen("home_v2")
+            app.show_screen("schema_studio_v2")
+            app.show_screen("run_center_v2")
+            app.show_screen("erd_designer_v2")
+            app.show_screen("location_selector_v2")
+            app.show_screen("generation_behaviors_guide_v2")
             app.show_screen("home")
+
+            erd_screen = app.screens["erd_designer"]
+            erd_screen.schema_name_var.set("erd_gui_test")
+            erd_screen.schema_seed_var.set("77")
+            erd_screen._create_new_schema()
+            self.assertIsNotNone(erd_screen.project)
+            self.assertEqual(erd_screen.project.name, "erd_gui_test")
+
+            self.assertFalse(erd_screen._authoring_collapsed)
+            erd_screen._toggle_authoring_panel()
+            self.assertTrue(erd_screen._authoring_collapsed)
+            erd_screen._toggle_authoring_panel()
+            self.assertFalse(erd_screen._authoring_collapsed)
+
+            erd_screen.edit_table_current_var.set("")
+            erd_screen.edit_table_name_var.set("shared_customers")
+            erd_screen.edit_table_row_count_var.set("7")
+            erd_screen._save_table_shared()
+            self.assertTrue(any(t.table_name == "shared_customers" for t in erd_screen.project.tables))
+
+            erd_screen.edit_column_table_var.set("shared_customers")
+            erd_screen._on_edit_column_table_changed()
+            erd_screen.edit_column_current_var.set("")
+            erd_screen.edit_column_name_var.set("shared_customer_id")
+            erd_screen.edit_column_dtype_var.set("int")
+            erd_screen.edit_column_primary_key_var.set(True)
+            erd_screen.edit_column_nullable_var.set(False)
+            erd_screen._on_edit_column_pk_changed()
+            erd_screen._save_column_shared()
+            shared_customers = next(t for t in erd_screen.project.tables if t.table_name == "shared_customers")
+            self.assertTrue(any(c.name == "shared_customer_id" for c in shared_customers.columns))
+
+            erd_screen.table_name_var.set("customers")
+            erd_screen._add_table()
+            erd_screen.table_name_var.set("orders")
+            erd_screen._add_table()
+
+            erd_screen.column_table_var.set("customers")
+            erd_screen.column_name_var.set("customer_id")
+            erd_screen.column_dtype_var.set("int")
+            erd_screen.column_primary_key_var.set(True)
+            erd_screen._on_column_pk_changed()
+            erd_screen._add_column()
+
+            erd_screen.column_table_var.set("orders")
+            erd_screen.column_name_var.set("order_id")
+            erd_screen.column_dtype_var.set("int")
+            erd_screen.column_primary_key_var.set(True)
+            erd_screen._on_column_pk_changed()
+            erd_screen._add_column()
+
+            erd_screen.column_table_var.set("orders")
+            erd_screen.column_name_var.set("customer_id")
+            erd_screen.column_dtype_var.set("int")
+            erd_screen.column_primary_key_var.set(False)
+            erd_screen.column_nullable_var.set(False)
+            erd_screen._on_column_pk_changed()
+            erd_screen._add_column()
+
+            erd_screen.relationship_child_table_var.set("orders")
+            erd_screen._on_relationship_child_table_changed()
+            erd_screen.relationship_child_column_var.set("customer_id")
+            erd_screen.relationship_parent_table_var.set("customers")
+            erd_screen._on_relationship_parent_table_changed()
+            erd_screen.relationship_parent_column_var.set("customer_id")
+            erd_screen.relationship_min_children_var.set("1")
+            erd_screen.relationship_max_children_var.set("3")
+            erd_screen._add_relationship()
+            self.assertEqual(len(erd_screen.project.foreign_keys), 1)
+
+            erd_screen.edit_table_current_var.set("orders")
+            erd_screen._on_edit_table_selected()
+            erd_screen.edit_table_name_var.set("sales_orders")
+            erd_screen.edit_table_row_count_var.set("12")
+            erd_screen._edit_table()
+            self.assertTrue(any(t.table_name == "sales_orders" for t in erd_screen.project.tables))
+
+            erd_screen.edit_column_table_var.set("sales_orders")
+            erd_screen._on_edit_column_table_changed()
+            erd_screen.edit_column_current_var.set("customer_id")
+            erd_screen._on_edit_column_selected()
+            erd_screen.edit_column_name_var.set("client_id")
+            erd_screen.edit_column_dtype_var.set("int")
+            erd_screen.edit_column_primary_key_var.set(False)
+            erd_screen.edit_column_nullable_var.set(False)
+            erd_screen._on_edit_column_pk_changed()
+            erd_screen._edit_column()
+            sales_orders = next(t for t in erd_screen.project.tables if t.table_name == "sales_orders")
+            self.assertTrue(any(c.name == "client_id" for c in sales_orders.columns))
+
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                export_path = os.path.join(tmp_dir, "erd_gui_export.json")
+                with mock.patch("src.gui_home.filedialog.asksaveasfilename", return_value=export_path):
+                    erd_screen._export_schema_json()
+                self.assertTrue(os.path.exists(export_path))
+                loaded_export = load_project_from_json(export_path)
+                self.assertEqual(loaded_export.name, "erd_gui_test")
 
             schema_screen = app.screens["schema_project"]
             self.assertEqual(schema_screen.export_option_var.get(), EXPORT_OPTION_CSV)

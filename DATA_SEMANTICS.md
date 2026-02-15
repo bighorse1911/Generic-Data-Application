@@ -45,6 +45,16 @@ Direction 3 (float -> decimal) is completed.
 - GUI-only update (2026-02-14): `erd_designer` page added for schema visualization without changing canonical generator semantics.
 - GUI-only update (2026-02-14): `erd_designer` now supports ERD export to SVG/PNG/JPEG without changing canonical generator semantics.
 - GUI-only update (2026-02-14): `erd_designer` now supports drag-to-reposition table layout with live relationship redraw and position-aware SVG export, without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `erd_designer` now supports in-page schema authoring (new schema, table/column creation, and FK relationship creation) without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `erd_designer` now supports schema JSON export and in-page table/column editing without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `erd_designer` schema authoring controls are now collapsible and use compact shared add/edit table+column flows without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `performance_workbench` phase-1 page added for schema-linked performance profile validation and workload estimate diagnostics without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `performance_workbench` phase-1B now includes deterministic FK-stage chunk-plan preview before runtime execution, without changing canonical generator semantics.
+- GUI-only update (2026-02-14): `performance_workbench` phase-1C now includes benchmark/generate runtime controls with cancel + live status and CSV/SQLite strategy export integration, without changing canonical generator semantics.
+- Runtime/GUI-only update (2026-02-14): `execution_orchestrator` multiprocess partition planner/runner added (worker controls, retry/fallback, run-ledger checks) without changing canonical generator semantics.
+- GUI-only update (2026-02-14): visual redesign preview routes (`home_v2`, `schema_studio_v2`, `run_center_v2`) added as phased UI skeletons without changing canonical generator semantics.
+- GUI-only update (2026-02-14): visual redesign parity bridge routes (`erd_designer_v2`, `location_selector_v2`, `generation_behaviors_guide_v2`) added as additive navigation shells without changing canonical generator semantics.
+- GUI-only update (2026-02-14): visual redesign feature completion added v2 run-center runtime integration (`estimate|plan|benchmark|start`) and schema-studio dirty-route guards without changing canonical generator semantics.
 
 ## Core design principle
 

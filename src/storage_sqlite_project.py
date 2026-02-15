@@ -37,7 +37,8 @@ def create_tables(db_path: str, project: SchemaProject) -> None:
     for fk in project.foreign_keys:
         fks_by_child.setdefault(fk.child_table, []).append(fk)
 
-    with _connect(db_path) as conn:
+    conn = _connect(db_path)
+    try:
         for t in project.tables:
             col_defs = []
             for c in t.columns:
@@ -62,6 +63,8 @@ def create_tables(db_path: str, project: SchemaProject) -> None:
             conn.execute(sql)
 
         conn.commit()
+    finally:
+        conn.close()
 
     logger.info("Created tables for project '%s' in %s", project.name, db_path)
 
@@ -83,7 +86,8 @@ def insert_project_rows(
 
     inserted_counts: dict[str, int] = {}
 
-    with _connect(db_path) as conn:
+    conn = _connect(db_path)
+    try:
         conn.execute("BEGIN;")
 
         for table_name in order:
@@ -113,6 +117,8 @@ def insert_project_rows(
             inserted_counts[table_name] = total
 
         conn.commit()
+    finally:
+        conn.close()
 
     logger.info("Inserted project rows into %s: %s", db_path, inserted_counts)
     return inserted_counts
