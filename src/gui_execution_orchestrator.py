@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 from src.config import AppConfig
+from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
@@ -19,6 +20,7 @@ from src.gui_kit.run_commands import run_build_partition_plan
 from src.gui_kit.run_commands import run_generation_multiprocess
 from src.gui_kit.run_lifecycle import RunLifecycleController
 from src.gui_kit.run_models import RunWorkflowViewModel
+from src.gui_kit.shortcuts import ShortcutManager
 from src.gui_kit.ui_dispatch import UIDispatcher
 from src.gui_tools.run_workflow_view import RunWorkflowCapabilities
 from src.gui_tools.run_workflow_view import RunWorkflowSurface
@@ -55,6 +57,7 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         header.pack(fill="x", pady=(0, 8))
         ttk.Button(header, text="\u2190 Back", command=lambda: self.app.go_home()).pack(side="left")
         ttk.Label(header, text="Execution Orchestrator", font=("Segoe UI", 16, "bold")).pack(side="left", padx=(10, 0))
+        ttk.Button(header, text="Shortcuts", command=self._show_shortcuts_help).pack(side="right")
 
         self.surface = RunWorkflowSurface(
             self,
@@ -112,6 +115,76 @@ class ExecutionOrchestratorScreen(ttk.Frame):
             action_buttons=[self.surface.build_plan_btn, self.surface.start_run_btn, self.surface.start_fallback_btn],
             cancel_button=self.surface.cancel_run_btn,
         )
+        self.shortcut_manager = ShortcutManager(self)
+        self.focus_controller = FocusController(self)
+        self._register_focus_anchors()
+        self._register_shortcuts()
+
+    def on_show(self) -> None:
+        self.shortcut_manager.activate()
+        self.focus_controller.focus_default()
+
+    def on_hide(self) -> None:
+        self.shortcut_manager.deactivate()
+
+    def _register_focus_anchors(self) -> None:
+        self.focus_controller.add_anchor(
+            "schema_path",
+            lambda: getattr(self.surface, "schema_entry", None),
+            description="Schema path input",
+        )
+        self.focus_controller.add_anchor(
+            "actions",
+            lambda: self.start_run_btn,
+            description="Run action controls",
+        )
+        self.focus_controller.add_anchor(
+            "plan",
+            lambda: self.partition_tree,
+            description="Partition plan table",
+        )
+        self.focus_controller.add_anchor(
+            "workers",
+            lambda: self.worker_tree,
+            description="Worker monitor table",
+        )
+        self.focus_controller.add_anchor(
+            "failures",
+            lambda: self.failures_tree,
+            description="Failures table",
+        )
+        self.focus_controller.set_default_anchor("schema_path")
+
+    def _register_shortcuts(self) -> None:
+        self.shortcut_manager.register("<F1>", "Open shortcuts help", self._show_shortcuts_help)
+        self.shortcut_manager.register("<F6>", "Focus next major section", self._focus_next_anchor)
+        self.shortcut_manager.register("<Shift-F6>", "Focus previous major section", self._focus_previous_anchor)
+        self.shortcut_manager.register_ctrl_cmd("b", "Browse schema path", self._browse_schema_path)
+        self.shortcut_manager.register_ctrl_cmd("l", "Load schema", self._load_schema)
+        self.shortcut_manager.register_ctrl_cmd("s", "Save run config", self._save_run_config)
+        self.shortcut_manager.register_ctrl_cmd("o", "Load run config", self._load_run_config)
+        self.shortcut_manager.register("<F5>", "Build partition plan", self._build_plan)
+        self.shortcut_manager.register_ctrl_cmd("Return", "Start run", self._start_run)
+        self.shortcut_manager.register("<Escape>", "Cancel active run", self._cancel_if_running)
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+C", "Copy selected table rows with headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Shift+C", "Copy selected table rows without headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+A", "Select all rows in focused table")
+        self.shortcut_manager.register_help_item("PageUp/PageDown", "Move selection by page in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Home", "Jump to first row in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+End", "Jump to last row in focused table")
+
+    def _focus_next_anchor(self) -> None:
+        self.focus_controller.focus_next()
+
+    def _focus_previous_anchor(self) -> None:
+        self.focus_controller.focus_previous()
+
+    def _cancel_if_running(self) -> None:
+        if self.lifecycle.state.is_running:
+            self._cancel_run()
+
+    def _show_shortcuts_help(self) -> None:
+        self.shortcut_manager.show_help_dialog(title="Execution Orchestrator Shortcuts")
 
     def _sync_model(self) -> RunWorkflowViewModel:
         return self.surface.sync_model_from_vars()
@@ -165,23 +238,22 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         return True
 
     def _populate_partition_tree(self, entries: list[PartitionPlanEntry]) -> None:
-        self.surface.clear_tree(self.partition_tree)
+        rows: list[tuple[str, str, str, str, str, str]] = []
         for entry in entries:
-            self.partition_tree.insert(
-                "",
-                "end",
-                values=(
+            rows.append(
+                (
                     entry.table_name,
                     entry.partition_id,
                     f"{entry.start_row}-{entry.end_row}",
                     str(entry.stage),
                     str(entry.assigned_worker),
                     entry.status,
-                ),
+                )
             )
+        self.surface.set_plan_rows(rows)
 
     def _populate_worker_tree(self, workers: dict[int, WorkerStatus]) -> None:
-        self.surface.clear_tree(self.worker_tree)
+        rows: list[tuple[str, str, str, str, str, str, str]] = []
         for worker_id in sorted(workers):
             worker = workers[worker_id]
             heartbeat = "--"
@@ -190,10 +262,8 @@ class ExecutionOrchestratorScreen(ttk.Frame):
             current = ""
             if worker.current_partition_id:
                 current = f"{worker.current_table} / {worker.current_partition_id}"
-            self.worker_tree.insert(
-                "",
-                "end",
-                values=(
+            rows.append(
+                (
                     str(worker.worker_id),
                     current,
                     str(worker.rows_processed),
@@ -201,8 +271,9 @@ class ExecutionOrchestratorScreen(ttk.Frame):
                     f"{worker.memory_mb:.3f}",
                     heartbeat,
                     worker.state,
-                ),
+                )
             )
+        self.surface.set_worker_rows(rows)
 
     def _append_failure(self, failure: PartitionFailure) -> None:
         self.failures_tree.insert(
@@ -270,9 +341,17 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         self.lifecycle.transition_complete("Complete")
         self._populate_partition_tree(result.partition_plan)
         self._populate_worker_tree(result.worker_status)
-        self.surface.clear_tree(self.failures_tree)
-        for failure in result.failures:
-            self._append_failure(failure)
+        self.surface.set_failures_rows(
+            [
+                (
+                    failure.partition_id,
+                    failure.error,
+                    str(failure.retry_count),
+                    failure.action,
+                )
+                for failure in result.failures
+            ]
+        )
 
         csv_count = len(result.strategy_result.csv_paths)
         sqlite_rows = sum(result.strategy_result.sqlite_counts.values())

@@ -21,6 +21,13 @@ class _DirtyScreen:
         return self._allow and action_name != ""
 
 
+class _DirtyErrorScreen:
+    is_dirty = True
+
+    def confirm_discard_or_save(self, *, action_name: str):
+        raise RuntimeError(f"boom:{action_name}")
+
+
 class TestGuiV2FeatureC(unittest.TestCase):
     def _project(self) -> SchemaProject:
         return SchemaProject(
@@ -101,6 +108,28 @@ class TestGuiV2FeatureC(unittest.TestCase):
         self.assertTrue(result.allowed)
         self.assertTrue(state["called"])
 
+    def test_guarded_navigation_does_not_run_when_blocked(self):
+        guard = DirtyRouteGuard()
+        state = {"called": False}
+        result = guarded_navigation(
+            guard=guard,
+            dirty_screen=_DirtyScreen(is_dirty=True, allow=False),
+            action_name="go",
+            navigate=lambda: state.__setitem__("called", True),
+        )
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.reason, "user_cancelled")
+        self.assertFalse(state["called"])
+
+    def test_dirty_route_guard_returns_guard_error_on_callback_exception(self):
+        guard = DirtyRouteGuard()
+        result = guard.can_navigate(
+            dirty_screen=_DirtyErrorScreen(),
+            action_name="go",
+        )
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.reason, "guard_error")
+
     def test_viewmodel_mode_coercion(self):
         self.assertEqual(coerce_output_mode("CSV"), "csv")
         self.assertEqual(coerce_output_mode("bad"), "preview")
@@ -137,4 +166,3 @@ class TestGuiV2FeatureC(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

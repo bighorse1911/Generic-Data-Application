@@ -99,6 +99,39 @@ class TestGuiV2NativeTools(unittest.TestCase):
 
         self.assertEqual(len(tool.project.foreign_keys), 1)
 
+    def test_home_v2_scrollable_cards_include_specialist_v2_routes(self):
+        home_v2 = self.app.screens["home_v2"]
+        self.assertTrue(hasattr(home_v2, "cards_canvas"))
+        self.assertTrue(hasattr(home_v2, "cards_frame"))
+        self.assertNotEqual(str(home_v2.cards_canvas.cget("yscrollcommand")), "")
+
+        texts: list[str] = []
+
+        def _collect(widget) -> None:
+            try:
+                text = str(widget.cget("text"))
+            except Exception:  # noqa: BLE001
+                text = ""
+            if text:
+                texts.append(text)
+            for child in widget.winfo_children():
+                _collect(child)
+
+        _collect(home_v2.cards_frame)
+        all_text = "\n".join(texts)
+        self.assertIn("ERD Designer v2", all_text)
+        self.assertIn("Location Selector v2", all_text)
+
+    def test_specialist_v2_screens_expose_open_classic_tool_action(self):
+        erd_screen = self.app.screens["erd_designer_v2"]
+        loc_screen = self.app.screens["location_selector_v2"]
+
+        erd_actions = [child.cget("text") for child in erd_screen.shell.header_actions.winfo_children()]
+        loc_actions = [child.cget("text") for child in loc_screen.shell.header_actions.winfo_children()]
+
+        self.assertIn("Open Classic Tool", erd_actions)
+        self.assertIn("Open Classic Tool", loc_actions)
+
 
 if __name__ == "__main__":
     unittest.main()

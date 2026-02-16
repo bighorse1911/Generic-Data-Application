@@ -22,6 +22,11 @@ Direction 1 - Smarter Data
 - Priority P3 schema route consolidation (`schema_project` is the only primary authoring route; hidden fallback routes `schema_project_kit` alias and deprecated `schema_project_legacy` retained for one release cycle) (completed 2026-02-15)
 - Priority P4 async lifecycle consistency (shared teardown-safe UI dispatch, centralized run lifecycle terminal transitions, schema-kit shared job lifecycle, and legacy callback teardown guards) (completed 2026-02-15)
 - Priority P5 validation/error surface consistency (interactive routes now use shared actionable error/warning surfaces with route-standardized dialog titles; read-only routes remain explicitly excluded) (completed 2026-02-15)
+- Priority P6 accessibility and keyboard flow pass (route-scoped shortcut lifecycle, focus traversal anchors, and dense table keyboard ergonomics on core interactive routes + legacy parity) (completed 2026-02-16)
+- Priority P7 large-data responsiveness pass (chunked non-blocking table rendering and auto-paged heavy run-result grids on core interactive routes + legacy parity) (completed 2026-02-16)
+- Priority P8 GUI regression/usability hardening (expanded v2 route/state-transition/cancel-fallback coverage and scenario-based acceptance checks) (completed 2026-02-16)
+- Priority P9 native v2 route parity for missing GUI components (`schema_project_v2`, `performance_workbench_v2`, `execution_orchestrator_v2` with additive rollout and classic-route compatibility) (completed 2026-02-16)
+- Specialist v2 route restoration (`erd_designer_v2`, `location_selector_v2`): restored reliable access via scrollable `home_v2` cards and reimplemented explicit open-classic tool actions in v2 specialist headers (completed 2026-02-16)
 
 ## Completed Directions
 - Direction 2 - Modular GUI Adoption (incremental, low-risk)
@@ -35,9 +40,7 @@ Direction 1 - Smarter Data
 
 ## Next Candidates
 **Priority 1 (future features):**
-- [P6] Accessibility and keyboard flow: improve focus order, traversal, shortcut discoverability, and dense table interaction ergonomics.
-- [P7] Large-data responsiveness: improve paged/virtualized table rendering and non-blocking refresh behavior in heavy views.
-- [P8] GUI regression/usability hardening: expand v2 route/state-transition/cancel-fallback coverage and scenario-based acceptance checks.
+- None currently queued.
 
 ## GUI Refinement Backlog (Prioritized)
 
@@ -46,9 +49,7 @@ Direction 1 - Smarter Data
 - Keep momentum after Feature C completion with clear execution order and explicit acceptance coverage.
 
 ### Prioritized Next Steps
-- **P6:** Execute accessibility and keyboard-flow pass for power-user navigation.
-- **P7:** Improve large-data UI responsiveness with virtualized/paged grids and non-blocking refresh paths.
-- **P8:** Expand regression/usability hardening for v2 route contracts and state transitions.
+- No active GUI refinement candidate after P8 completion.
 
 ### Test Cases and Scenarios
 - Route contract tests: all v2 routes load, navigate, and expose required controls.
@@ -63,7 +64,7 @@ Direction 1 - Smarter Data
 - P1 completion default: keep hidden `*_v2_bridge` rollback routes for one release cycle before removal consideration.
 - No external dependencies; Python stdlib + Tkinter only.
 - Deterministic generation and JSON compatibility remain non-negotiable.
-- Prioritization defaults to delivery value plus risk reduction (P6 through P8 in current backlog).
+- Prioritization defaults to delivery value plus risk reduction (next candidate pending definition after P8 completion).
 
 ## Deferred
 - None.

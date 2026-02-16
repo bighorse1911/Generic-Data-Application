@@ -14,7 +14,7 @@ this project. It is authoritative for:
 If GUI behavior is unclear, this document and `PROJECT_CANON.md` override
 ad-hoc assumptions.
 
-## Implementation Status (2026-02-15)
+## Implementation Status (2026-02-16)
 
 - Current runtime GUI: Tkinter (`src/gui_home.py`)
 - Production modular route: `schema_project` uses `src/gui_schema_project_kit.py` with `src/gui_kit`.
@@ -61,6 +61,11 @@ ad-hoc assumptions.
 - Schema route consolidation update: `schema_project` is the only primary schema authoring route in Home and `schema_studio_v2`; hidden fallback routes remain `schema_project_kit` (alias) and deprecated `schema_project_legacy` (rollback only).
 - Async lifecycle consistency update: shared teardown-safe UI dispatch now backs run-screen terminal callbacks and modular schema long jobs; legacy schema fallback includes blocker-level teardown-safe callback guards.
 - Validation/error surface consistency update: interactive routes now route blocking errors and warnings through shared `ErrorSurface` pathways with canonical actionable shape and route-standardized titles; read-only routes are explicitly out of runtime error-plumbing scope.
+- Accessibility/keyboard-flow update: core interactive routes now use route-scoped shortcut activation/deactivation, explicit focus-anchor traversal (`F6`/`Shift+F6`), and standardized dense-table keyboard ergonomics (`Ctrl/Cmd+C`, `Ctrl/Cmd+Shift+C`, `Ctrl/Cmd+A`, page navigation, endpoint jumps).
+- Large-data responsiveness update: core interactive routes now use shared chunked non-blocking Treeview refresh for heavy datasets; run-result tables auto-page large result sets while schema preview routes preserve explicit/legacy paging controls.
+- GUI regression/usability hardening update: v2 route family now has scenario-based regression coverage for route transitions, schema-studio guarded-navigation outcomes, bridge-route parity, and run-center cancel/fallback state behavior.
+- Native v2 missing-route parity update: additive native routes now include `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2`; `schema_studio_v2` schema handoff targets `schema_project_v2` and preserves fallback compatibility.
+- Specialist v2 route restoration update: `home_v2` cards region is scrollable so all v2 cards remain reachable; `erd_designer_v2` and `location_selector_v2` include explicit `Open Classic Tool` actions while preserving native v2 route behavior.
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -225,7 +230,11 @@ P5 standardization rules:
 - SCD1 controls: tracked slowly-changing column selection.
 - SCD2 controls: active period boundary columns (`from`/`to`, using `date` or `datetime`) plus tracked slowly-changing column selection; applies to root and incoming-FK child tables.
 - Includes discoverable keyboard shortcuts help and debounced search controls for large schema navigation.
+- Uses route-scoped shortcut lifecycle (`on_show`/`on_hide`) so shortcuts only apply while this route is active.
+- Supports explicit major-region keyboard traversal via `F6` (next) and `Shift+F6` (previous).
+- Supports search focus accelerators: `Ctrl/Cmd+F` (table search), `Ctrl/Cmd+Shift+F` (column search), `Ctrl/Cmd+G` (FK search).
 - Preview table supports paged rendering for large row previews.
+- Preview table uses chunked non-blocking refresh on large row sets while preserving explicit page-size controls.
 - Preview supports a column chooser dialog for visibility and display-order control without mutating schema column order.
 - Screen-level dirty-state behavior prompts on unsaved back/load navigation and exposes an unsaved indicator.
 - Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`, `Tabs`, `FormBuilder`, `TableView`, `ColumnChooserDialog`, `InlineValidationSummary`).
@@ -251,7 +260,9 @@ P5 standardization rules:
   - `ColumnChooserDialog` for preview column visibility/order,
   - `InlineValidationSummary` panel with quick-jump actions,
   - dirty-state prompts for unsaved back/load navigation.
+- Legacy preview table now also uses the shared chunked non-blocking large-data refresh path while keeping opt-in pagination semantics.
 - Legacy async worker callbacks must use teardown-safe scheduling guards to avoid uncaught `_tkinter.TclError` during shutdown/destruction.
+- Route exposes parity keyboard flow with route-scoped shortcuts/help and focus-anchor traversal for rollback safety validation.
 
 ### 4.5 `generation_behaviors_guide`
 
@@ -348,6 +359,9 @@ P5 standardization rules:
 - CSV strategy mode writes one CSV per selected/required table using buffered row writes
 - SQLite strategy mode creates tables and inserts rows using configured batch size
 - profile save/load uses JSON object payload and re-validates loaded values before apply
+- Header includes a visible shortcuts help action.
+- Shortcut contract: `F1` help, `F6`/`Shift+F6` region traversal, `Ctrl/Cmd+B` browse schema, `Ctrl/Cmd+L` load schema, `Ctrl/Cmd+S` save profile, `Ctrl/Cmd+O` load profile, `F5` estimate, `Ctrl/Cmd+Enter` benchmark, `Esc` cancel when running.
+- Diagnostics/plan tables use adapter-backed bulk row updates with chunked non-blocking refresh and auto-paging for large datasets.
 
 ### 4.9 `execution_orchestrator`
 
@@ -382,6 +396,9 @@ P5 standardization rules:
 - start-with-fallback action switches to deterministic single-process strategy run if multiprocess partition execution exhausts retries
 - cancel action requests cancellation and returns UI to ready state without blocking the main thread
 - run-config save/load uses JSON object payload and re-validates loaded values before apply
+- Header includes a visible shortcuts help action.
+- Shortcut contract: `F1` help, `F6`/`Shift+F6` region traversal, `Ctrl/Cmd+B` browse schema, `Ctrl/Cmd+L` load schema, `Ctrl/Cmd+S` save config, `Ctrl/Cmd+O` load config, `F5` build plan, `Ctrl/Cmd+Enter` start run, `Esc` cancel when running.
+- Plan/workers/failures tables use adapter-backed bulk row updates with chunked non-blocking refresh; plan/workers auto-page at large row counts.
 
 ### 4.10 `home_v2`
 
@@ -389,10 +406,12 @@ P5 standardization rules:
 - Required regions:
 - header with explicit back navigation to `home`
 - primary route cards for `schema_studio_v2` and `run_center_v2`
+- dedicated route cards for `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2`
 - specialist route cards for `erd_designer_v2`, `location_selector_v2`, and `generation_behaviors_guide_v2`
 - Required behavior:
 - additive route only; does not replace classic home routes
 - visual redesign routes remain non-destructive and preserve canonical app behavior
+- cards region must remain scrollable to keep specialist/native v2 routes accessible as route inventory grows
 
 ### 4.11 `schema_studio_v2`
 
@@ -406,8 +425,11 @@ P5 standardization rules:
 - Required behavior:
 - section navigation updates selected workspace tab and inspector content
 - route includes explicit navigation to `run_center_v2` and classic home
-- schema section transitions (`project|tables|columns|relationships`) route to `schema_project` only
-- schema transitions use dirty-state guarded navigation based on primary schema route dirty state
+- schema section transitions (`project|tables|columns|relationships`) route to `schema_project_v2` only
+- schema transitions use dirty-state guarded navigation based on `schema_project_v2` dirty state with compatibility fallback to classic `schema_project`
+- blocked guarded-navigation states surface explicit status outcomes:
+  - user cancelled unsaved-change prompt -> navigation remains on current v2 route with unsaved-change status
+  - guard callback failure -> navigation remains on current v2 route with retry guidance status
 - hidden fallback routes (`schema_project_kit`, `schema_project_legacy`) remain rollback-only and are not primary section targets
 - v2 page is navigation-first and does not change canonical data semantics
 
@@ -436,6 +458,10 @@ P5 standardization rules:
 - start action runs canonical multiprocessing orchestration flow (including retry/fallback handling)
 - history tab remains intentionally visible only on `run_center_v2` in the convergence scope
 - config save/load uses JSON payload and rehydrates run-center form state
+- Header includes a visible shortcuts help action.
+- Shortcut contract: `F1` help, `F6`/`Shift+F6` region traversal, `Ctrl/Cmd+B` browse schema, `Ctrl/Cmd+L` load schema, `Ctrl/Cmd+S` save config, `Ctrl/Cmd+O` load config, `F5` estimate, `Ctrl/Cmd+Enter` start run, `Esc` cancel when running.
+- Diagnostics/plan/failures/history tables use adapter-backed bulk row updates with chunked non-blocking refresh; diagnostics/plan auto-page at large row counts.
+- Scenario acceptance contract: cancel/fallback flows must keep terminal state deterministic (`cancelled|failed|complete`), preserve non-blocking UI behavior, and append expected history/failure visibility updates.
 
 ### 4.13 `erd_designer_v2`
 
@@ -449,6 +475,7 @@ P5 standardization rules:
 - Required behavior:
 - supports schema JSON load/render, visibility toggles, drag table layout, in-page schema authoring/editing, schema JSON export, and SVG/PNG/JPEG export
 - preserves canonical actionable error contract and deterministic rendering behavior
+- includes explicit `Open Classic Tool` action routing to classic `erd_designer`
 - additive route only; classic `erd_designer` remains available
 
 ### 4.14 `location_selector_v2`
@@ -463,6 +490,7 @@ P5 standardization rules:
 - Required behavior:
 - supports map zoom/pan/click center selection, radius/GeoJSON generation, deterministic sample-point generation, and CSV save
 - preserves canonical actionable error contract and deterministic sample behavior
+- includes explicit `Open Classic Tool` action routing to classic `location_selector`
 - additive route only; classic `location_selector` remains available
 
 ### 4.15 `generation_behaviors_guide_v2`
@@ -489,6 +517,54 @@ P5 standardization rules:
 - provide launch-through fallback to corresponding classic production routes
 - not primary navigation targets from `home_v2`
 - removal is allowed after parity and regression gates are stable
+
+### 4.17 v2 Scenario Acceptance Contracts (P8)
+
+- Route transitions:
+  - `home_v2 -> schema_studio_v2 -> run_center_v2` and specialist/bridge route hops remain stable and update active route state deterministically.
+  - `schema_studio_v2` section selection updates selected section model, nav-active state, and status strip text.
+- Guarded navigation:
+  - dirty-schema transitions block/allow strictly from primary schema route dirty/confirm state.
+  - guard callback errors are non-crashing and status-visible.
+- Run-center cancel/fallback:
+  - cancel requests are no-ops when idle and actionable when running.
+  - fallback-start path carries explicit fallback phase label and runtime flag.
+  - output-path prompt cancellations do not start async run lifecycle.
+  - partition-failure runtime events update retry/fallback state and failure table rows deterministically.
+
+### 4.18 `schema_project_v2`
+
+- Purpose: native v2 schema authoring route with full schema project editing behavior.
+- Required regions:
+- v2-style header with back navigation to `schema_studio_v2`
+- full schema authoring/editor regions from canonical schema route contract (project/tables/columns/relationships/generate/status)
+- Required behavior:
+- preserves canonical schema validation/generation/export/JSON IO behavior of `schema_project`
+- exposes route-scoped shortcuts/focus lifecycle parity with classic modular schema route
+- includes visible `Open Classic` fallback action to `schema_project`
+- remains additive; classic `schema_project` route stays available
+
+### 4.19 `performance_workbench_v2`
+
+- Purpose: native v2 strategy estimate/benchmark/generate route.
+- Required regions:
+- v2 shell header/action bar (including `Open Classic`)
+- run config/workflow surface with diagnostics + chunk plan result tabs
+- Required behavior:
+- preserves canonical estimate, chunk-plan, benchmark, strategy generation, cancellation, and profile save/load contracts
+- reuses shared lifecycle/error/table workflow primitives
+- remains additive; classic `performance_workbench` route stays available
+
+### 4.20 `execution_orchestrator_v2`
+
+- Purpose: native v2 multiprocess planner/runner route.
+- Required regions:
+- v2 shell header/action bar (including `Open Classic`)
+- run config/workflow surface with plan/workers/failures tabs
+- Required behavior:
+- preserves canonical build-plan/start/start+fallback/cancel and run-config save/load contracts
+- reuses shared lifecycle/error/table workflow primitives and worker/failure runtime event handling
+- remains additive; classic `execution_orchestrator` route stays available
 
 ## 5. Library-Agnostic Mapping Guide
 

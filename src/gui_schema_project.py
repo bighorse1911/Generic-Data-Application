@@ -20,6 +20,7 @@ from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
 from src.gui_kit.scroll import wheel_units_from_delta
 from src.gui_kit.table import TableView
+from src.gui_kit.table_keyboard import install_treeview_keyboard_support
 from src.gui_kit.ui_dispatch import safe_dispatch
 from src.gui_kit.validation import InlineValidationEntry, InlineValidationSummary
 from src.schema_project_model import (
@@ -927,6 +928,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.columns_tree.column("choices", width=180)
         self.columns_tree.column("pattern", width=180)
         self.columns_tree.bind("<<TreeviewSelect>>", self._on_column_selected)
+        install_treeview_keyboard_support(self.columns_tree, include_headers=True)
 
         yscroll = ttk.Scrollbar(cols_frame, orient="vertical", command=self.columns_tree.yview)
         self.columns_tree.configure(yscrollcommand=yscroll.set)
@@ -990,6 +992,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.fks_tree.column("child_fk", width=90)
         self.fks_tree.column("min", width=60, anchor="e")
         self.fks_tree.column("max", width=60, anchor="e")
+        install_treeview_keyboard_support(self.fks_tree, include_headers=True)
 
         y2 = ttk.Scrollbar(fk_frame, orient="vertical", command=self.fks_tree.yview)
         self.fks_tree.configure(yscrollcommand=y2.set)
@@ -1102,6 +1105,13 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
         self.preview_table = TableView(right_preview, height=12)
         self.preview_table.grid(row=0, column=0, sticky="nsew")
+        self.preview_table.configure_large_data_mode(
+            enabled=True,
+            threshold_rows=1000,
+            chunk_size=150,
+            auto_pagination=False,
+            auto_page_size=100,
+        )
         self.preview_table.disable_pagination()
         self.preview_tree = self.preview_table.tree
 

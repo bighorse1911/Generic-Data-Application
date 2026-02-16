@@ -55,6 +55,7 @@ Direction 3 (float -> decimal) is completed.
 - GUI-only update (2026-02-14): visual redesign preview routes (`home_v2`, `schema_studio_v2`, `run_center_v2`) added as phased UI skeletons without changing canonical generator semantics.
 - GUI-only update (2026-02-14): visual redesign parity bridge routes (`erd_designer_v2`, `location_selector_v2`, `generation_behaviors_guide_v2`) added as additive navigation shells without changing canonical generator semantics.
 - GUI-only update (2026-02-14): visual redesign feature completion added v2 run-center runtime integration (`estimate|plan|benchmark|start`) and schema-studio dirty-route guards without changing canonical generator semantics.
+- GUI-only update (2026-02-16): specialist v2 route restoration kept `erd_designer_v2` and `location_selector_v2` explicitly accessible from scrollable `home_v2` cards and added open-classic tool actions without changing canonical generator semantics.
 
 ## Core design principle
 

@@ -7,7 +7,11 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from src.config import AppConfig
+from src.gui_route_policy import ORCHESTRATOR_V2_ROUTE
+from src.gui_route_policy import PERFORMANCE_V2_ROUTE
 from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
+from src.gui_route_policy import SCHEMA_V2_ROUTE
+from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
@@ -19,6 +23,7 @@ from src.gui_kit.run_commands import run_center_payload
 from src.gui_kit.run_commands import run_estimate as run_shared_estimate
 from src.gui_kit.run_commands import run_generation_multiprocess
 from src.gui_kit.run_lifecycle import RunLifecycleController
+from src.gui_kit.shortcuts import ShortcutManager
 from src.gui_kit.ui_dispatch import UIDispatcher
 from src.gui_tools import ERDDesignerToolFrame
 from src.gui_tools import GenerationGuideToolFrame
@@ -74,6 +79,7 @@ class V2ShellFrame(tk.Frame):
     ) -> None:
         super().__init__(parent, bg=V2_BG)
         self._nav_buttons: dict[str, tk.Button] = {}
+        self._active_nav_key: str | None = None
 
         self.header = tk.Frame(self, bg=V2_HEADER_BG, height=56)
         self.header.pack(fill="x", padx=12, pady=(12, 8))
@@ -186,11 +192,19 @@ class V2ShellFrame(tk.Frame):
         return button
 
     def set_nav_active(self, key: str) -> None:
+        active_found = False
         for button_key, button in self._nav_buttons.items():
             if button_key == key:
                 button.configure(bg=V2_NAV_ACTIVE, fg="#ffffff")
+                active_found = True
             else:
                 button.configure(bg=V2_NAV_BG, fg="#f5f5f5")
+        if active_found:
+            self._active_nav_key = key
+
+    @property
+    def active_nav_key(self) -> str | None:
+        return self._active_nav_key
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
@@ -246,39 +260,77 @@ class HomeV2Screen(tk.Frame):
             font=("Calibri", 11),
         ).pack(fill="x", padx=22, pady=(0, 10))
 
-        cards = tk.Frame(self, bg=V2_BG)
-        cards.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        cards_host = tk.Frame(self, bg=V2_BG)
+        cards_host.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        cards_host.columnconfigure(0, weight=1)
+        cards_host.rowconfigure(0, weight=1)
+
+        self.cards_canvas = tk.Canvas(cards_host, bg=V2_BG, highlightthickness=0, bd=0)
+        self.cards_canvas.grid(row=0, column=0, sticky="nsew")
+        cards_scroll = ttk.Scrollbar(cards_host, orient="vertical", command=self.cards_canvas.yview)
+        cards_scroll.grid(row=0, column=1, sticky="ns")
+        self.cards_canvas.configure(yscrollcommand=cards_scroll.set)
+
+        self.cards_frame = tk.Frame(self.cards_canvas, bg=V2_BG)
+        self._cards_window = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
+
+        self.cards_frame.bind("<Configure>", self._on_cards_frame_configure)
+        self.cards_canvas.bind("<Configure>", self._on_cards_canvas_configure)
 
         self._add_card(
-            cards,
+            self.cards_frame,
             "Schema Studio v2",
             "Authoring navigation shell with guarded transitions to schema design routes.",
             lambda: self.app.show_screen("schema_studio_v2"),
         )
         self._add_card(
-            cards,
+            self.cards_frame,
+            "Schema Project v2",
+            "Native v2 schema authoring route with canonical validation and generation behavior.",
+            lambda: self.app.show_screen(SCHEMA_V2_ROUTE),
+        )
+        self._add_card(
+            self.cards_frame,
             "Run Center v2",
             "Integrated diagnostics, planning, benchmark, and multiprocess execution flow.",
             lambda: self.app.show_screen("run_center_v2"),
         )
         self._add_card(
-            cards,
+            self.cards_frame,
+            "Performance Workbench v2",
+            "Native v2 strategy estimate/benchmark/generate route.",
+            lambda: self.app.show_screen(PERFORMANCE_V2_ROUTE),
+        )
+        self._add_card(
+            self.cards_frame,
+            "Execution Orchestrator v2",
+            "Native v2 multiprocess planning and worker monitoring route.",
+            lambda: self.app.show_screen(ORCHESTRATOR_V2_ROUTE),
+        )
+        self._add_card(
+            self.cards_frame,
             "ERD Designer v2",
             "Native v2 ERD workflow with canonical schema/render/export behavior contracts.",
             lambda: self.app.show_screen("erd_designer_v2"),
         )
         self._add_card(
-            cards,
+            self.cards_frame,
             "Location Selector v2",
             "Native v2 location workflow for map selection, GeoJSON output, and deterministic samples.",
             lambda: self.app.show_screen("location_selector_v2"),
         )
         self._add_card(
-            cards,
+            self.cards_frame,
             "Generation Guide v2",
             "Native v2 read-only guide for generation configuration patterns.",
             lambda: self.app.show_screen("generation_behaviors_guide_v2"),
         )
+
+    def _on_cards_frame_configure(self, _event) -> None:
+        self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all"))
+
+    def _on_cards_canvas_configure(self, event) -> None:
+        self.cards_canvas.itemconfigure(self._cards_window, width=event.width)
 
     def _add_card(self, parent: tk.Widget, title: str, detail: str, command) -> None:
         card = tk.Frame(parent, bg=V2_PANEL, bd=1, relief="solid", highlightthickness=0)
@@ -346,34 +398,34 @@ class SchemaStudioV2Screen(tk.Frame):
         self._inspector_by_section = {
             "project": [
                 "Project metadata and seed configuration live in schema routes.",
-                "Use primary schema route for full schema editing and validation.",
+                "Use schema_project_v2 for full schema editing and validation.",
                 "Fallback schema routes are hidden and rollback-only in this cycle.",
             ],
-            "tables": ["Open primary schema route for table authoring and SCD/business-key controls."],
-            "columns": ["Open primary schema route for column generator and params authoring."],
-            "relationships": ["Open primary schema route for FK relationship mapping and constraints."],
+            "tables": ["Open schema_project_v2 for table authoring and SCD/business-key controls."],
+            "columns": ["Open schema_project_v2 for column generator and params authoring."],
+            "relationships": ["Open schema_project_v2 for FK relationship mapping and constraints."],
             "run": ["Use Run Center v2 for diagnostics, plan, and execution."],
         }
 
         self._build_tab(
             "project",
             "Project",
-            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening schema project designer"),
+            lambda: self._navigate_with_guard(SCHEMA_V2_ROUTE, "opening schema project designer"),
         )
         self._build_tab(
             "tables",
             "Tables",
-            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening table workflow"),
+            lambda: self._navigate_with_guard(SCHEMA_V2_ROUTE, "opening table workflow"),
         )
         self._build_tab(
             "columns",
             "Columns",
-            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening column workflow"),
+            lambda: self._navigate_with_guard(SCHEMA_V2_ROUTE, "opening column workflow"),
         )
         self._build_tab(
             "relationships",
             "Relationships",
-            lambda: self._navigate_with_guard(SCHEMA_PRIMARY_ROUTE, "opening relationship workflow"),
+            lambda: self._navigate_with_guard(SCHEMA_V2_ROUTE, "opening relationship workflow"),
         )
         self._build_tab("run", "Run", lambda: self._navigate_with_guard("run_center_v2", "opening Run Center"))
 
@@ -395,7 +447,11 @@ class SchemaStudioV2Screen(tk.Frame):
         ttk.Button(frame, text=f"Open {title} workflow", command=command).pack(anchor="w", pady=(10, 0))
 
     def _linked_dirty_screen(self) -> object | None:
-        screen = getattr(self.app, "screens", {}).get(SCHEMA_PRIMARY_ROUTE)
+        screens = getattr(self.app, "screens", {})
+        screen = screens.get(SCHEMA_V2_ROUTE)
+        if screen is not None and bool(getattr(screen, "is_dirty", False)):
+            return screen
+        screen = screens.get(SCHEMA_PRIMARY_ROUTE)
         if screen is not None and bool(getattr(screen, "is_dirty", False)):
             return screen
         return None
@@ -408,7 +464,12 @@ class SchemaStudioV2Screen(tk.Frame):
             navigate=lambda: self.app.show_screen(target_route),
         )
         if not result.allowed:
-            self.shell.set_status("Navigation cancelled: unsaved changes remain in schema designer.")
+            if result.reason == "guard_error":
+                self.shell.set_status("Navigation blocked: unable to confirm schema changes. Retry after validating schema state.")
+            elif result.reason == "user_cancelled":
+                self.shell.set_status("Navigation cancelled: unsaved changes remain in schema designer.")
+            else:
+                self.shell.set_status("Navigation blocked. Retry after resolving schema designer unsaved changes.")
 
     def select_section(self, section_key: str) -> None:
         if section_key not in self._tab_by_name:
@@ -432,6 +493,9 @@ class RunCenterV2Screen(tk.Frame):
 
         self.shell = V2ShellFrame(self, title="Run Center v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
+        self.shell.add_header_action("Orchestrator v2", lambda: self.app.show_screen(ORCHESTRATOR_V2_ROUTE))
+        self.shell.add_header_action("Workbench v2", lambda: self.app.show_screen(PERFORMANCE_V2_ROUTE))
+        self.shell.add_header_action("Shortcuts", self._show_shortcuts_help)
         self.shell.add_header_action("Schema Studio", lambda: self.app.show_screen("schema_studio_v2"))
         self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
 
@@ -505,9 +569,84 @@ class RunCenterV2Screen(tk.Frame):
             action_buttons=self.surface.run_action_buttons,
             cancel_button=self.surface.cancel_run_btn,
         )
+        self.shortcut_manager = ShortcutManager(self)
+        self.focus_controller = FocusController(self)
+        self._register_focus_anchors()
+        self._register_shortcuts()
 
         self._set_inspector_for_config()
         self.shell.set_status("Run Center v2 ready.")
+
+    def on_show(self) -> None:
+        self.shortcut_manager.activate()
+        self.focus_controller.focus_default()
+
+    def on_hide(self) -> None:
+        self.shortcut_manager.deactivate()
+
+    def _register_focus_anchors(self) -> None:
+        self.focus_controller.add_anchor(
+            "schema_path",
+            lambda: getattr(self.surface, "schema_entry", None),
+            description="Schema path input",
+        )
+        self.focus_controller.add_anchor(
+            "actions",
+            lambda: self.start_run_btn,
+            description="Run action controls",
+        )
+        self.focus_controller.add_anchor(
+            "diagnostics",
+            lambda: self.diagnostics_tree,
+            description="Diagnostics table",
+        )
+        self.focus_controller.add_anchor(
+            "plan",
+            lambda: self.preview_table,
+            description="Partition plan table",
+        )
+        self.focus_controller.add_anchor(
+            "failures",
+            lambda: self.failures_tree,
+            description="Failures table",
+        )
+        self.focus_controller.add_anchor(
+            "history",
+            lambda: self.history_tree,
+            description="Run history table",
+        )
+        self.focus_controller.set_default_anchor("schema_path")
+
+    def _register_shortcuts(self) -> None:
+        self.shortcut_manager.register("<F1>", "Open shortcuts help", self._show_shortcuts_help)
+        self.shortcut_manager.register("<F6>", "Focus next major section", self._focus_next_anchor)
+        self.shortcut_manager.register("<Shift-F6>", "Focus previous major section", self._focus_previous_anchor)
+        self.shortcut_manager.register_ctrl_cmd("b", "Browse schema path", self._browse_schema_path)
+        self.shortcut_manager.register_ctrl_cmd("l", "Load schema", self._load_schema)
+        self.shortcut_manager.register_ctrl_cmd("s", "Save run config", self._save_profile)
+        self.shortcut_manager.register_ctrl_cmd("o", "Load run config", self._load_profile)
+        self.shortcut_manager.register("<F5>", "Estimate workload", self._run_estimate)
+        self.shortcut_manager.register_ctrl_cmd("Return", "Start run", self._start_generation)
+        self.shortcut_manager.register("<Escape>", "Cancel active run", self._cancel_if_running)
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+C", "Copy selected table rows with headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Shift+C", "Copy selected table rows without headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+A", "Select all rows in focused table")
+        self.shortcut_manager.register_help_item("PageUp/PageDown", "Move selection by page in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Home", "Jump to first row in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+End", "Jump to last row in focused table")
+
+    def _focus_next_anchor(self) -> None:
+        self.focus_controller.focus_next()
+
+    def _focus_previous_anchor(self) -> None:
+        self.focus_controller.focus_previous()
+
+    def _cancel_if_running(self) -> None:
+        if self.lifecycle.state.is_running:
+            self._cancel_run()
+
+    def _show_shortcuts_help(self) -> None:
+        self.shortcut_manager.show_help_dialog(title="Run Center v2 Shortcuts")
 
     def _set_inspector_for_config(self) -> None:
         self.shell.set_inspector(
@@ -631,22 +770,20 @@ class RunCenterV2Screen(tk.Frame):
                 mode="mixed",
             )
             return
-        self._clear_tree(self.diagnostics_tree)
-        if self.diagnostics_tree is not None:
-            for estimate in diagnostics.estimates:
-                self.diagnostics_tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        estimate.table_name,
-                        str(estimate.estimated_rows),
-                        f"{estimate.estimated_memory_mb:.3f}",
-                        f"{estimate.estimated_write_mb:.3f}",
-                        f"{estimate.estimated_seconds:.3f}",
-                        estimate.risk_level,
-                        estimate.recommendation,
-                    ),
+        self.surface.set_diagnostics_rows(
+            [
+                (
+                    estimate.table_name,
+                    str(estimate.estimated_rows),
+                    f"{estimate.estimated_memory_mb:.3f}",
+                    f"{estimate.estimated_write_mb:.3f}",
+                    f"{estimate.estimated_seconds:.3f}",
+                    estimate.risk_level,
+                    estimate.recommendation,
                 )
+                for estimate in diagnostics.estimates
+            ]
+        )
         self.shell.set_status(f"Estimate complete: rows={diagnostics.summary.total_rows}, risk={diagnostics.summary.highest_risk}.")
         self._set_focus("diagnostics")
 
@@ -665,21 +802,19 @@ class RunCenterV2Screen(tk.Frame):
                 mode="mixed",
             )
             return
-        self._clear_tree(self.preview_table)
-        if self.preview_table is not None:
-            for entry in entries:
-                self.preview_table.insert(
-                    "",
-                    "end",
-                    values=(
-                        entry.table_name,
-                        entry.partition_id,
-                        f"{entry.start_row}-{entry.end_row}",
-                        str(entry.stage),
-                        str(entry.assigned_worker),
-                        entry.status,
-                    ),
+        self.surface.set_plan_rows(
+            [
+                (
+                    entry.table_name,
+                    entry.partition_id,
+                    f"{entry.start_row}-{entry.end_row}",
+                    str(entry.stage),
+                    str(entry.assigned_worker),
+                    entry.status,
                 )
+                for entry in entries
+            ]
+        )
         self.shell.set_status(f"Partition plan ready: partitions={len(entries)}.")
         self._set_focus("plan")
 
@@ -699,38 +834,33 @@ class RunCenterV2Screen(tk.Frame):
 
         def on_done(result: BenchmarkResult) -> None:
             self.lifecycle.transition_complete("Benchmark complete")
-            self._clear_tree(self.diagnostics_tree)
-            if self.diagnostics_tree is not None:
-                for estimate in result.estimates:
-                    self.diagnostics_tree.insert(
-                        "",
-                        "end",
-                        values=(
-                            estimate.table_name,
-                            str(estimate.estimated_rows),
-                            f"{estimate.estimated_memory_mb:.3f}",
-                            f"{estimate.estimated_write_mb:.3f}",
-                            f"{estimate.estimated_seconds:.3f}",
-                            estimate.risk_level,
-                            estimate.recommendation,
-                        ),
+            self.surface.set_diagnostics_rows(
+                [
+                    (
+                        estimate.table_name,
+                        str(estimate.estimated_rows),
+                        f"{estimate.estimated_memory_mb:.3f}",
+                        f"{estimate.estimated_write_mb:.3f}",
+                        f"{estimate.estimated_seconds:.3f}",
+                        estimate.risk_level,
+                        estimate.recommendation,
                     )
-            self._clear_tree(self.preview_table)
-            if self.preview_table is not None:
-                for entry in result.chunk_plan:
-                    partition_id = f"{entry.table_name}|stage={entry.stage}|chunk={entry.chunk_index}"
-                    self.preview_table.insert(
-                        "",
-                        "end",
-                        values=(
-                            entry.table_name,
-                            partition_id,
-                            f"{entry.start_row}-{entry.end_row}",
-                            str(entry.stage),
-                            "-",
-                            "planned",
-                        ),
+                    for estimate in result.estimates
+                ]
+            )
+            self.surface.set_plan_rows(
+                [
+                    (
+                        entry.table_name,
+                        f"{entry.table_name}|stage={entry.stage}|chunk={entry.chunk_index}",
+                        f"{entry.start_row}-{entry.end_row}",
+                        str(entry.stage),
+                        "-",
+                        "planned",
                     )
+                    for entry in result.chunk_plan
+                ]
+            )
             self.shell.set_status(f"Benchmark complete: chunks={result.chunk_summary.total_chunks}, rows={result.chunk_summary.total_rows}.")
             self._append_history("benchmark_complete", self.surface.execution_mode_var.get(), False, result.chunk_summary.total_rows)
 
@@ -795,29 +925,30 @@ class RunCenterV2Screen(tk.Frame):
 
         def on_done(result: MultiprocessRunResult) -> None:
             self.lifecycle.transition_complete("Run complete")
-            self._clear_tree(self.preview_table)
-            if self.preview_table is not None:
-                for entry in result.partition_plan:
-                    self.preview_table.insert(
-                        "",
-                        "end",
-                        values=(
-                            entry.table_name,
-                            entry.partition_id,
-                            f"{entry.start_row}-{entry.end_row}",
-                            str(entry.stage),
-                            str(entry.assigned_worker),
-                            entry.status,
-                        ),
+            self.surface.set_plan_rows(
+                [
+                    (
+                        entry.table_name,
+                        entry.partition_id,
+                        f"{entry.start_row}-{entry.end_row}",
+                        str(entry.stage),
+                        str(entry.assigned_worker),
+                        entry.status,
                     )
-            self._clear_tree(self.failures_tree)
-            if self.failures_tree is not None:
-                for failure in result.failures:
-                    self.failures_tree.insert(
-                        "",
-                        "end",
-                        values=(failure.partition_id, failure.error, str(failure.retry_count), failure.action),
+                    for entry in result.partition_plan
+                ]
+            )
+            self.surface.set_failures_rows(
+                [
+                    (
+                        failure.partition_id,
+                        failure.error,
+                        str(failure.retry_count),
+                        failure.action,
                     )
+                    for failure in result.failures
+                ]
+            )
 
             csv_count = len(result.strategy_result.csv_paths)
             sqlite_rows = sum(result.strategy_result.sqlite_counts.values())
@@ -954,6 +1085,7 @@ class ERDDesignerV2Screen(tk.Frame):
         self.view_model = ERDDesignerV2ViewModel()
         self.shell = V2ShellFrame(self, title="ERD Designer v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
+        self.shell.add_header_action("Open Classic Tool", lambda: self.app.show_screen("erd_designer"))
         self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
         self.shell.add_nav_button("tool", "ERD Tool", command=self._show_tool)
@@ -1002,6 +1134,7 @@ class LocationSelectorV2Screen(tk.Frame):
         self.view_model = LocationSelectorV2ViewModel()
         self.shell = V2ShellFrame(self, title="Location Selector v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
+        self.shell.add_header_action("Open Classic Tool", lambda: self.app.show_screen("location_selector"))
         self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
         self.shell.add_nav_button("tool", "Location Tool", command=self._show_tool)

@@ -17,12 +17,19 @@ class _ShortcutSpec:
     callback: Callable[[], None]
 
 
+@dataclass(frozen=True)
+class _ShortcutHelpItem:
+    sequence: str
+    description: str
+
+
 class ShortcutManager:
     """Centralized, route-scoped shortcut registration with a help dialog."""
 
     def __init__(self, widget: tk.Widget) -> None:
         self.widget = widget
         self._items: list[_ShortcutSpec] = []
+        self._help_items: list[_ShortcutHelpItem] = []
         self._help_dialog: tk.Toplevel | None = None
         self._active = False
         self._bound_root: tk.Misc | None = None
@@ -72,6 +79,16 @@ class ShortcutManager:
         alias = f"<Command-{shift_prefix}{key_token}>"
         self.register(primary, description, callback, aliases=[alias])
 
+    def register_help_item(self, sequence: str, description: str) -> None:
+        seq = sequence.strip()
+        desc = description.strip()
+        if seq == "" or desc == "":
+            raise ValueError(
+                "Shortcut manager: sequence and description are required for help items. "
+                "Fix: provide non-empty shortcut sequence and description."
+            )
+        self._help_items.append(_ShortcutHelpItem(seq, desc))
+
     def activate(self) -> None:
         if self._active:
             return
@@ -107,8 +124,14 @@ class ShortcutManager:
             if bind_id:
                 self._bound_ids.setdefault(sequence, []).append(bind_id)
 
+    @property
+    def is_active(self) -> bool:
+        return self._active
+
     def items(self) -> list[tuple[str, str]]:
-        return [(spec.sequences[0], spec.description) for spec in self._items]
+        items = [(spec.sequences[0], spec.description) for spec in self._items]
+        items.extend((item.sequence, item.description) for item in self._help_items)
+        return items
 
     def show_help_dialog(self, *, title: str = "Keyboard shortcuts") -> None:
         if self._help_dialog is not None and self._help_dialog.winfo_exists():

@@ -131,6 +131,15 @@ class TableView(ttk.Frame):
         self._pagination_enabled = False
         self._page_size = 200
         self._page_index = 0
+        self._large_data_enabled = False
+        self._large_data_threshold_rows = 1000
+        self._large_data_chunk_size = 200
+        self._large_data_auto_pagination = False
+        self._large_data_auto_page_size = 200
+        self._auto_pagination_applied = False
+        self._render_job_token = 0
+        self._render_after_id: object | None = None
+        self._is_rendering = False
 
         self.pagination_bar = ttk.Frame(self)
         self.pagination_bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
@@ -155,15 +164,21 @@ class TableView(ttk.Frame):
     def clear(self) -> None:
         """Remove all rows from the Treeview."""
 
+        self.cancel_pending_render()
         self._all_rows = []
         self._page_index = 0
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        try:
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+        except tk.TclError:
+            pass
         self._update_page_controls(total_pages=0, start=0, end=0)
 
     def set_rows(
         self,
         rows: list[dict[str, object]] | list[list[object]] | list[tuple[object, ...]],
+        *,
+        non_blocking: bool | None = None,
     ) -> None:
         """Load rows, normalizing shapes and auto-sizing existing columns."""
 
@@ -171,7 +186,13 @@ class TableView(ttk.Frame):
         if not self._columns and cols:
             self.set_columns(cols)
 
+        self.cancel_pending_render()
         self._all_rows = normalized
+        self._apply_large_data_auto_paging(len(normalized))
+        should_chunk = bool(non_blocking) if non_blocking is not None else self._should_chunk_rows(len(normalized))
+        if should_chunk:
+            self._render_current_rows_chunked()
+            return
         self._render_current_rows()
 
     def auto_size_columns(self, normalized_rows: list[list[object]] | None = None) -> None:
@@ -189,9 +210,52 @@ class TableView(ttk.Frame):
     def page_size(self) -> int:
         return self._page_size
 
+    @property
+    def is_rendering(self) -> bool:
+        return self._is_rendering
+
+    def configure_large_data_mode(
+        self,
+        *,
+        enabled: bool,
+        threshold_rows: int = 1000,
+        chunk_size: int = 200,
+        auto_pagination: bool = False,
+        auto_page_size: int = 200,
+    ) -> None:
+        self._large_data_enabled = bool(enabled)
+        self._large_data_threshold_rows = self._positive_int(
+            threshold_rows,
+            message="TableView large-data mode: threshold_rows must be > 0. Fix: set a positive threshold.",
+        )
+        self._large_data_chunk_size = self._positive_int(
+            chunk_size,
+            message="TableView large-data mode: chunk_size must be > 0. Fix: set a positive chunk size.",
+        )
+        self._large_data_auto_pagination = bool(auto_pagination)
+        self._large_data_auto_page_size = self._positive_int(
+            auto_page_size,
+            message="TableView large-data mode: auto_page_size must be > 0. Fix: set a positive page size.",
+        )
+        if not self._large_data_enabled:
+            self._auto_pagination_applied = False
+            return
+        self._apply_large_data_auto_paging(len(self._all_rows))
+
+    def cancel_pending_render(self) -> None:
+        self._render_job_token += 1
+        if self._render_after_id is not None:
+            try:
+                self.after_cancel(self._render_after_id)
+            except tk.TclError:
+                pass
+            self._render_after_id = None
+        self._is_rendering = False
+
     def enable_pagination(self, *, page_size: int = 200) -> None:
         """Enable built-in page controls for large row previews."""
 
+        self._auto_pagination_applied = False
         self.set_page_size(page_size)
         self._pagination_enabled = True
         self.pagination_bar.grid()
@@ -200,6 +264,7 @@ class TableView(ttk.Frame):
     def disable_pagination(self) -> None:
         """Disable pagination and render all currently loaded rows."""
 
+        self._auto_pagination_applied = False
         self._pagination_enabled = False
         self._page_index = 0
         self.pagination_bar.grid_remove()
@@ -231,6 +296,7 @@ class TableView(ttk.Frame):
         self._render_current_rows()
 
     def _render_current_rows(self) -> None:
+        self.cancel_pending_render()
         if self._pagination_enabled:
             page_rows, page_index, total_pages = paginate_rows(
                 self._all_rows,
@@ -250,11 +316,81 @@ class TableView(ttk.Frame):
         self._render_rows(self._all_rows)
         self._update_page_controls(total_pages=0, start=0, end=0)
 
+    def _render_current_rows_chunked(self) -> None:
+        rows_to_render: list[list[object]]
+        total_pages = 0
+        start = 0
+        end = 0
+        if self._pagination_enabled:
+            page_rows, page_index, total_pages = paginate_rows(
+                self._all_rows,
+                page_size=self._page_size,
+                page_index=self._page_index,
+            )
+            self._page_index = page_index
+            rows_to_render = page_rows
+            if page_rows:
+                start = page_index * self._page_size + 1
+                end = start + len(page_rows) - 1
+        else:
+            rows_to_render = list(self._all_rows)
+
+        try:
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+        except tk.TclError:
+            self.cancel_pending_render()
+            return
+        if not self._widget_exists():
+            self.cancel_pending_render()
+            return
+
+        token = self._render_job_token
+        chunk_size = self._large_data_chunk_size if self._large_data_chunk_size > 0 else 200
+        index_ref = [0]
+        self._is_rendering = True
+
+        def _pump() -> None:
+            if token != self._render_job_token:
+                return
+            if not self._widget_exists():
+                self.cancel_pending_render()
+                return
+
+            start_idx = index_ref[0]
+            end_idx = min(len(rows_to_render), start_idx + chunk_size)
+            try:
+                for values in rows_to_render[start_idx:end_idx]:
+                    self.tree.insert("", tk.END, values=values)
+            except tk.TclError:
+                self.cancel_pending_render()
+                return
+            index_ref[0] = end_idx
+
+            if end_idx < len(rows_to_render):
+                self._schedule_render_step(_pump)
+                return
+
+            self._render_after_id = None
+            self._is_rendering = False
+            if self._columns:
+                self.auto_size_columns(rows_to_render)
+            if self._pagination_enabled:
+                self._update_page_controls(total_pages=total_pages, start=start, end=end)
+            else:
+                self._update_page_controls(total_pages=0, start=0, end=0)
+
+        self._schedule_render_step(_pump)
+
     def _render_rows(self, rows: list[list[object]]) -> None:
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        for values in rows:
-            self.tree.insert("", tk.END, values=values)
+        try:
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+            for values in rows:
+                self.tree.insert("", tk.END, values=values)
+        except tk.TclError:
+            self.cancel_pending_render()
+            return
         if self._columns:
             self.auto_size_columns(rows)
 
@@ -278,3 +414,47 @@ class TableView(ttk.Frame):
         self.next_btn.configure(
             state=(tk.NORMAL if self._page_index + 1 < total_pages else tk.DISABLED)
         )
+
+    def _schedule_render_step(self, callback) -> None:
+        if not self._widget_exists():
+            self.cancel_pending_render()
+            return
+        try:
+            self._render_after_id = self.after(0, callback)
+        except tk.TclError:
+            self.cancel_pending_render()
+
+    def _apply_large_data_auto_paging(self, row_count: int) -> None:
+        if not self._large_data_enabled or not self._large_data_auto_pagination:
+            return
+        should_page = row_count >= self._large_data_threshold_rows
+        if should_page:
+            if not self._pagination_enabled or self._auto_pagination_applied:
+                self._page_size = self._large_data_auto_page_size
+                self._page_index = 0
+                self._pagination_enabled = True
+                self.pagination_bar.grid()
+                self._auto_pagination_applied = True
+            return
+        if self._auto_pagination_applied and self._pagination_enabled:
+            self._pagination_enabled = False
+            self._page_index = 0
+            self.pagination_bar.grid_remove()
+            self._auto_pagination_applied = False
+
+    def _should_chunk_rows(self, row_count: int) -> bool:
+        if not self._large_data_enabled:
+            return False
+        return row_count >= self._large_data_threshold_rows
+
+    def _widget_exists(self) -> bool:
+        try:
+            return bool(self.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def _positive_int(self, value: int, *, message: str) -> int:
+        out = int(value)
+        if out <= 0:
+            raise ValueError(message)
+        return out

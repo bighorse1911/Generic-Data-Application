@@ -92,41 +92,79 @@ class RunWorkflowSurface(ttk.Frame):
         self.load_schema_btn.grid(row=0, column=5, sticky="ew")
 
         ttk.Label(self.config_card, text="Target tables").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.target_tables_var).grid(row=1, column=1, sticky="ew", padx=(8, 20), pady=(6, 0))
+        self.target_tables_entry = ttk.Entry(self.config_card, textvariable=self.target_tables_var)
+        self.target_tables_entry.grid(row=1, column=1, sticky="ew", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="Row overrides JSON").grid(row=1, column=2, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.row_overrides_var).grid(row=1, column=3, columnspan=3, sticky="ew", padx=(8, 0), pady=(6, 0))
+        self.row_overrides_entry = ttk.Entry(self.config_card, textvariable=self.row_overrides_var)
+        self.row_overrides_entry.grid(row=1, column=3, columnspan=3, sticky="ew", padx=(8, 0), pady=(6, 0))
 
         ttk.Label(self.config_card, text="Output").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        ttk.Combobox(self.config_card, textvariable=self.output_mode_var, state="readonly", values=OUTPUT_MODES, width=12).grid(row=2, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.output_mode_combo = ttk.Combobox(
+            self.config_card,
+            textvariable=self.output_mode_var,
+            state="readonly",
+            values=OUTPUT_MODES,
+            width=12,
+        )
+        self.output_mode_combo.grid(row=2, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="Execution mode").grid(row=2, column=2, sticky="w", pady=(6, 0))
-        ttk.Combobox(self.config_card, textvariable=self.execution_mode_var, state="readonly", values=EXECUTION_MODES, width=20).grid(row=2, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.execution_mode_combo = ttk.Combobox(
+            self.config_card,
+            textvariable=self.execution_mode_var,
+            state="readonly",
+            values=EXECUTION_MODES,
+            width=20,
+        )
+        self.execution_mode_combo.grid(row=2, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="Profile").grid(row=2, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.profile_name_var, width=16).grid(row=2, column=5, sticky="w", pady=(6, 0))
+        self.profile_name_entry = ttk.Entry(self.config_card, textvariable=self.profile_name_var, width=16)
+        self.profile_name_entry.grid(row=2, column=5, sticky="w", pady=(6, 0))
 
         ttk.Label(self.config_card, text="Chunk").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.chunk_size_rows_var, width=10).grid(row=3, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.chunk_size_rows_entry = ttk.Entry(self.config_card, textvariable=self.chunk_size_rows_var, width=10)
+        self.chunk_size_rows_entry.grid(row=3, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="Workers").grid(row=3, column=2, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.worker_count_var, width=10).grid(row=3, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.worker_count_entry = ttk.Entry(self.config_card, textvariable=self.worker_count_var, width=10)
+        self.worker_count_entry.grid(row=3, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="Inflight").grid(row=3, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.max_inflight_chunks_var, width=10).grid(row=3, column=5, sticky="w", pady=(6, 0))
+        self.max_inflight_chunks_entry = ttk.Entry(self.config_card, textvariable=self.max_inflight_chunks_var, width=10)
+        self.max_inflight_chunks_entry.grid(row=3, column=5, sticky="w", pady=(6, 0))
 
         ttk.Label(self.config_card, text="Preview target").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.preview_row_target_var, width=10).grid(row=4, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.preview_row_target_entry = ttk.Entry(self.config_card, textvariable=self.preview_row_target_var, width=10)
+        self.preview_row_target_entry.grid(row=4, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="Page size").grid(row=4, column=2, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.preview_page_size_var, width=10).grid(row=4, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.preview_page_size_entry = ttk.Entry(self.config_card, textvariable=self.preview_page_size_var, width=10)
+        self.preview_page_size_entry.grid(row=4, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="SQLite batch").grid(row=4, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.sqlite_batch_size_var, width=10).grid(row=4, column=5, sticky="w", pady=(6, 0))
+        self.sqlite_batch_size_entry = ttk.Entry(self.config_card, textvariable=self.sqlite_batch_size_var, width=10)
+        self.sqlite_batch_size_entry.grid(row=4, column=5, sticky="w", pady=(6, 0))
 
         ttk.Label(self.config_card, text="CSV buffer").grid(row=5, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.csv_buffer_rows_var, width=10).grid(row=5, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.csv_buffer_rows_entry = ttk.Entry(self.config_card, textvariable=self.csv_buffer_rows_var, width=10)
+        self.csv_buffer_rows_entry.grid(row=5, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="FK cache").grid(row=5, column=2, sticky="w", pady=(6, 0))
-        ttk.Combobox(self.config_card, textvariable=self.fk_cache_mode_var, state="readonly", values=FK_CACHE_MODES, width=12).grid(row=5, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.fk_cache_mode_combo = ttk.Combobox(
+            self.config_card,
+            textvariable=self.fk_cache_mode_var,
+            state="readonly",
+            values=FK_CACHE_MODES,
+            width=12,
+        )
+        self.fk_cache_mode_combo.grid(row=5, column=3, sticky="w", padx=(8, 20), pady=(6, 0))
         ttk.Label(self.config_card, text="Retry").grid(row=5, column=4, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.retry_limit_var, width=10).grid(row=5, column=5, sticky="w", pady=(6, 0))
+        self.retry_limit_entry = ttk.Entry(self.config_card, textvariable=self.retry_limit_var, width=10)
+        self.retry_limit_entry.grid(row=5, column=5, sticky="w", pady=(6, 0))
 
         ttk.Label(self.config_card, text="IPC queue").grid(row=6, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(self.config_card, textvariable=self.ipc_queue_size_var, width=10).grid(row=6, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
-        ttk.Checkbutton(self.config_card, text="Strict deterministic chunking", variable=self.strict_chunking_var).grid(row=6, column=2, columnspan=3, sticky="w", pady=(6, 0))
+        self.ipc_queue_size_entry = ttk.Entry(self.config_card, textvariable=self.ipc_queue_size_var, width=10)
+        self.ipc_queue_size_entry.grid(row=6, column=1, sticky="w", padx=(8, 20), pady=(6, 0))
+        self.strict_chunking_check = ttk.Checkbutton(
+            self.config_card,
+            text="Strict deterministic chunking",
+            variable=self.strict_chunking_var,
+        )
+        self.strict_chunking_check.grid(row=6, column=2, columnspan=3, sticky="w", pady=(6, 0))
 
         actions = ttk.Frame(self.config_card)
         actions.grid(row=7, column=0, columnspan=6, sticky="ew", pady=(10, 0))
@@ -219,6 +257,7 @@ class RunWorkflowSurface(ttk.Frame):
         self.worker_table = None
         self.failures_table = None
         self.history_table = None
+        self._adapter_by_tree: dict[ttk.Treeview, VirtualTableAdapter] = {}
 
         if "diagnostics" in self._tab_by_key:
             self.diagnostics_table = VirtualTableAdapter(
@@ -233,7 +272,13 @@ class RunWorkflowSurface(ttk.Frame):
                     TableColumnSpec("recommendation", "Recommendation", 360, stretch=True),
                 ],
                 height=8,
+                large_data_enabled=True,
+                large_data_threshold_rows=1000,
+                large_data_chunk_size=200,
+                large_data_auto_pagination=True,
+                large_data_auto_page_size=200,
             )
+            self._adapter_by_tree[self.diagnostics_table.tree] = self.diagnostics_table
 
         if "plan" in self._tab_by_key:
             self.plan_table = VirtualTableAdapter(
@@ -247,7 +292,13 @@ class RunWorkflowSurface(ttk.Frame):
                     TableColumnSpec("status", "Status", 100),
                 ],
                 height=8,
+                large_data_enabled=True,
+                large_data_threshold_rows=1000,
+                large_data_chunk_size=200,
+                large_data_auto_pagination=True,
+                large_data_auto_page_size=200,
             )
+            self._adapter_by_tree[self.plan_table.tree] = self.plan_table
 
         if "workers" in self._tab_by_key:
             self.worker_table = VirtualTableAdapter(
@@ -262,7 +313,13 @@ class RunWorkflowSurface(ttk.Frame):
                     TableColumnSpec("state", "State", 100),
                 ],
                 height=8,
+                large_data_enabled=True,
+                large_data_threshold_rows=1000,
+                large_data_chunk_size=200,
+                large_data_auto_pagination=True,
+                large_data_auto_page_size=200,
             )
+            self._adapter_by_tree[self.worker_table.tree] = self.worker_table
 
         if "failures" in self._tab_by_key:
             self.failures_table = VirtualTableAdapter(
@@ -274,7 +331,11 @@ class RunWorkflowSurface(ttk.Frame):
                     TableColumnSpec("action", "Action", 120),
                 ],
                 height=8,
+                large_data_enabled=True,
+                large_data_threshold_rows=1000,
+                large_data_chunk_size=200,
             )
+            self._adapter_by_tree[self.failures_table.tree] = self.failures_table
 
         if "history" in self._tab_by_key:
             self.history_table = VirtualTableAdapter(
@@ -287,7 +348,11 @@ class RunWorkflowSurface(ttk.Frame):
                     TableColumnSpec("rows", "Rows", 110),
                 ],
                 height=8,
+                large_data_enabled=True,
+                large_data_threshold_rows=1000,
+                large_data_chunk_size=200,
             )
+            self._adapter_by_tree[self.history_table.tree] = self.history_table
 
         self.diagnostics_tree = self.diagnostics_table.tree if self.diagnostics_table else None
         self.preview_table = self.plan_table.tree if self.plan_table else None
@@ -360,8 +425,32 @@ class RunWorkflowSurface(ttk.Frame):
     def clear_tree(self, tree: ttk.Treeview | None) -> None:
         if tree is None:
             return
+        adapter = self._adapter_by_tree.get(tree)
+        if adapter is not None:
+            adapter.clear()
+            return
         for item in tree.get_children():
             tree.delete(item)
+
+    def set_diagnostics_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
+        if self.diagnostics_table is not None:
+            self.diagnostics_table.set_rows(rows)
+
+    def set_plan_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
+        if self.plan_table is not None:
+            self.plan_table.set_rows(rows)
+
+    def set_worker_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
+        if self.worker_table is not None:
+            self.worker_table.set_rows(rows)
+
+    def set_failures_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
+        if self.failures_table is not None:
+            self.failures_table.set_rows(rows)
+
+    def set_history_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
+        if self.history_table is not None:
+            self.history_table.set_rows(rows)
 
     @property
     def run_action_buttons(self) -> list[object]:

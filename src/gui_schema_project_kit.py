@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from src.generator_project import generate_project_rows
+from src.gui_kit.accessibility import FocusController
 from src.gui_kit.column_chooser import ColumnChooserDialog
 from src.gui_kit.feedback import ToastCenter
 from src.gui_kit.forms import FormBuilder
@@ -44,6 +45,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         self._root_content = self.scroll.content
         self.toast_center = ToastCenter(self)
         self.shortcut_manager = ShortcutManager(self)
+        self.focus_controller = FocusController(self)
         self._preview_source_table = ""
         self._preview_source_rows: list[dict[str, object]] = []
         self._preview_column_preferences: dict[str, list[str]] = {}
@@ -62,6 +64,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.build_relationships_panel()
         self.build_generate_panel()
         self.build_status_bar()
+        self._register_focus_anchors()
         self._register_shortcuts()
         self._suspend_project_meta_dirty = False
         self.project_name_var.trace_add("write", self._on_project_meta_changed)
@@ -75,6 +78,16 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
 
         # Keep default platform theme; dark mode is intentionally disabled.
         self.kit_dark_mode_enabled = False
+
+    def on_show(self) -> None:
+        if hasattr(self, "shortcut_manager"):
+            self.shortcut_manager.activate()
+        if hasattr(self, "focus_controller"):
+            self.focus_controller.focus_default()
+
+    def on_hide(self) -> None:
+        if hasattr(self, "shortcut_manager"):
+            self.shortcut_manager.deactivate()
 
     def _run_job_async(self, worker, on_done, on_failed) -> None:
         self.safe_threaded_job(worker, on_done, on_failed)
@@ -472,6 +485,13 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
 
         self.preview_table = TableView(right_preview, height=12)
         self.preview_table.grid(row=0, column=0, sticky="nsew")
+        self.preview_table.configure_large_data_mode(
+            enabled=True,
+            threshold_rows=1000,
+            chunk_size=150,
+            auto_pagination=False,
+            auto_page_size=100,
+        )
         self.preview_table.enable_pagination(page_size=100)
         self.preview_tree = self.preview_table.tree
         return panel
@@ -672,12 +692,55 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.mark_dirty("project settings")
 
     def _register_shortcuts(self) -> None:
-        self.shortcut_manager.register("<Control-s>", "Save project JSON", self._save_project)
-        self.shortcut_manager.register("<Control-o>", "Load project JSON", self._load_project)
-        self.shortcut_manager.register("<Control-f>", "Focus table search", self._focus_table_search)
+        self.shortcut_manager.register_ctrl_cmd("s", "Save project JSON", self._save_project)
+        self.shortcut_manager.register_ctrl_cmd("o", "Load project JSON", self._load_project)
+        self.shortcut_manager.register_ctrl_cmd("f", "Focus table search", self._focus_table_search)
+        self.shortcut_manager.register_ctrl_cmd(
+            "f",
+            "Focus column search",
+            self._focus_columns_search,
+            shift=True,
+        )
+        self.shortcut_manager.register_ctrl_cmd("g", "Focus relationship search", self._focus_fk_search)
         self.shortcut_manager.register("<F5>", "Run validation", self._run_validation)
-        self.shortcut_manager.register("<Control-Return>", "Generate data", self._on_generate_project)
+        self.shortcut_manager.register_ctrl_cmd("Return", "Generate data", self._on_generate_project)
+        self.shortcut_manager.register("<F6>", "Focus next major section", self._focus_next_anchor)
+        self.shortcut_manager.register("<Shift-F6>", "Focus previous major section", self._focus_previous_anchor)
         self.shortcut_manager.register("<F1>", "Open shortcuts help", self._show_shortcuts_help)
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+C", "Copy selected table rows with headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Shift+C", "Copy selected table rows without headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+A", "Select all rows in focused table")
+        self.shortcut_manager.register_help_item("PageUp/PageDown", "Move selection by page in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Home", "Jump to first row in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+End", "Jump to last row in focused table")
+
+    def _register_focus_anchors(self) -> None:
+        self.focus_controller.add_anchor(
+            "project_name",
+            lambda: getattr(self, "project_name_entry", None),
+            description="Project name",
+        )
+        self.focus_controller.add_anchor(
+            "tables_search",
+            lambda: getattr(getattr(self, "tables_search", None), "entry", None),
+            description="Table search",
+        )
+        self.focus_controller.add_anchor(
+            "columns_search",
+            lambda: getattr(getattr(self, "columns_search", None), "entry", None),
+            description="Columns search",
+        )
+        self.focus_controller.add_anchor(
+            "fk_search",
+            lambda: getattr(getattr(self, "fk_search", None), "entry", None),
+            description="Relationships search",
+        )
+        self.focus_controller.add_anchor(
+            "preview_table",
+            lambda: getattr(self, "preview_table_combo", None),
+            description="Preview table selector",
+        )
+        self.focus_controller.set_default_anchor("project_name")
 
     def _run_validation(self) -> None:
         super()._run_validation()
@@ -686,6 +749,20 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
     def _focus_table_search(self) -> None:
         if hasattr(self, "tables_search"):
             self.tables_search.focus()
+
+    def _focus_columns_search(self) -> None:
+        if hasattr(self, "columns_search"):
+            self.columns_search.focus()
+
+    def _focus_fk_search(self) -> None:
+        if hasattr(self, "fk_search"):
+            self.fk_search.focus()
+
+    def _focus_next_anchor(self) -> None:
+        self.focus_controller.focus_next()
+
+    def _focus_previous_anchor(self) -> None:
+        self.focus_controller.focus_previous()
 
     def _show_shortcuts_help(self) -> None:
         self.shortcut_manager.show_help_dialog(title="Schema Project Shortcuts")

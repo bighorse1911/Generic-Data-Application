@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import tkinter as tk
 from tkinter import ttk
 
+from src.gui_kit.table_keyboard import install_treeview_keyboard_support
+
 __all__ = ["InlineValidationEntry", "InlineValidationSummary"]
 
 
@@ -67,6 +69,7 @@ class InlineValidationSummary(ttk.Frame):
 
         self.tree.bind("<Double-1>", self._on_tree_activate)
         self.tree.bind("<Return>", self._on_tree_activate)
+        install_treeview_keyboard_support(self.tree, include_headers=True)
 
     def set_on_jump(self, callback: Callable[[InlineValidationEntry], None] | None) -> None:
         self._on_jump = callback

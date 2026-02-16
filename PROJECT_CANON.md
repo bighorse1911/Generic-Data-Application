@@ -20,6 +20,11 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Schema route consolidation (completed): `schema_project` is the single primary schema authoring route; hidden fallback routes remain `schema_project_kit` (alias to primary) and deprecated rollback route `schema_project_legacy` for one release cycle.
 - Async lifecycle consistency (completed): run screens and schema-kit long jobs now use shared lifecycle + teardown-safe UI dispatch primitives; legacy schema fallback route includes blocker-level teardown-safe callback guards.
 - Validation/error surface consistency (completed): interactive routes use shared actionable error/warning surfaces with route-standardized titles; read-only routes remain intentionally outside runtime error plumbing.
+- Accessibility and keyboard-flow pass (completed): core interactive routes now use route-scoped shortcut activation/deactivation, explicit focus-anchor traversal (`F6`/`Shift+F6`), shortcut help affordances, and shared non-destructive dense-table keyboard ergonomics.
+- Large-data responsiveness pass (completed): core interactive routes now use shared chunked non-blocking Treeview refresh for large datasets; run-result tables auto-page at large row counts; schema preview routes retain explicit/legacy paging contracts.
+- GUI regression/usability hardening pass (completed): v2 route transitions, guarded navigation outcomes, bridge-route parity, and run-center cancel/fallback state transitions now have explicit scenario-based regression coverage.
+- Native v2 missing-route parity pass (completed): new additive native routes `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2` now exist alongside classic routes; `schema_studio_v2` schema handoff now targets `schema_project_v2`.
+- Specialist v2 route restoration (completed): `erd_designer_v2` and `location_selector_v2` remain native v2 routes with explicit open-classic tool actions; `home_v2` now uses a scrollable cards region so specialist routes remain accessible as v2 route inventory grows.
 
 ## Architecture
 - Tkinter GUI
@@ -34,7 +39,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `CollapsiblePanel`: collapsible sections for large screens
   - `Tabs`: notebook wrapper for sectioned workflows
   - `FormBuilder`: consistent label+input row construction
-  - `TableView`: Treeview wrapper with both scrollbars + column sizing + optional pagination controls
+  - `TableView`: Treeview wrapper with both scrollbars + column sizing + optional pagination controls + chunked non-blocking large-data render path
   - `ToastCenter`: non-blocking success/warn/error notifications
   - `SearchEntry`: deterministic debounce search input for list/table filtering
   - `TokenEntry`: chip-style editing for comma-separated column-name fields
@@ -42,13 +47,14 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `ShortcutManager`: centralized keyboard shortcuts + shortcuts help dialog
   - `ColumnChooserDialog`: modal column visibility + display-order chooser for table previews
   - `InlineValidationSummary`: inline validation issue list with jump-to-editor actions
+  - `accessibility`: focus-anchor controller helpers for route-level keyboard traversal
   - `theme`: optional style helpers (kit screens now use regular/default platform theme)
   - `run_lifecycle`: shared start/cancel/progress/complete/fail controller and runtime event normalization
   - `ui_dispatch`: shared teardown-safe Tk callback dispatcher for thread->UI event marshalling
   - `job_lifecycle`: shared non-run async lifecycle controller for kit long jobs
   - `error_contract`: shared actionable message shape detection/normalization helpers
   - `error_surface`: shared actionable error formatter + dialog/status/inline routing adapter
-  - `table_virtual`: shared table adapter for large-row pagination/clear/reset behavior
+  - `table_virtual`: shared table adapter for large-row pagination/clear/reset behavior with large-data mode passthrough
   - `run_models`: shared run workflow view model + output/execution mode coercion
   - `run_commands`: shared adapters delegating to canonical performance/multiprocess runtime modules
 
@@ -69,8 +75,13 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Home screen includes a dedicated route to the performance workbench page.
 - Home screen includes a dedicated route to the execution orchestrator page.
 - Home screen includes a dedicated route to the full visual redesign experience (`home_v2`) with native v2 specialist routes and temporary hidden rollback bridge routes.
-- Schema Studio v2 includes dirty-state guarded transitions to the primary schema authoring route (`schema_project`); fallback schema routes remain hidden rollback paths.
+- Home v2 now includes dedicated route cards for `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2` in addition to the existing v2 route family.
+- Schema Studio v2 includes dirty-state guarded transitions to native `schema_project_v2` with fallback dirty-state compatibility against classic `schema_project`.
 - Run workflow screens (`run_center_v2`, `performance_workbench`, `execution_orchestrator`) now use a shared section model (config, controls, progress strip, capability-gated results tabs) and shared lifecycle/error/table adapters.
+- Additive native run routes `performance_workbench_v2` and `execution_orchestrator_v2` reuse shared run-workflow/lifecycle primitives while preserving classic routes for rollback safety.
+- Run workflow screens auto-page heavy result grids and use bulk adapter row-refresh APIs to keep UI updates responsive on large datasets.
+- Core interactive routes (`schema_project`, `schema_project_legacy`, `performance_workbench`, `execution_orchestrator`, `run_center_v2`) now use route-scoped shortcut lifecycle (`on_show`/`on_hide`) and explicit focus-anchor traversal patterns.
+- v2 route family (`home_v2`, `schema_studio_v2`, `run_center_v2`, native specialist routes, and hidden `*_v2_bridge` routes) is covered by explicit scenario acceptance checks for transition stability, guarded-navigation outcomes, and cancel/fallback usability behavior.
 - Run workflow screens and schema-kit long jobs use teardown-safe thread->UI dispatch and centralized lifecycle transition helpers to reduce callback noise during Tk teardown.
 - ERD designer includes drag-to-reposition table nodes with relationship lines redrawn automatically.
 - ERD designer includes export actions for SVG, PNG, and JPEG diagram outputs with actionable error guidance.

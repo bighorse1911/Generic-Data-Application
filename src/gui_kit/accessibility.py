@@ -36,6 +36,7 @@ class FocusController:
         self._anchors: dict[str, FocusAnchor] = {}
         self._order: list[str] = []
         self._default_anchor_id: str | None = None
+        self._last_focused_anchor_id: str | None = None
 
     def add_anchor(
         self,
@@ -68,7 +69,13 @@ class FocusController:
         anchor = self._anchors.get(key)
         if anchor is None:
             return False
-        return safe_focus(anchor.resolver())
+        widget = self._resolve_focusable_widget(anchor)
+        if widget is None:
+            return False
+        focused = safe_focus(widget)
+        if focused:
+            self._last_focused_anchor_id = key
+        return focused
 
     def focus_default(self) -> bool:
         if self._default_anchor_id is None:
@@ -78,13 +85,38 @@ class FocusController:
     def focus_next(self, *, delta: int = 1) -> bool:
         if not self._order:
             return False
-        if self._default_anchor_id and self._default_anchor_id in self._order:
-            current_idx = self._order.index(self._default_anchor_id)
+        step = -1 if int(delta) < 0 else 1
+        start_anchor = self._last_focused_anchor_id
+        if start_anchor is None:
+            start_anchor = self._default_anchor_id
+        if start_anchor in self._order:
+            current_idx = self._order.index(start_anchor)
         else:
-            current_idx = 0
-        target_idx = (current_idx + int(delta)) % len(self._order)
-        self._default_anchor_id = self._order[target_idx]
-        return self.focus_default()
+            current_idx = -1 if step > 0 else 0
+
+        for offset in range(1, len(self._order) + 1):
+            target_idx = (current_idx + (offset * step)) % len(self._order)
+            target_id = self._order[target_idx]
+            if self.focus(target_id):
+                return True
+        return False
+
+    def focus_previous(self) -> bool:
+        return self.focus_next(delta=-1)
 
     def anchor_ids(self) -> tuple[str, ...]:
         return tuple(self._order)
+
+    @staticmethod
+    def _resolve_focusable_widget(anchor: FocusAnchor) -> tk.Widget | None:
+        widget = anchor.resolver()
+        if widget is None:
+            return None
+        try:
+            if not bool(widget.winfo_exists()):
+                return None
+            if not bool(widget.winfo_viewable()):
+                return None
+        except tk.TclError:
+            return None
+        return widget

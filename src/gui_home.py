@@ -25,6 +25,9 @@ from src.gui_kit.ui_dispatch import UIDispatcher
 from src.gui_route_policy import SCHEMA_DEPRECATED_ROUTES
 from src.gui_route_policy import SCHEMA_FALLBACK_ROUTES
 from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
+from src.gui_route_policy import ORCHESTRATOR_V2_ROUTE
+from src.gui_route_policy import PERFORMANCE_V2_ROUTE
+from src.gui_route_policy import SCHEMA_V2_ROUTE
 from src.gui_schema_project import SchemaProjectDesignerScreen
 from src.gui_schema_project_kit import SchemaProjectDesignerKitScreen
 from src.gui_tools import ERDDesignerToolFrame
@@ -77,12 +80,88 @@ class SchemaProjectLegacyFallbackScreen(SchemaProjectDesignerScreen):
     ERROR_DIALOG_TITLE = "Schema project legacy error"
     WARNING_DIALOG_TITLE = "Schema project legacy warning"
 
+    def __init__(self, parent: tk.Widget, app: "App", cfg: AppConfig) -> None:
+        super().__init__(parent, app, cfg)
+        self.shortcut_manager = ShortcutManager(self)
+        self.focus_controller = FocusController(self)
+        self._register_legacy_focus_anchors()
+        self._register_legacy_shortcuts()
+
+    def _register_legacy_focus_anchors(self) -> None:
+        self.focus_controller.add_anchor(
+            "tables_list",
+            lambda: getattr(self, "tables_list", None),
+            description="Tables list",
+        )
+        self.focus_controller.add_anchor(
+            "column_editor",
+            lambda: getattr(self, "col_name_entry", None),
+            description="Column name editor",
+        )
+        self.focus_controller.add_anchor(
+            "fk_editor",
+            lambda: getattr(self, "fk_parent_combo", None),
+            description="FK parent table selector",
+        )
+        self.focus_controller.add_anchor(
+            "preview_table",
+            lambda: getattr(self, "preview_table_combo", None),
+            description="Preview table selector",
+        )
+        self.focus_controller.set_default_anchor("tables_list")
+
+    def _register_legacy_shortcuts(self) -> None:
+        self.shortcut_manager.register_ctrl_cmd("s", "Save project JSON", self._save_project)
+        self.shortcut_manager.register_ctrl_cmd("o", "Load project JSON", self._load_project)
+        self.shortcut_manager.register_ctrl_cmd("f", "Focus tables list", self._focus_tables_list)
+        self.shortcut_manager.register_ctrl_cmd(
+            "f",
+            "Focus column editor",
+            self._focus_column_editor,
+            shift=True,
+        )
+        self.shortcut_manager.register_ctrl_cmd("g", "Focus FK editor", self._focus_fk_editor)
+        self.shortcut_manager.register("<F5>", "Run validation", self._run_validation)
+        self.shortcut_manager.register_ctrl_cmd("Return", "Generate data", self._on_generate_project)
+        self.shortcut_manager.register("<F6>", "Focus next major section", self._focus_next_anchor)
+        self.shortcut_manager.register("<Shift-F6>", "Focus previous major section", self._focus_previous_anchor)
+        self.shortcut_manager.register("<F1>", "Open shortcuts help", self._show_shortcuts_help)
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+C", "Copy selected table rows with headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Shift+C", "Copy selected table rows without headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+A", "Select all rows in focused table")
+        self.shortcut_manager.register_help_item("PageUp/PageDown", "Move selection by page in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Home", "Jump to first row in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+End", "Jump to last row in focused table")
+
+    def _focus_tables_list(self) -> None:
+        self.focus_controller.focus("tables_list")
+
+    def _focus_column_editor(self) -> None:
+        self.focus_controller.focus("column_editor")
+
+    def _focus_fk_editor(self) -> None:
+        self.focus_controller.focus("fk_editor")
+
+    def _focus_next_anchor(self) -> None:
+        self.focus_controller.focus_next()
+
+    def _focus_previous_anchor(self) -> None:
+        self.focus_controller.focus_previous()
+
+    def _show_shortcuts_help(self) -> None:
+        self.shortcut_manager.show_help_dialog(title="Schema Project Legacy Shortcuts")
+
     def on_show(self) -> None:
+        self.shortcut_manager.activate()
+        self.focus_controller.focus_default()
         if "schema_project_legacy" in SCHEMA_DEPRECATED_ROUTES and hasattr(self, "status_var"):
             self.status_var.set(
                 "Schema Project Legacy is deprecated and retained as hidden rollback fallback. "
                 "Fix: use 'schema_project' for primary authoring."
             )
+
+    def on_hide(self) -> None:
+        self.shortcut_manager.deactivate()
 
 
 class PerformanceWorkbenchScreen(ttk.Frame):
@@ -99,6 +178,7 @@ class PerformanceWorkbenchScreen(ttk.Frame):
         header.pack(fill="x", pady=(0, 8))
         ttk.Button(header, text="\u2190 Back", command=self.app.go_home).pack(side="left")
         ttk.Label(header, text="Performance Workbench", font=("Segoe UI", 16, "bold")).pack(side="left", padx=(10, 0))
+        ttk.Button(header, text="Shortcuts", command=self._show_shortcuts_help).pack(side="right")
 
         subtitle = ttk.Label(
             self,
@@ -167,6 +247,71 @@ class PerformanceWorkbenchScreen(ttk.Frame):
             action_buttons=[self.surface.estimate_btn, self.surface.build_plan_btn, self.surface.run_benchmark_btn, self.surface.run_generate_btn],
             cancel_button=self.surface.cancel_run_btn,
         )
+        self.shortcut_manager = ShortcutManager(self)
+        self.focus_controller = FocusController(self)
+        self._register_focus_anchors()
+        self._register_shortcuts()
+
+    def on_show(self) -> None:
+        self.shortcut_manager.activate()
+        self.focus_controller.focus_default()
+
+    def on_hide(self) -> None:
+        self.shortcut_manager.deactivate()
+
+    def _register_focus_anchors(self) -> None:
+        self.focus_controller.add_anchor(
+            "schema_path",
+            lambda: getattr(self.surface, "schema_entry", None),
+            description="Schema path input",
+        )
+        self.focus_controller.add_anchor(
+            "actions",
+            lambda: self.surface.estimate_btn,
+            description="Run action controls",
+        )
+        self.focus_controller.add_anchor(
+            "diagnostics",
+            lambda: self.diagnostics_tree,
+            description="Diagnostics table",
+        )
+        self.focus_controller.add_anchor(
+            "plan",
+            lambda: self.chunk_plan_tree,
+            description="Chunk plan table",
+        )
+        self.focus_controller.set_default_anchor("schema_path")
+
+    def _register_shortcuts(self) -> None:
+        self.shortcut_manager.register("<F1>", "Open shortcuts help", self._show_shortcuts_help)
+        self.shortcut_manager.register("<F6>", "Focus next major section", self._focus_next_anchor)
+        self.shortcut_manager.register("<Shift-F6>", "Focus previous major section", self._focus_previous_anchor)
+        self.shortcut_manager.register_ctrl_cmd("b", "Browse schema path", self._browse_schema_path)
+        self.shortcut_manager.register_ctrl_cmd("l", "Load schema", self._load_schema)
+        self.shortcut_manager.register_ctrl_cmd("s", "Save profile", self._save_profile)
+        self.shortcut_manager.register_ctrl_cmd("o", "Load profile", self._load_profile)
+        self.shortcut_manager.register("<F5>", "Estimate workload", self._estimate_workload)
+        self.shortcut_manager.register_ctrl_cmd("Return", "Run benchmark", self._start_run_benchmark)
+        self.shortcut_manager.register("<Escape>", "Cancel active run", self._cancel_if_running)
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+C", "Copy selected table rows with headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Shift+C", "Copy selected table rows without headers")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+A", "Select all rows in focused table")
+        self.shortcut_manager.register_help_item("PageUp/PageDown", "Move selection by page in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+Home", "Jump to first row in focused table")
+        self.shortcut_manager.register_help_item("Ctrl/Cmd+End", "Jump to last row in focused table")
+
+    def _focus_next_anchor(self) -> None:
+        self.focus_controller.focus_next()
+
+    def _focus_previous_anchor(self) -> None:
+        self.focus_controller.focus_previous()
+
+    def _cancel_if_running(self) -> None:
+        if self.lifecycle.state.is_running:
+            self._cancel_run()
+
+    def _show_shortcuts_help(self) -> None:
+        self.shortcut_manager.show_help_dialog(title="Performance Workbench Shortcuts")
 
     def _sync_model(self) -> RunWorkflowViewModel:
         return self.surface.sync_model_from_vars()
@@ -221,12 +366,10 @@ class PerformanceWorkbenchScreen(ttk.Frame):
         return True
 
     def _populate_estimates(self, estimates: list[object]) -> None:
-        self.surface.clear_tree(self.diagnostics_tree)
+        rows: list[tuple[str, str, str, str, str, str, str]] = []
         for estimate in estimates:
-            self.diagnostics_tree.insert(
-                "",
-                "end",
-                values=(
+            rows.append(
+                (
                     estimate.table_name,
                     str(estimate.estimated_rows),
                     f"{estimate.estimated_memory_mb:.3f}",
@@ -234,25 +377,25 @@ class PerformanceWorkbenchScreen(ttk.Frame):
                     f"{estimate.estimated_seconds:.3f}",
                     estimate.risk_level,
                     estimate.recommendation,
-                ),
+                )
             )
+        self.surface.set_diagnostics_rows(rows)
 
     def _populate_chunk_plan(self, entries: list[ChunkPlanEntry]) -> None:
-        self.surface.clear_tree(self.chunk_plan_tree)
+        rows: list[tuple[str, str, str, str, str, str]] = []
         for entry in entries:
             partition_id = f"{entry.table_name}|stage={entry.stage}|chunk={entry.chunk_index}"
-            self.chunk_plan_tree.insert(
-                "",
-                "end",
-                values=(
+            rows.append(
+                (
                     entry.table_name,
                     partition_id,
                     f"{entry.start_row}-{entry.end_row}",
                     str(entry.stage),
                     "-",
                     "planned",
-                ),
+                )
             )
+        self.surface.set_plan_rows(rows)
 
     def _estimate_workload(self) -> None:
         if self.lifecycle.state.is_running:
@@ -572,6 +715,11 @@ class App(ttk.Frame):
         self.root = root
         self.cfg = cfg
 
+        # Imported lazily to avoid import cycles between classic and v2 route modules.
+        from src.gui_v2_execution_orchestrator import ExecutionOrchestratorV2Screen
+        from src.gui_v2_performance_workbench import PerformanceWorkbenchV2Screen
+        from src.gui_v2_schema_project import SchemaProjectV2Screen
+
         self.root.title("Generic Data Application")
         self.root.geometry("960x540")
 
@@ -579,6 +727,8 @@ class App(ttk.Frame):
 
         self.screen_container = ttk.Frame(self)
         self.screen_container.pack(fill="both", expand=True)
+        self._current_screen_name: str | None = None
+        self._current_screen_frame: ttk.Frame | None = None
 
         self.screens: dict[str, ttk.Frame] = {}
         self.screens["home"] = HomeScreen(self.screen_container, self)
@@ -595,7 +745,10 @@ class App(ttk.Frame):
         self.screens["execution_orchestrator"] = ExecutionOrchestratorScreen(self.screen_container, self, cfg)
         self.screens["home_v2"] = HomeV2Screen(self.screen_container, self)
         self.screens["schema_studio_v2"] = SchemaStudioV2Screen(self.screen_container, self, cfg)
+        self.screens[SCHEMA_V2_ROUTE] = SchemaProjectV2Screen(self.screen_container, self, cfg)
         self.screens["run_center_v2"] = RunCenterV2Screen(self.screen_container, self, cfg)
+        self.screens[PERFORMANCE_V2_ROUTE] = PerformanceWorkbenchV2Screen(self.screen_container, self, cfg)
+        self.screens[ORCHESTRATOR_V2_ROUTE] = ExecutionOrchestratorV2Screen(self.screen_container, self, cfg)
         self.screens["erd_designer_v2"] = ERDDesignerV2Screen(self.screen_container, self, cfg)
         self.screens["location_selector_v2"] = LocationSelectorV2Screen(self.screen_container, self, cfg)
         self.screens["generation_behaviors_guide_v2"] = GenerationBehaviorsGuideV2Screen(
@@ -633,10 +786,26 @@ class App(ttk.Frame):
                 "Fix: call show_screen() with one of the available names."
             )
         screen = self.screens[name]
+        if self._current_screen_frame is screen:
+            screen.tkraise()
+            self._current_screen_name = name
+            return
+
+        if self._current_screen_frame is not None:
+            on_hide = getattr(self._current_screen_frame, "on_hide", None)
+            if callable(on_hide):
+                on_hide()
+
+        screen.tkraise()
         on_show = getattr(screen, "on_show", None)
         if callable(on_show):
             on_show()
-        screen.tkraise()
+        self._current_screen_name = name
+        self._current_screen_frame = screen
 
     def go_home(self) -> None:
         self.show_screen("home")
+
+    @property
+    def current_screen_name(self) -> str | None:
+        return self._current_screen_name

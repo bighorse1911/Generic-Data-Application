@@ -26,6 +26,9 @@ from src.gui_v2_redesign import (
     RunCenterV2Screen,
     SchemaStudioV2Screen,
 )
+from src.gui_v2_execution_orchestrator import ExecutionOrchestratorV2Screen
+from src.gui_v2_performance_workbench import PerformanceWorkbenchV2Screen
+from src.gui_v2_schema_project import SchemaProjectV2Screen
 from src.gui_schema_project import (
     DTYPES,
     EXPORT_OPTION_CSV,
@@ -346,7 +349,10 @@ class TestInvariants(unittest.TestCase):
             self.assertIn("execution_orchestrator", app.screens)
             self.assertIn("home_v2", app.screens)
             self.assertIn("schema_studio_v2", app.screens)
+            self.assertIn("schema_project_v2", app.screens)
             self.assertIn("run_center_v2", app.screens)
+            self.assertIn("performance_workbench_v2", app.screens)
+            self.assertIn("execution_orchestrator_v2", app.screens)
             self.assertIn("erd_designer_v2", app.screens)
             self.assertIn("location_selector_v2", app.screens)
             self.assertIn("generation_behaviors_guide_v2", app.screens)
@@ -362,7 +368,10 @@ class TestInvariants(unittest.TestCase):
             self.assertIsInstance(app.screens["execution_orchestrator"], ExecutionOrchestratorScreen)
             self.assertIsInstance(app.screens["home_v2"], HomeV2Screen)
             self.assertIsInstance(app.screens["schema_studio_v2"], SchemaStudioV2Screen)
+            self.assertIsInstance(app.screens["schema_project_v2"], SchemaProjectV2Screen)
             self.assertIsInstance(app.screens["run_center_v2"], RunCenterV2Screen)
+            self.assertIsInstance(app.screens["performance_workbench_v2"], PerformanceWorkbenchV2Screen)
+            self.assertIsInstance(app.screens["execution_orchestrator_v2"], ExecutionOrchestratorV2Screen)
             self.assertIsInstance(app.screens["erd_designer_v2"], ERDDesignerV2Screen)
             self.assertIsInstance(app.screens["location_selector_v2"], LocationSelectorV2Screen)
             self.assertIsInstance(
@@ -388,6 +397,8 @@ class TestInvariants(unittest.TestCase):
             self.assertTrue(hasattr(app.screens["execution_orchestrator"], "cancel_run_btn"))
             self.assertTrue(hasattr(app.screens["schema_studio_v2"], "shell"))
             self.assertTrue(hasattr(app.screens["schema_studio_v2"], "section_tabs"))
+            self.assertTrue(hasattr(app.screens["schema_project_v2"], "preview_table"))
+            self.assertTrue(hasattr(app.screens["schema_project_v2"], "shortcut_manager"))
             self.assertTrue(hasattr(app.screens["run_center_v2"], "progress"))
             self.assertTrue(hasattr(app.screens["run_center_v2"], "preview_table"))
             self.assertTrue(hasattr(app.screens["run_center_v2"], "diagnostics_tree"))
@@ -395,6 +406,10 @@ class TestInvariants(unittest.TestCase):
             self.assertTrue(hasattr(app.screens["run_center_v2"], "run_benchmark_btn"))
             self.assertTrue(hasattr(app.screens["run_center_v2"], "start_run_btn"))
             self.assertTrue(hasattr(app.screens["run_center_v2"], "cancel_run_btn"))
+            self.assertTrue(hasattr(app.screens["performance_workbench_v2"], "surface"))
+            self.assertTrue(hasattr(app.screens["performance_workbench_v2"], "shell"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator_v2"], "surface"))
+            self.assertTrue(hasattr(app.screens["execution_orchestrator_v2"], "shell"))
             self.assertTrue(hasattr(app.screens["erd_designer_v2"], "tool"))
             self.assertTrue(hasattr(app.screens["location_selector_v2"], "tool"))
             self.assertTrue(hasattr(app.screens["generation_behaviors_guide_v2"], "tool"))
@@ -417,7 +432,10 @@ class TestInvariants(unittest.TestCase):
             app.show_screen("execution_orchestrator")
             app.show_screen("home_v2")
             app.show_screen("schema_studio_v2")
+            app.show_screen("schema_project_v2")
             app.show_screen("run_center_v2")
+            app.show_screen("performance_workbench_v2")
+            app.show_screen("execution_orchestrator_v2")
             app.show_screen("erd_designer_v2")
             app.show_screen("location_selector_v2")
             app.show_screen("generation_behaviors_guide_v2")
