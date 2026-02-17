@@ -119,6 +119,7 @@ class TestGuiV2NativeTools(unittest.TestCase):
 
         _collect(home_v2.cards_frame)
         all_text = "\n".join(texts)
+        self.assertIn("Schema Demo v2", all_text)
         self.assertIn("ERD Designer v2", all_text)
         self.assertIn("Location Selector v2", all_text)
 

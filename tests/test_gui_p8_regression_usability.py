@@ -42,6 +42,7 @@ class TestGuiP8RegressionUsability(unittest.TestCase):
         route_sequence = [
             "home_v2",
             "schema_studio_v2",
+            "schema_demo_v2",
             "run_center_v2",
             "erd_designer_v2",
             "location_selector_v2",

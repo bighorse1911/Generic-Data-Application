@@ -14,7 +14,7 @@ this project. It is authoritative for:
 If GUI behavior is unclear, this document and `PROJECT_CANON.md` override
 ad-hoc assumptions.
 
-## Implementation Status (2026-02-16)
+## Implementation Status (2026-02-17)
 
 - Current runtime GUI: Tkinter (`src/gui_home.py`)
 - Production modular route: `schema_project` uses `src/gui_schema_project_kit.py` with `src/gui_kit`.
@@ -66,6 +66,8 @@ ad-hoc assumptions.
 - GUI regression/usability hardening update: v2 route family now has scenario-based regression coverage for route transitions, schema-studio guarded-navigation outcomes, bridge-route parity, and run-center cancel/fallback state behavior.
 - Native v2 missing-route parity update: additive native routes now include `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2`; `schema_studio_v2` schema handoff targets `schema_project_v2` and preserves fallback compatibility.
 - Specialist v2 route restoration update: `home_v2` cards region is scrollable so all v2 cards remain reachable; `erd_designer_v2` and `location_selector_v2` include explicit `Open Classic Tool` actions while preserving native v2 route behavior.
+- Experimental route update: additive route `schema_demo_v2` is available from `home_v2` as a strict mockup-style schema screen (modeled on `demopage.png`) with full model-backed authoring/generation/save/export behavior and independent route-local preloaded demo state.
+- v2 generator GUI migration update: `schema_project_v2` now includes v2-only structured inline generator configuration for all registered generators with raw params JSON fallback, passthrough unknown-key preservation, source-column dependency auto-add, and advanced optional params controls (`null_rate`, `outlier_rate`, `outlier_scale`, bytes length).
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -172,6 +174,7 @@ P5 standardization rules:
 - Route families use standardized dialog titles:
   - Schema project: `Schema project error` / `Schema project warning`
   - Schema project legacy: `Schema project legacy error` / `Schema project legacy warning`
+  - Schema demo v2: `Schema demo v2 error` / `Schema demo v2 warning`
   - ERD designer: `ERD designer error` / `ERD designer warning`
   - Location selector: `Location selector error` / `Location selector warning`
   - Performance workbench: `Performance workbench error` / `Performance workbench warning`
@@ -541,6 +544,10 @@ P5 standardization rules:
 - Required behavior:
 - preserves canonical schema validation/generation/export/JSON IO behavior of `schema_project`
 - exposes route-scoped shortcuts/focus lifecycle parity with classic modular schema route
+- includes a v2-only structured generator configuration region in the column editor for all registered generators while preserving raw params JSON/manual entry fallback
+- structured generator fields and raw params JSON stay two-way synchronized; unknown params keys remain preserved during edit/save/load roundtrips
+- source-column generator fields (`if_column`, `base_column`, `match_column`, `parent_column`) auto-add required entries to `depends_on` while leaving `depends_on` manually editable
+- includes advanced optional controls for `null_rate`, `outlier_rate`, `outlier_scale`, and bytes length bounds (`min_length`, `max_length`) without changing canonical schema/runtime contracts
 - includes visible `Open Classic` fallback action to `schema_project`
 - remains additive; classic `schema_project` route stays available
 
@@ -565,6 +572,26 @@ P5 standardization rules:
 - preserves canonical build-plan/start/start+fallback/cancel and run-config save/load contracts
 - reuses shared lifecycle/error/table workflow primitives and worker/failure runtime event handling
 - remains additive; classic `execution_orchestrator` route stays available
+
+### 4.21 `schema_demo_v2`
+
+- Purpose: additive experimental v2 schema route that mirrors the `demopage.png` wireframe while preserving canonical model-backed schema behavior.
+- Required regions:
+- v2-style header (`Back`, title, `Shortcuts`, `Open Classic`)
+- left tables list + add/remove actions
+- right table-details notebook with `Columns`, `Constraints`, and `Relationships` tabs
+- right data-preview panel with refresh + paged table
+- bottom actions (`Generate Data`, `Save Schema`, `Close`)
+- Required behavior:
+- route is independent from `schema_project_v2` in-memory state
+- first open preloads deterministic demo schema (`customers`, `orders`, `products`, `shipments`) and selects `orders`
+- first open pre-generates deterministic rows for immediate preview visibility
+- columns tab supports add/edit/remove via canonical column callbacks and exposes UI-only `Default Value` display (derived from scalar `params.default` when present)
+- relationships tab supports add/remove FK behavior via canonical FK callbacks
+- constraints tab contains collapsible advanced controls for project JSON save/load, table SCD/BK constraints, validation heatmap + inline jumps, and output/export/preview options
+- `Mock Data Rules` and `Distribution Config` actions on columns tab switch to constraints tab and focus matching advanced sections
+- `Close` uses dirty-state guard and routes back to `home_v2`
+- preserves canonical validation/error format and deterministic generation semantics
 
 ## 5. Library-Agnostic Mapping Guide
 

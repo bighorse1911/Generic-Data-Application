@@ -27,6 +27,8 @@ Direction 1 - Smarter Data
 - Priority P8 GUI regression/usability hardening (expanded v2 route/state-transition/cancel-fallback coverage and scenario-based acceptance checks) (completed 2026-02-16)
 - Priority P9 native v2 route parity for missing GUI components (`schema_project_v2`, `performance_workbench_v2`, `execution_orchestrator_v2` with additive rollout and classic-route compatibility) (completed 2026-02-16)
 - Specialist v2 route restoration (`erd_designer_v2`, `location_selector_v2`): restored reliable access via scrollable `home_v2` cards and reimplemented explicit open-classic tool actions in v2 specialist headers (completed 2026-02-16)
+- Experimental schema demo route (`schema_demo_v2`): added strict mockup-style v2 schema screen based on `demopage.png` with full model-backed authoring/generation/save/export behaviors, constraints-tab advanced controls, and preloaded demo state (completed 2026-02-17)
+- v2-only generator GUI migration (`schema_project_v2`): added structured inline generator configuration for all registered generators with raw JSON fallback, passthrough unknown-key preservation, source-column dependency auto-add behavior, advanced optional params controls (`null_rate`, `outlier_rate`, `outlier_scale`, bytes length), and dedicated v2 regression coverage (completed 2026-02-17)
 
 ## Completed Directions
 - Direction 2 - Modular GUI Adoption (incremental, low-risk)

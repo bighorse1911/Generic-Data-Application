@@ -9,6 +9,7 @@ from tkinter import filedialog, ttk
 from src.config import AppConfig
 from src.gui_route_policy import ORCHESTRATOR_V2_ROUTE
 from src.gui_route_policy import PERFORMANCE_V2_ROUTE
+from src.gui_route_policy import SCHEMA_DEMO_V2_ROUTE
 from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
 from src.gui_route_policy import SCHEMA_V2_ROUTE
 from src.gui_kit.accessibility import FocusController
@@ -288,6 +289,12 @@ class HomeV2Screen(tk.Frame):
             "Schema Project v2",
             "Native v2 schema authoring route with canonical validation and generation behavior.",
             lambda: self.app.show_screen(SCHEMA_V2_ROUTE),
+        )
+        self._add_card(
+            self.cards_frame,
+            "Schema Demo v2",
+            "Mockup-inspired schema workflow experiment with full model-backed behavior.",
+            lambda: self.app.show_screen(SCHEMA_DEMO_V2_ROUTE),
         )
         self._add_card(
             self.cards_frame,

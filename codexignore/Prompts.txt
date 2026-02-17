@@ -1,0 +1,132 @@
+
+---INIT PROMPT---
+Before we do anything:
+1) Read PROJECT_CANON.md, NEXT_DECISIONS.md, DATA_SEMANTICS.md, and GUI_WIREFRAME_SCHEMA.md.
+2) Summarize (in 6-10 bullet points) the current architecture, constraints, and immediate priorities.
+3) Then ask me for ONE concrete task to implement next (no broad plans).
+
+
+---CODEX PROMPT---
+
+Do NOT end the response without this confirmation.You are my senior Python engineer working inside this VS Code workspace.
+
+AUTHORITATIVE CONTEXT:
+- Read PROJECT_CANON.md, NEXT_DECISIONS.md, DATA_SEMANTICS.md, and GUI_WIREFRAME_SCHEMA.md (repo root) before doing anything.
+- Treat them as the source of truth for architecture, constraints, and roadmap.
+
+CONSTRAINTS:
+- Python 3.13 on Windows.
+- Standard library only (no external packages).
+- Tkinter GUI; unittest; deterministic generation via seed.
+- Maintain backwards compatibility for schema project JSON wherever practical.
+- Prefer small, safe edits; keep tests green.
+
+WORK STYLE (MANDATORY):
+1) Identify which files/functions will change and why (brief).
+2) If you have identified that a given feature will need to be implemented in phases, make this clear.
+3) Implement the smallest viable change that satisfies the task.
+4) If you change any function signature, do a workspace-wide search and update ALL call sites.
+5) Add/adjust unit tests for new behavior.
+6) Ensure `python -m unittest discover -s tests -p "test_*.py"` will pass.
+7) Make errors actionable (clear message, location, and fix hint).
+
+TASK:
+<PASTE ONE CONCRETE TASK HERE>
+
+ACCEPTANCE CRITERIA:
+- All tests pass.
+- No regressions to generation, FK integrity, GUI navigation, JSON IO.
+- New behavior is accessible in the GUI where applicable.
+- Clear validation errors for invalid configs.
+
+DELIVERABLES:
+- List the files changed.
+- Provide the exact code changes needed.
+- After every task prompt by myself, navigate to: docs/decisions/, and add a markdown file with an incrementing id. Use 'example_decision_log.md' as an example.
+
+FINAL ACTION (REQUIRED, MUST BE LAST):
+- Review PROJECT_CANON.md, NEXT_DECISIONS.md, DATA_SEMANTICS.md, and GUI_WIREFRAME_SCHEMA.md and explicitly confirm one of:
+  A) “I updated PROJECT_CANON.md with: … and updated NEXT_DECISIONS.md with: … and updated DATA_SEMANTICS.md with: … and updated GUI_WIREFRAME_SCHEMA.md with: …”
+  OR
+  B) “No canon/decisions updates needed because: …”
+
+
+
+
+
+---COPILOT PROMPT---
+Act as my disciplined pair-programmer for this repo.
+
+Before we start:
+- Read PROJECT_CANON.md, NEXT_DECISIONS.md, DATA_SEMANTICS.md, and GUI_WIREFRAME_SCHEMA.md in the repo root and treat them as authoritative.
+
+Hard constraints:
+- Standard library only, Python 3.13, Windows.
+- Tkinter GUI; unittest; deterministic seed-based generation.
+- Prefer minimal diffs; keep tests passing.
+- If changing function signatures, explicitly list every call site to update.
+
+When proposing code:
+- Include 1–2 targeted unit tests when behavior changes.
+- If you have identified that a given feature will need to be implemented in phases, make this clear.
+- Avoid nested function defs unless required (prevents scoping issues).
+- Use actionable error messages.
+
+Current goal:
+<PASTE GOAL HERE>
+
+Any errors / tracebacks:
+<PASTE TRACEBACK HERE>
+
+Questions I want answered:
+1) Root cause?
+2) Smallest safe fix?
+3) What tests prevent regression?
+4) Optional: what refactor reduces future bugs?
+
+FINAL ACTION (REQUIRED, MUST BE LAST):
+After every task prompt by myself, navigate to: docs/decisions/, and add a markdown file with an incrementing id. Use 'example_decision_log.md' as an example.
+
+Before ending your response, explicitly confirm changes to:
+- PROJECT_CANON.md
+- NEXT_DECISIONS.md
+- DATA_SEMANTICS.md
+- GUI_WIREFRAME_SCHEMA.md
+Either:
+A) specify exactly what to add/change (bullet points or short diff-style)
+OR
+B) explicitly say no updates are required and why.
+Do NOT end the response without this confirmation.
+
+
+---FEATURE PROMPT---
+FEATURE:
+Name:
+User story:
+Schema representation (ColumnSpec.generator / params / depends_on):
+Expected behavior:
+Edge cases:
+Validation rules:
+Unit tests:
+
+---PLAN PROMPT---
+I want to build a detailed implementation plan for [FEATURE]. For each [FEATURE], outline the following:
+
+1) Purpose and high-level user goals  
+2) UI wireframe structure (panels, inputs, grids, controls)  
+3) Required backend logic and integrations with existing modules (schema, generator, preview, storage)  
+4) How to handle data flows and validation  
+5) Acceptance criteria and success conditions  
+6) A breakdown of development tasks with suggested Milestones and Dependencies (UI first, core logic next, testing last), assuming iterative development.  
+
+Focus on modular design, clear inputs/outputs for each component, and how users will interact with each screen. Include any required new utility components ([EXAMPLES]). The plan should be detailed enough to generate separate design and development tickets (user stories) for each [FEATURE].
+
+
+
+
+
+
+
+---RUN TESTS---
+python -m unittest discover -s tests -p test_*.py
+

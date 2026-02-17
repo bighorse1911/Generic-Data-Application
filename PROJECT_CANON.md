@@ -25,6 +25,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - GUI regression/usability hardening pass (completed): v2 route transitions, guarded navigation outcomes, bridge-route parity, and run-center cancel/fallback state transitions now have explicit scenario-based regression coverage.
 - Native v2 missing-route parity pass (completed): new additive native routes `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2` now exist alongside classic routes; `schema_studio_v2` schema handoff now targets `schema_project_v2`.
 - Specialist v2 route restoration (completed): `erd_designer_v2` and `location_selector_v2` remain native v2 routes with explicit open-classic tool actions; `home_v2` now uses a scrollable cards region so specialist routes remain accessible as v2 route inventory grows.
+- Schema demo experiment route (completed): additive route `schema_demo_v2` now exists as a strict mockup-style v2 schema workflow (modeled from `demopage.png`) with full model-backed callbacks, constraints advanced sections, and independent preloaded demo state.
+- v2 generator UI migration (completed): `schema_project_v2` now exposes structured inline generator configuration for all registered generators, auto-adds required dependency links from source-column selections, preserves unknown params keys during JSON roundtrips, and retains raw params JSON entry/edit as an advanced fallback.
 
 ## Architecture
 - Tkinter GUI
@@ -32,6 +34,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Schema-first design
 - Generator registry pattern
 - Route policy constants: `src/gui_route_policy.py` defines primary/fallback/deprecated schema route keys.
+- v2 generator form contracts: `src/gui_v2/generator_forms.py` defines typed field specs/state parsing used exclusively by `schema_project_v2`.
 - GUI wireframe/design decision canon: `GUI_WIREFRAME_SCHEMA.md` (library-agnostic contract); all GUI design changes must update this file and add decision logs.
 - Reusable GUI kit layer (`src/gui_kit`) for modular screens:
   - `BaseScreen`: common screen behavior (`set_status`, `set_busy`, `safe_threaded_job`) + `DirtyStateGuard` helpers for unsaved-change prompts
@@ -76,6 +79,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Home screen includes a dedicated route to the execution orchestrator page.
 - Home screen includes a dedicated route to the full visual redesign experience (`home_v2`) with native v2 specialist routes and temporary hidden rollback bridge routes.
 - Home v2 now includes dedicated route cards for `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2` in addition to the existing v2 route family.
+- Home v2 now includes a dedicated route card for `schema_demo_v2` in addition to existing native v2 workflow cards.
 - Schema Studio v2 includes dirty-state guarded transitions to native `schema_project_v2` with fallback dirty-state compatibility against classic `schema_project`.
 - Run workflow screens (`run_center_v2`, `performance_workbench`, `execution_orchestrator`) now use a shared section model (config, controls, progress strip, capability-gated results tabs) and shared lifecycle/error/table adapters.
 - Additive native run routes `performance_workbench_v2` and `execution_orchestrator_v2` reuse shared run-workflow/lifecycle primitives while preserving classic routes for rollback safety.

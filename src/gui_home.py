@@ -25,6 +25,7 @@ from src.gui_kit.ui_dispatch import UIDispatcher
 from src.gui_route_policy import SCHEMA_DEPRECATED_ROUTES
 from src.gui_route_policy import SCHEMA_FALLBACK_ROUTES
 from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
+from src.gui_route_policy import SCHEMA_DEMO_V2_ROUTE
 from src.gui_route_policy import ORCHESTRATOR_V2_ROUTE
 from src.gui_route_policy import PERFORMANCE_V2_ROUTE
 from src.gui_route_policy import SCHEMA_V2_ROUTE
@@ -701,7 +702,7 @@ class HomeScreen(ttk.Frame):
             card,
             text=(
                 "Visual Redesign Preview (v2) -> home_v2 / schema_studio_v2 / run_center_v2 "
-                "/ erd_designer_v2 / location_selector_v2 / generation_behaviors_guide_v2"
+                "/ schema_demo_v2 / erd_designer_v2 / location_selector_v2 / generation_behaviors_guide_v2"
             ),
             command=lambda: self.app.show_screen("home_v2"),
         ).pack(fill="x", pady=6)
@@ -718,6 +719,7 @@ class App(ttk.Frame):
         # Imported lazily to avoid import cycles between classic and v2 route modules.
         from src.gui_v2_execution_orchestrator import ExecutionOrchestratorV2Screen
         from src.gui_v2_performance_workbench import PerformanceWorkbenchV2Screen
+        from src.gui_v2_schema_demo import SchemaDemoV2Screen
         from src.gui_v2_schema_project import SchemaProjectV2Screen
 
         self.root.title("Generic Data Application")
@@ -746,6 +748,7 @@ class App(ttk.Frame):
         self.screens["home_v2"] = HomeV2Screen(self.screen_container, self)
         self.screens["schema_studio_v2"] = SchemaStudioV2Screen(self.screen_container, self, cfg)
         self.screens[SCHEMA_V2_ROUTE] = SchemaProjectV2Screen(self.screen_container, self, cfg)
+        self.screens[SCHEMA_DEMO_V2_ROUTE] = SchemaDemoV2Screen(self.screen_container, self, cfg)
         self.screens["run_center_v2"] = RunCenterV2Screen(self.screen_container, self, cfg)
         self.screens[PERFORMANCE_V2_ROUTE] = PerformanceWorkbenchV2Screen(self.screen_container, self, cfg)
         self.screens[ORCHESTRATOR_V2_ROUTE] = ExecutionOrchestratorV2Screen(self.screen_container, self, cfg)
