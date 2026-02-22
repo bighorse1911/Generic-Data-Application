@@ -1,4 +1,4 @@
-﻿import tkinter as tk
+import tkinter as tk
 import unittest
 
 from src.config import AppConfig
@@ -119,20 +119,23 @@ class TestGuiV2NativeTools(unittest.TestCase):
 
         _collect(home_v2.cards_frame)
         all_text = "\n".join(texts)
-        self.assertIn("Schema Demo v2", all_text)
+        self.assertIn("Schema Project v2", all_text)
         self.assertIn("ERD Designer v2", all_text)
         self.assertIn("Location Selector v2", all_text)
+        self.assertNotIn("Schema Demo v2", all_text)
 
-    def test_specialist_v2_screens_expose_open_classic_tool_action(self):
+    def test_specialist_v2_screens_remove_open_classic_tool_action(self):
         erd_screen = self.app.screens["erd_designer_v2"]
         loc_screen = self.app.screens["location_selector_v2"]
 
         erd_actions = [child.cget("text") for child in erd_screen.shell.header_actions.winfo_children()]
         loc_actions = [child.cget("text") for child in loc_screen.shell.header_actions.winfo_children()]
 
-        self.assertIn("Open Classic Tool", erd_actions)
-        self.assertIn("Open Classic Tool", loc_actions)
+        self.assertNotIn("Open Classic Tool", erd_actions)
+        self.assertNotIn("Open Classic Tool", loc_actions)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

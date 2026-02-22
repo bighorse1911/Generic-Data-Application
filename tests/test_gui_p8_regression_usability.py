@@ -5,7 +5,7 @@ from unittest import mock
 
 from src.config import AppConfig
 from src.gui_home import App
-from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
+from src.gui_route_policy import SCHEMA_V2_ROUTE
 from src.multiprocessing_runtime import MultiprocessEvent
 
 
@@ -42,14 +42,13 @@ class TestGuiP8RegressionUsability(unittest.TestCase):
         route_sequence = [
             "home_v2",
             "schema_studio_v2",
-            "schema_demo_v2",
+            "schema_project_v2",
             "run_center_v2",
+            "performance_workbench_v2",
+            "execution_orchestrator_v2",
             "erd_designer_v2",
             "location_selector_v2",
             "generation_behaviors_guide_v2",
-            "erd_designer_v2_bridge",
-            "location_selector_v2_bridge",
-            "generation_behaviors_guide_v2_bridge",
         ]
         for route in route_sequence:
             with self.subTest(route=route):
@@ -73,42 +72,50 @@ class TestGuiP8RegressionUsability(unittest.TestCase):
     def test_schema_studio_dirty_navigation_block_and_allow(self):
         self.app.show_screen("schema_studio_v2")
         studio = self.app.screens["schema_studio_v2"]
-        primary = self.app.screens[SCHEMA_PRIMARY_ROUTE]
-        primary.mark_dirty("test")  # type: ignore[attr-defined]
+        schema_v2 = self.app.screens[SCHEMA_V2_ROUTE]
+        schema_v2.mark_dirty("test")  # type: ignore[attr-defined]
 
-        with mock.patch.object(primary, "confirm_discard_or_save", return_value=False):
+        with mock.patch.object(schema_v2, "confirm_discard_or_save", return_value=False):
             studio._navigate_with_guard("run_center_v2", "opening Run Center")
             self.assertEqual(self.app.current_screen_name, "schema_studio_v2")
             self.assertIn("navigation cancelled", studio.shell.status_var.get().lower())
 
-        with mock.patch.object(primary, "confirm_discard_or_save", return_value=True):
+        with mock.patch.object(schema_v2, "confirm_discard_or_save", return_value=True):
             studio._navigate_with_guard("run_center_v2", "opening Run Center")
             self.assertEqual(self.app.current_screen_name, "run_center_v2")
 
     def test_schema_studio_guard_error_sets_retryable_status(self):
         self.app.show_screen("schema_studio_v2")
         studio = self.app.screens["schema_studio_v2"]
-        primary = self.app.screens[SCHEMA_PRIMARY_ROUTE]
-        primary.mark_dirty("test")  # type: ignore[attr-defined]
+        schema_v2 = self.app.screens[SCHEMA_V2_ROUTE]
+        schema_v2.mark_dirty("test")  # type: ignore[attr-defined]
 
-        with mock.patch.object(primary, "confirm_discard_or_save", side_effect=RuntimeError("boom")):
+        with mock.patch.object(schema_v2, "confirm_discard_or_save", side_effect=RuntimeError("boom")):
             studio._navigate_with_guard("run_center_v2", "opening Run Center")
 
         self.assertEqual(self.app.current_screen_name, "schema_studio_v2")
         self.assertIn("unable to confirm schema changes", studio.shell.status_var.get().lower())
 
-    def test_bridge_routes_open_expected_classic_routes(self):
-        bridge_to_classic = {
-            "erd_designer_v2_bridge": "erd_designer",
-            "location_selector_v2_bridge": "location_selector",
-            "generation_behaviors_guide_v2_bridge": "generation_behaviors_guide",
-        }
-        for bridge_route, target_route in bridge_to_classic.items():
-            with self.subTest(bridge=bridge_route):
-                self.app.show_screen(bridge_route)
-                bridge = self.app.screens[bridge_route]
-                bridge.launch_btn.invoke()
-                self.assertEqual(self.app.current_screen_name, target_route)
+    def test_legacy_bridge_and_demo_routes_are_absent(self):
+        retired = [
+            "home",
+            "schema_project",
+            "schema_project_kit",
+            "schema_project_legacy",
+            "generation_behaviors_guide",
+            "erd_designer",
+            "location_selector",
+            "performance_workbench",
+            "execution_orchestrator",
+            "schema_demo_v2",
+            "erd_designer_v2_bridge",
+            "location_selector_v2_bridge",
+            "generation_behaviors_guide_v2_bridge",
+        ]
+        for route in retired:
+            with self.subTest(route=route):
+                with self.assertRaises(KeyError):
+                    self.app.show_screen(route)
 
     def test_run_center_shortcuts_toggle_on_route_switch(self):
         run_center = self.app.screens["run_center_v2"]
@@ -246,3 +253,5 @@ class TestGuiP8RegressionUsability(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

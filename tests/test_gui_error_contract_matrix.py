@@ -10,7 +10,7 @@ class TestGuiErrorContractMatrix(unittest.TestCase):
     def setUp(self) -> None:
         try:
             self.root = tk.Tk()
-        except tk.TclError as exc:  # pragma: no cover - depends on CI display support
+        except tk.TclError as exc:  # pragma: no cover
             self.skipTest(f"Tk GUI not available in this environment: {exc}")
             return
         self.root.withdraw()
@@ -32,8 +32,8 @@ class TestGuiErrorContractMatrix(unittest.TestCase):
         target.show_warning = lambda title, message: warnings.append((title, message))
         return target, dialogs, warnings
 
-    def test_schema_primary_route_uses_actionable_error_and_warning_contract(self) -> None:
-        screen = self.app.screens["schema_project"]
+    def test_schema_project_v2_uses_actionable_error_and_warning_contract(self) -> None:
+        screen = self.app.screens["schema_project_v2"]
         _, dialogs, warnings = self._capture_surface(screen)
 
         screen.seed_var.set("invalid_seed")
@@ -52,36 +52,6 @@ class TestGuiErrorContractMatrix(unittest.TestCase):
         warning_title, warning_message = warnings[0]
         self.assertEqual(warning_title, "Schema project warning")
         self.assertTrue(is_actionable_message(warning_message))
-
-    def test_schema_legacy_route_uses_legacy_titles(self) -> None:
-        screen = self.app.screens["schema_project_legacy"]
-        _, dialogs, _warnings = self._capture_surface(screen)
-
-        screen.seed_var.set("legacy_seed_invalid")
-        screen._run_validation()
-        self.assertEqual(len(dialogs), 1)
-        title, message = dialogs[0]
-        self.assertEqual(title, "Schema project legacy error")
-        self.assertTrue(is_actionable_message(message))
-
-    def test_tool_routes_erd_and_location_emit_actionable_precondition_errors(self) -> None:
-        erd_screen = self.app.screens["erd_designer"]
-        _, dialogs, _warnings = self._capture_surface(erd_screen)
-        erd_screen.project = None
-        erd_screen._export_schema_json()
-        self.assertEqual(len(dialogs), 1)
-        erd_title, erd_message = dialogs[0]
-        self.assertEqual(erd_title, "ERD designer error")
-        self.assertTrue(is_actionable_message(erd_message))
-
-        location_screen = self.app.screens["location_selector"]
-        _, loc_dialogs, _loc_warnings = self._capture_surface(location_screen)
-        location_screen._latest_points = []
-        location_screen._save_points_csv()
-        self.assertEqual(len(loc_dialogs), 1)
-        loc_title, loc_message = loc_dialogs[0]
-        self.assertEqual(loc_title, "Location selector error")
-        self.assertTrue(is_actionable_message(loc_message))
 
     def test_native_v2_tool_routes_share_actionable_error_contract(self) -> None:
         erd_screen = self.app.screens["erd_designer_v2"]
@@ -104,8 +74,8 @@ class TestGuiErrorContractMatrix(unittest.TestCase):
 
     def test_run_routes_emit_actionable_schema_path_errors(self) -> None:
         expectations = {
-            "performance_workbench": "Performance workbench error",
-            "execution_orchestrator": "Execution orchestrator error",
+            "performance_workbench_v2": "Performance workbench error",
+            "execution_orchestrator_v2": "Execution orchestrator error",
             "run_center_v2": "Run Center v2 error",
         }
         for route, expected_title in expectations.items():

@@ -27,7 +27,7 @@ class TestGuiExecutionOrchestratorV2Parity(unittest.TestCase):
             self.root.destroy()
 
     def _routes(self) -> tuple[str, str]:
-        return ("execution_orchestrator", ORCHESTRATOR_V2_ROUTE)
+        return ("execution_orchestrator_v2", ORCHESTRATOR_V2_ROUTE)
 
     def test_build_plan_uses_bulk_plan_and_worker_setters(self) -> None:
         plan = [
@@ -60,13 +60,13 @@ class TestGuiExecutionOrchestratorV2Parity(unittest.TestCase):
                 screen = self.app.screens[route]
                 screen.project = object()
                 with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_execution_orchestrator.run_build_partition_plan",
+                    "src.gui_execution_orchestrator_base.run_build_partition_plan",
                     return_value=plan,
                 ), mock.patch(
-                    "src.gui_execution_orchestrator.build_config_from_model",
+                    "src.gui_execution_orchestrator_base.build_config_from_model",
                     return_value=SimpleNamespace(),
                 ), mock.patch(
-                    "src.gui_execution_orchestrator.build_worker_status_snapshot",
+                    "src.gui_execution_orchestrator_base.build_worker_status_snapshot",
                     return_value=workers,
                 ), mock.patch.object(screen.surface, "set_plan_rows") as set_plan, mock.patch.object(
                     screen.surface,
@@ -98,10 +98,10 @@ class TestGuiExecutionOrchestratorV2Parity(unittest.TestCase):
                 screen.project = object()
                 labels.clear()
                 with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_execution_orchestrator.build_profile_from_model",
+                    "src.gui_execution_orchestrator_base.build_profile_from_model",
                     return_value=SimpleNamespace(output_mode="preview"),
                 ), mock.patch(
-                    "src.gui_execution_orchestrator.build_config_from_model",
+                    "src.gui_execution_orchestrator_base.build_config_from_model",
                     return_value=SimpleNamespace(),
                 ), mock.patch.object(
                     screen.lifecycle,
@@ -124,23 +124,23 @@ class TestGuiExecutionOrchestratorV2Parity(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     config_path = f"{tmp_dir}/orchestrator_config.json"
                     with mock.patch(
-                        "src.gui_execution_orchestrator.execution_run_config_payload",
+                        "src.gui_execution_orchestrator_base.execution_run_config_payload",
                         return_value={"execution_mode": "single_process"},
                     ), mock.patch(
-                        "src.gui_execution_orchestrator.filedialog.asksaveasfilename",
+                        "src.gui_execution_orchestrator_base.filedialog.asksaveasfilename",
                         return_value=config_path,
                     ):
                         screen._save_run_config()
                     self.assertTrue(screen.surface.status_var.get().startswith("Saved run config"))
 
                     with mock.patch(
-                        "src.gui_execution_orchestrator.filedialog.askopenfilename",
+                        "src.gui_execution_orchestrator_base.filedialog.askopenfilename",
                         return_value=config_path,
-                    ), mock.patch("src.gui_execution_orchestrator.apply_execution_run_config_payload"), mock.patch(
-                        "src.gui_execution_orchestrator.build_profile_from_model",
+                    ), mock.patch("src.gui_execution_orchestrator_base.apply_execution_run_config_payload"), mock.patch(
+                        "src.gui_execution_orchestrator_base.build_profile_from_model",
                         return_value=SimpleNamespace(output_mode="preview"),
                     ), mock.patch(
-                        "src.gui_execution_orchestrator.build_config_from_model",
+                        "src.gui_execution_orchestrator_base.build_config_from_model",
                         return_value=SimpleNamespace(),
                     ):
                         screen._load_run_config()
@@ -164,3 +164,5 @@ class TestGuiExecutionOrchestratorV2Parity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

@@ -1,4 +1,4 @@
-﻿import tkinter as tk
+import tkinter as tk
 import unittest
 
 from src.gui_kit.table_virtual import TableColumnSpec
@@ -89,3 +89,5 @@ class TestVirtualTableAdapter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

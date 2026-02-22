@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from src.config import AppConfig
-from src.gui_home import PerformanceWorkbenchScreen
+from src.gui_performance_workbench_base import PerformanceWorkbenchBase
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
@@ -18,7 +18,7 @@ from src.gui_tools.run_workflow_view import RunWorkflowSurface
 from src.gui_v2_redesign import V2ShellFrame
 
 
-class PerformanceWorkbenchV2Screen(PerformanceWorkbenchScreen):
+class PerformanceWorkbenchV2Screen(PerformanceWorkbenchBase):
     """Native v2 route for strategy benchmark and generation workflows."""
 
     def __init__(self, parent: tk.Widget, app: object, cfg: AppConfig) -> None:
@@ -30,7 +30,6 @@ class PerformanceWorkbenchV2Screen(PerformanceWorkbenchScreen):
 
         self.shell = V2ShellFrame(self, title="Performance Workbench v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
-        self.shell.add_header_action("Open Classic", lambda: self.app.show_screen("performance_workbench"))
         self.shell.add_header_action("Run Center", lambda: self.app.show_screen("run_center_v2"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
 
@@ -106,7 +105,6 @@ class PerformanceWorkbenchV2Screen(PerformanceWorkbenchScreen):
             [
                 "Estimate and chunk-plan actions remain deterministic.",
                 "Benchmark/generate strategy runs preserve runtime semantics.",
-                "Use Open Classic for immediate rollback path.",
             ],
         )
         self.shell.set_status("Performance Workbench v2 ready.")

@@ -2,7 +2,7 @@ import tkinter as tk
 import unittest
 
 from src.config import AppConfig
-from src.gui_schema_project import (
+from src.gui_schema_shared import (
     PATTERN_PRESET_CUSTOM,
     default_generator_params_template,
     valid_generators_for_dtype,
@@ -109,3 +109,5 @@ class TestGUIGeneratorFiltering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

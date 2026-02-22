@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from src.config import AppConfig
-from src.gui_execution_orchestrator import ExecutionOrchestratorScreen
+from src.gui_execution_orchestrator_base import ExecutionOrchestratorBase
 from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
@@ -20,7 +20,7 @@ from src.gui_v2_redesign import V2ShellFrame
 from src.multiprocessing_runtime import EXECUTION_MODES
 
 
-class ExecutionOrchestratorV2Screen(ExecutionOrchestratorScreen):
+class ExecutionOrchestratorV2Screen(ExecutionOrchestratorBase):
     """Native v2 route for multiprocess orchestration planning and execution."""
 
     def __init__(self, parent: tk.Widget, app: object, cfg: AppConfig) -> None:
@@ -40,7 +40,6 @@ class ExecutionOrchestratorV2Screen(ExecutionOrchestratorScreen):
 
         self.shell = V2ShellFrame(self, title="Execution Orchestrator v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
-        self.shell.add_header_action("Open Classic", lambda: self.app.show_screen("execution_orchestrator"))
         self.shell.add_header_action("Run Center", lambda: self.app.show_screen("run_center_v2"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
 
@@ -118,7 +117,6 @@ class ExecutionOrchestratorV2Screen(ExecutionOrchestratorScreen):
             [
                 "Build deterministic FK-stage partition plans.",
                 "Monitor worker/failure tables during live execution.",
-                "Use Open Classic for immediate rollback path.",
             ],
         )
         self.shell.set_status("Execution Orchestrator v2 ready.")

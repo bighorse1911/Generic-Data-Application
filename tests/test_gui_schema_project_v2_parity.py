@@ -6,7 +6,6 @@ from unittest import mock
 
 from src.config import AppConfig
 from src.gui_home import App
-from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
 from src.gui_route_policy import SCHEMA_V2_ROUTE
 
 
@@ -83,16 +82,20 @@ class TestGuiSchemaProjectV2Parity(unittest.TestCase):
         generated_called = {"value": False}
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = f"{tmp_dir}/schema_project_v2_parity.json"
-            with mock.patch("src.gui_schema_project.filedialog.asksaveasfilename", return_value=path):
+            with mock.patch("src.gui_schema_core.filedialog.asksaveasfilename", return_value=path):
                 saved = bool(screen._save_project())
 
             screen.project_name_var.set("modified_name")
-            with mock.patch("src.gui_schema_project.filedialog.askopenfilename", return_value=path), mock.patch.object(
+            with mock.patch("src.gui_schema_core.filedialog.askopenfilename", return_value=path), mock.patch.object(
                 screen,
                 "confirm_discard_or_save",
                 return_value=True,
-            ):
+            ), mock.patch(
+                "src.gui_schema_core.messagebox.askyesnocancel",
+                return_value=False,
+            ) as legacy_prompt:
                 screen._load_project()
+                self.assertEqual(legacy_prompt.call_count, 0)
             loaded = bool(screen.project_name_var.get() == "schema_v2_parity")
 
             with mock.patch.object(screen.job_lifecycle, "run_async") as run_async:
@@ -100,30 +103,27 @@ class TestGuiSchemaProjectV2Parity(unittest.TestCase):
                 generated_called["value"] = bool(run_async.called)
         return saved, loaded, generated_called["value"]
 
-    def test_schema_project_v2_authoring_matches_classic_schema_project(self) -> None:
-        classic = self.app.screens[SCHEMA_PRIMARY_ROUTE]
-        v2 = self.app.screens[SCHEMA_V2_ROUTE]
-        classic_project = self._run_authoring_scenario(classic)
-        v2_project = self._run_authoring_scenario(v2)
-        self.assertEqual(classic_project, v2_project)
+    def test_schema_project_v2_authoring_flow_builds_expected_project_shape(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        project_payload = self._run_authoring_scenario(screen)
+        self.assertEqual(project_payload["name"], "schema_v2_parity")
+        self.assertEqual(project_payload["seed"], 91)
+        self.assertEqual(len(project_payload["tables"]), 2)
+        self.assertEqual(len(project_payload["foreign_keys"]), 1)
 
-    def test_schema_project_v2_error_contract_matches_classic(self) -> None:
-        classic = self.app.screens[SCHEMA_PRIMARY_ROUTE]
-        v2 = self.app.screens[SCHEMA_V2_ROUTE]
-        classic_msg = self._capture_missing_fk_error(classic)
-        v2_msg = self._capture_missing_fk_error(v2)
-        self.assertEqual(classic_msg, v2_msg)
-        self.assertIn("Add relationship", v2_msg)
-        self.assertIn("Fix:", v2_msg)
+    def test_schema_project_v2_error_contract_for_missing_fk_is_actionable(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        msg = self._capture_missing_fk_error(screen)
+        self.assertIn("Add relationship", msg)
+        self.assertIn("Fix:", msg)
 
-    def test_schema_project_v2_command_paths_match_classic(self) -> None:
-        classic = self.app.screens[SCHEMA_PRIMARY_ROUTE]
-        v2 = self.app.screens[SCHEMA_V2_ROUTE]
-        classic_saved, classic_loaded, classic_generated = self._exercise_save_load_and_generate_commands(classic)
-        v2_saved, v2_loaded, v2_generated = self._exercise_save_load_and_generate_commands(v2)
-        self.assertEqual((classic_saved, classic_loaded, classic_generated), (True, True, True))
-        self.assertEqual((v2_saved, v2_loaded, v2_generated), (True, True, True))
+    def test_schema_project_v2_command_paths_save_load_generate(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        saved, loaded, generated = self._exercise_save_load_and_generate_commands(screen)
+        self.assertEqual((saved, loaded, generated), (True, True, True))
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

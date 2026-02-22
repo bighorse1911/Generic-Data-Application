@@ -1,4 +1,4 @@
-﻿import tkinter as tk
+import tkinter as tk
 import unittest
 
 from src.config import AppConfig
@@ -23,8 +23,8 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
     def _run_routes(self) -> tuple[str, ...]:
         return (
             "run_center_v2",
-            "performance_workbench",
-            "execution_orchestrator",
+            "performance_workbench_v2",
+            "execution_orchestrator_v2",
             "performance_workbench_v2",
             "execution_orchestrator_v2",
         )
@@ -49,19 +49,19 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
 
     def test_route_smoke_and_required_widget_contracts(self):
         self.app.show_screen("run_center_v2")
-        self.app.show_screen("performance_workbench")
-        self.app.show_screen("execution_orchestrator")
+        self.app.show_screen("performance_workbench_v2")
+        self.app.show_screen("execution_orchestrator_v2")
         self.app.show_screen("performance_workbench_v2")
         self.app.show_screen("execution_orchestrator_v2")
 
-        perf = self.app.screens["performance_workbench"]
+        perf = self.app.screens["performance_workbench_v2"]
         self.assertIsNotNone(perf.diagnostics_tree)
         self.assertIsNotNone(perf.chunk_plan_tree)
         self.assertIsNotNone(perf.run_benchmark_btn)
         self.assertIsNotNone(perf.run_generate_btn)
         self.assertIsNotNone(perf.cancel_run_btn)
 
-        orchestrator = self.app.screens["execution_orchestrator"]
+        orchestrator = self.app.screens["execution_orchestrator_v2"]
         self.assertIsNotNone(orchestrator.partition_tree)
         self.assertIsNotNone(orchestrator.worker_tree)
         self.assertIsNotNone(orchestrator.failures_tree)
@@ -108,7 +108,7 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
                 self.assertTrue(adapter.view._large_data_enabled)
 
     def test_surface_clear_tree_uses_adapter_clear(self):
-        perf = self.app.screens["performance_workbench"]
+        perf = self.app.screens["performance_workbench_v2"]
         perf.surface.set_diagnostics_rows([("t", "1", "1.0", "1.0", "1.0", "low", "ok")])
         self.root.update_idletasks()
         self.root.update()
@@ -137,3 +137,5 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

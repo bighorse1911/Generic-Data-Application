@@ -7,7 +7,6 @@ from unittest import mock
 
 from src.config import AppConfig
 from src.gui_home import App
-from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
 from src.gui_route_policy import SCHEMA_V2_ROUTE
 
 
@@ -30,11 +29,9 @@ class TestGuiV2SchemaProjectGeneratorUI(unittest.TestCase):
             screen._add_table()
         self.assertIsNotNone(screen.selected_table_index)
 
-    def test_v2_route_has_generator_form_host_without_affecting_classic(self) -> None:
+    def test_v2_route_has_generator_form_host(self) -> None:
         v2 = self.app.screens[SCHEMA_V2_ROUTE]
-        classic = self.app.screens[SCHEMA_PRIMARY_ROUTE]
         self.assertTrue(hasattr(v2, "generator_form_box"))
-        self.assertFalse(hasattr(classic, "generator_form_box"))
 
     def test_structured_fields_sync_to_params_json_and_preserve_unknown(self) -> None:
         screen = self.app.screens[SCHEMA_V2_ROUTE]
@@ -89,11 +86,11 @@ class TestGuiV2SchemaProjectGeneratorUI(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = os.path.join(tmp_dir, "v2_generator_roundtrip.json")
-            with mock.patch("src.gui_schema_project.filedialog.asksaveasfilename", return_value=path):
+            with mock.patch("src.gui_schema_core.filedialog.asksaveasfilename", return_value=path):
                 self.assertTrue(screen._save_project())
 
             screen.project_name_var.set("changed_name")
-            with mock.patch("src.gui_schema_project.filedialog.askopenfilename", return_value=path), mock.patch.object(
+            with mock.patch("src.gui_schema_core.filedialog.askopenfilename", return_value=path), mock.patch.object(
                 screen,
                 "confirm_discard_or_save",
                 return_value=True,
@@ -108,3 +105,5 @@ class TestGuiV2SchemaProjectGeneratorUI(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

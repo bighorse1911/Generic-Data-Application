@@ -9,9 +9,8 @@ from tkinter import ttk
 from src.config import AppConfig
 from src.gui_kit.forms import FormBuilder
 from src.gui_kit.json_editor import JsonEditorDialog
-from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
-from src.gui_schema_project import default_generator_params_template
-from src.gui_schema_project_kit import SchemaProjectDesignerKitScreen
+from src.gui_schema_editor_base import SchemaEditorBaseScreen
+from src.gui_schema_shared import default_generator_params_template
 from src.gui_v2.generator_forms import CROSS_CUTTING_FIELDS
 from src.gui_v2.generator_forms import GeneratorFieldSpec
 from src.gui_v2.generator_forms import format_field_value
@@ -34,7 +33,7 @@ class _FieldBinding:
     action_button: ttk.Button | None = None
 
 
-class SchemaProjectV2Screen(SchemaProjectDesignerKitScreen):
+class SchemaProjectV2Screen(SchemaEditorBaseScreen):
     """Native v2 schema authoring route with canonical schema-editor behavior."""
 
     def __init__(self, parent: tk.Widget, app: object, cfg: AppConfig) -> None:
@@ -85,16 +84,6 @@ class SchemaProjectV2Screen(SchemaProjectDesignerKitScreen):
             font=("Calibri", 10, "bold"),
         ).pack(side="left", padx=(10, 0), pady=8)
 
-        tk.Button(
-            header,
-            text="Open Classic",
-            command=lambda: self.app.show_screen(SCHEMA_PRIMARY_ROUTE),
-            bg=V2_ACTION_BG,
-            fg=V2_ACTION_FG,
-            relief="flat",
-            padx=10,
-            pady=5,
-        ).pack(side="right", padx=(0, 8), pady=8)
         tk.Button(
             header,
             text="Shortcuts",

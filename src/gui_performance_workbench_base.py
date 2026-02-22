@@ -1,8 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
-import os
-import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, ttk
@@ -12,82 +10,81 @@ from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
-from src.gui_kit.run_commands import apply_execution_run_config_payload
-from src.gui_kit.run_commands import build_config_from_model
+from src.gui_kit.run_commands import apply_performance_profile_payload
 from src.gui_kit.run_commands import build_profile_from_model
-from src.gui_kit.run_commands import execution_run_config_payload
-from src.gui_kit.run_commands import run_build_partition_plan
-from src.gui_kit.run_commands import run_generation_multiprocess
+from src.gui_kit.run_commands import performance_profile_payload
+from src.gui_kit.run_commands import run_benchmark as run_shared_benchmark
+from src.gui_kit.run_commands import run_build_chunk_plan
+from src.gui_kit.run_commands import run_estimate as run_shared_estimate
+from src.gui_kit.run_commands import run_generation_strategy
 from src.gui_kit.run_lifecycle import RunLifecycleController
 from src.gui_kit.run_models import RunWorkflowViewModel
 from src.gui_kit.shortcuts import ShortcutManager
 from src.gui_kit.ui_dispatch import UIDispatcher
 from src.gui_tools.run_workflow_view import RunWorkflowCapabilities
 from src.gui_tools.run_workflow_view import RunWorkflowSurface
-from src.multiprocessing_runtime import EXECUTION_MODES
-from src.multiprocessing_runtime import MultiprocessEvent
-from src.multiprocessing_runtime import MultiprocessRunCancelled
-from src.multiprocessing_runtime import MultiprocessRunResult
-from src.multiprocessing_runtime import PartitionFailure
-from src.multiprocessing_runtime import PartitionPlanEntry
-from src.multiprocessing_runtime import WorkerStatus
-from src.multiprocessing_runtime import build_worker_status_snapshot
+from src.performance_scaling import BenchmarkResult
+from src.performance_scaling import ChunkPlanEntry
+from src.performance_scaling import PerformanceRunCancelled
+from src.performance_scaling import RuntimeEvent
+from src.performance_scaling import StrategyRunResult
 from src.schema_project_io import load_project_from_json
+class PerformanceWorkbenchBase(ttk.Frame):
+    """Shared performance workbench behavior used by v2 GUI routes."""
 
-
-class ExecutionOrchestratorScreen(ttk.Frame):
-    """Multiprocessing run planner/monitor with retry and fallback controls."""
-
-    def __init__(self, parent: tk.Widget, app: object, cfg: AppConfig) -> None:
+    def __init__(self, parent: tk.Widget, app: "App", cfg: AppConfig) -> None:
         super().__init__(parent, padding=16)
         self.app = app
         self.cfg = cfg
         self.project = None
         self._loaded_schema_path = ""
 
-        cpu_count = max(1, int(os.cpu_count() or 1))
-        default_workers = max(1, min(4, cpu_count))
-        self.model = RunWorkflowViewModel(
-            execution_mode=EXECUTION_MODES[1],
-            worker_count=str(default_workers),
-            max_inflight_chunks=str(default_workers * 2),
-        )
-
         header = ttk.Frame(self)
         header.pack(fill="x", pady=(0, 8))
-        ttk.Button(header, text="\u2190 Back", command=lambda: self.app.go_home()).pack(side="left")
-        ttk.Label(header, text="Execution Orchestrator", font=("Segoe UI", 16, "bold")).pack(side="left", padx=(10, 0))
+        ttk.Button(header, text="\u2190 Back", command=self.app.go_home).pack(side="left")
+        ttk.Label(header, text="Performance Workbench", font=("Segoe UI", 16, "bold")).pack(side="left", padx=(10, 0))
         ttk.Button(header, text="Shortcuts", command=self._show_shortcuts_help).pack(side="right")
 
+        subtitle = ttk.Label(
+            self,
+            justify="left",
+            wraplength=940,
+            text=(
+                "Configure performance profile values, validate FK-safe row overrides, and estimate workload "
+                "memory/time before full generation."
+            ),
+        )
+        subtitle.pack(anchor="w", pady=(0, 10))
+
+        self.model = RunWorkflowViewModel()
         self.surface = RunWorkflowSurface(
             self,
             model=self.model,
             capabilities=RunWorkflowCapabilities(
+                estimate=True,
                 build_plan=True,
-                start_run=True,
-                start_fallback=True,
-                workers_tab=True,
-                failures_tab=True,
+                benchmark=True,
+                generate_strategy=True,
                 show_status_label=True,
             ),
         )
         self.surface.pack(fill="both", expand=True)
-        self.surface.set_status("Load a schema and build a partition plan.")
+        self.surface.set_status("Load a schema and estimate workload strategy.")
 
         self.surface.browse_btn.configure(command=self._browse_schema_path)
         self.surface.load_schema_btn.configure(command=self._load_schema)
-        self.surface.build_plan_btn.configure(command=self._build_plan)
-        self.surface.start_run_btn.configure(command=self._start_run)
-        self.surface.start_fallback_btn.configure(command=lambda: self._start_run(fallback_to_single_process=True))
+        self.surface.estimate_btn.configure(command=self._estimate_workload)
+        self.surface.build_plan_btn.configure(command=self._build_chunk_plan)
+        self.surface.run_benchmark_btn.configure(command=self._start_run_benchmark)
+        self.surface.run_generate_btn.configure(command=self._start_generate_with_strategy)
         self.surface.cancel_run_btn.configure(command=self._cancel_run)
-        self.surface.save_btn.configure(text="Save run config...", command=self._save_run_config)
-        self.surface.load_btn.configure(text="Load run config...", command=self._load_run_config)
+        self.surface.save_btn.configure(text="Save profile...", command=self._save_profile)
+        self.surface.load_btn.configure(text="Load profile...", command=self._load_profile)
 
-        self.partition_tree = self.surface.partition_tree
-        self.worker_tree = self.surface.worker_tree
-        self.failures_tree = self.surface.failures_tree
-        self.start_run_btn = self.surface.start_run_btn
-        self.start_fallback_btn = self.surface.start_fallback_btn
+        self.diagnostics_tree = self.surface.diagnostics_tree
+        self.chunk_plan_tree = self.surface.chunk_plan_tree
+        self.run_benchmark_btn = self.surface.run_benchmark_btn
+        self.run_generate_btn = self.surface.run_generate_btn
         self.cancel_run_btn = self.surface.cancel_run_btn
         self.status_var = self.surface.status_var
         self.live_phase_var = self.surface.live_phase_var
@@ -96,9 +93,9 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         self.live_progress = self.surface.live_progress
 
         self.error_surface = ErrorSurface(
-            context="Execution Orchestrator",
-            dialog_title="Execution orchestrator error",
-            warning_title="Execution orchestrator warning",
+            context="Performance Workbench",
+            dialog_title="Performance workbench error",
+            warning_title="Performance workbench warning",
             show_dialog=show_error_dialog,
             show_warning=show_warning_dialog,
             set_status=self.surface.set_status,
@@ -112,7 +109,7 @@ class ExecutionOrchestratorScreen(ttk.Frame):
             set_eta=self.live_eta_var.set,
             set_progress=lambda value: self.live_progress.configure(value=value),
             set_status=self.surface.set_status,
-            action_buttons=[self.surface.build_plan_btn, self.surface.start_run_btn, self.surface.start_fallback_btn],
+            action_buttons=[self.surface.estimate_btn, self.surface.build_plan_btn, self.surface.run_benchmark_btn, self.surface.run_generate_btn],
             cancel_button=self.surface.cancel_run_btn,
         )
         self.shortcut_manager = ShortcutManager(self)
@@ -135,23 +132,18 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         )
         self.focus_controller.add_anchor(
             "actions",
-            lambda: self.start_run_btn,
+            lambda: self.surface.estimate_btn,
             description="Run action controls",
         )
         self.focus_controller.add_anchor(
+            "diagnostics",
+            lambda: self.diagnostics_tree,
+            description="Diagnostics table",
+        )
+        self.focus_controller.add_anchor(
             "plan",
-            lambda: self.partition_tree,
-            description="Partition plan table",
-        )
-        self.focus_controller.add_anchor(
-            "workers",
-            lambda: self.worker_tree,
-            description="Worker monitor table",
-        )
-        self.focus_controller.add_anchor(
-            "failures",
-            lambda: self.failures_tree,
-            description="Failures table",
+            lambda: self.chunk_plan_tree,
+            description="Chunk plan table",
         )
         self.focus_controller.set_default_anchor("schema_path")
 
@@ -161,10 +153,10 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         self.shortcut_manager.register("<Shift-F6>", "Focus previous major section", self._focus_previous_anchor)
         self.shortcut_manager.register_ctrl_cmd("b", "Browse schema path", self._browse_schema_path)
         self.shortcut_manager.register_ctrl_cmd("l", "Load schema", self._load_schema)
-        self.shortcut_manager.register_ctrl_cmd("s", "Save run config", self._save_run_config)
-        self.shortcut_manager.register_ctrl_cmd("o", "Load run config", self._load_run_config)
-        self.shortcut_manager.register("<F5>", "Build partition plan", self._build_plan)
-        self.shortcut_manager.register_ctrl_cmd("Return", "Start run", self._start_run)
+        self.shortcut_manager.register_ctrl_cmd("s", "Save profile", self._save_profile)
+        self.shortcut_manager.register_ctrl_cmd("o", "Load profile", self._load_profile)
+        self.shortcut_manager.register("<F5>", "Estimate workload", self._estimate_workload)
+        self.shortcut_manager.register_ctrl_cmd("Return", "Run benchmark", self._start_run_benchmark)
         self.shortcut_manager.register("<Escape>", "Cancel active run", self._cancel_if_running)
         self.shortcut_manager.register_help_item("Ctrl/Cmd+C", "Copy selected table rows with headers")
         self.shortcut_manager.register_help_item("Ctrl/Cmd+Shift+C", "Copy selected table rows without headers")
@@ -184,7 +176,7 @@ class ExecutionOrchestratorScreen(ttk.Frame):
             self._cancel_run()
 
     def _show_shortcuts_help(self) -> None:
-        self.shortcut_manager.show_help_dialog(title="Execution Orchestrator Shortcuts")
+        self.shortcut_manager.show_help_dialog(title="Performance Workbench Shortcuts")
 
     def _sync_model(self) -> RunWorkflowViewModel:
         return self.surface.sync_model_from_vars()
@@ -220,10 +212,11 @@ class ExecutionOrchestratorScreen(ttk.Frame):
 
         self.project = loaded
         self._loaded_schema_path = model.schema_path
-        self.surface.clear_tree(self.partition_tree)
-        self.surface.clear_tree(self.worker_tree)
-        self.surface.clear_tree(self.failures_tree)
-        self.surface.set_status(f"Loaded schema '{loaded.name}' with {len(loaded.tables)} tables.")
+        self.surface.clear_tree(self.diagnostics_tree)
+        self.surface.clear_tree(self.chunk_plan_tree)
+        self.surface.set_status(
+            f"Loaded schema '{loaded.name}' with {len(loaded.tables)} tables. Configure profile and estimate workload."
+        )
         self.surface.set_inline_error("")
         return True
 
@@ -237,57 +230,39 @@ class ExecutionOrchestratorScreen(ttk.Frame):
             return self._load_schema()
         return True
 
-    def _populate_partition_tree(self, entries: list[PartitionPlanEntry]) -> None:
+    def _populate_estimates(self, estimates: list[object]) -> None:
+        rows: list[tuple[str, str, str, str, str, str, str]] = []
+        for estimate in estimates:
+            rows.append(
+                (
+                    estimate.table_name,
+                    str(estimate.estimated_rows),
+                    f"{estimate.estimated_memory_mb:.3f}",
+                    f"{estimate.estimated_write_mb:.3f}",
+                    f"{estimate.estimated_seconds:.3f}",
+                    estimate.risk_level,
+                    estimate.recommendation,
+                )
+            )
+        self.surface.set_diagnostics_rows(rows)
+
+    def _populate_chunk_plan(self, entries: list[ChunkPlanEntry]) -> None:
         rows: list[tuple[str, str, str, str, str, str]] = []
         for entry in entries:
+            partition_id = f"{entry.table_name}|stage={entry.stage}|chunk={entry.chunk_index}"
             rows.append(
                 (
                     entry.table_name,
-                    entry.partition_id,
+                    partition_id,
                     f"{entry.start_row}-{entry.end_row}",
                     str(entry.stage),
-                    str(entry.assigned_worker),
-                    entry.status,
+                    "-",
+                    "planned",
                 )
             )
         self.surface.set_plan_rows(rows)
 
-    def _populate_worker_tree(self, workers: dict[int, WorkerStatus]) -> None:
-        rows: list[tuple[str, str, str, str, str, str, str]] = []
-        for worker_id in sorted(workers):
-            worker = workers[worker_id]
-            heartbeat = "--"
-            if worker.last_heartbeat_epoch > 0:
-                heartbeat = time.strftime("%H:%M:%S", time.localtime(worker.last_heartbeat_epoch))
-            current = ""
-            if worker.current_partition_id:
-                current = f"{worker.current_table} / {worker.current_partition_id}"
-            rows.append(
-                (
-                    str(worker.worker_id),
-                    current,
-                    str(worker.rows_processed),
-                    f"{worker.throughput_rows_per_sec:.1f}",
-                    f"{worker.memory_mb:.3f}",
-                    heartbeat,
-                    worker.state,
-                )
-            )
-        self.surface.set_worker_rows(rows)
-
-    def _append_failure(self, failure: PartitionFailure) -> None:
-        self.failures_tree.insert(
-            "",
-            "end",
-            values=(
-                failure.partition_id,
-                failure.error,
-                str(failure.retry_count),
-                failure.action,
-            ),
-        )
-
-    def _build_plan(self) -> None:
+    def _estimate_workload(self) -> None:
         if self.lifecycle.state.is_running:
             return
         if not self._ensure_project():
@@ -295,38 +270,58 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         assert self.project is not None
         model = self._sync_model()
         try:
-            plan = run_build_partition_plan(self.project, model)
-            config = build_config_from_model(model)
-            workers = build_worker_status_snapshot(config)
+            diagnostics = run_shared_estimate(self.project, model)
         except ValueError as exc:
             self.error_surface.emit_exception_actionable(
                 exc,
-                location="Build partition plan",
-                hint="review multiprocess settings and retry",
+                location="Estimate workload",
+                hint="review workload profile values and retry",
                 mode="mixed",
             )
             return
+        self._populate_estimates(diagnostics.estimates)
+        self.surface.set_status(
+            "Estimate complete: "
+            f"rows={diagnostics.summary.total_rows}, memory={diagnostics.summary.total_memory_mb:.3f} MB, "
+            f"write={diagnostics.summary.total_write_mb:.3f} MB, time={diagnostics.summary.total_seconds:.3f} s, "
+            f"highest risk={diagnostics.summary.highest_risk}."
+        )
+        self.surface.set_focus("diagnostics")
 
-        self._populate_partition_tree(plan)
-        self._populate_worker_tree(workers)
-        total_rows = sum(entry.rows_in_partition for entry in plan)
-        self.surface.set_status(f"Partition plan ready: partitions={len(plan)}, rows={total_rows}, workers={len(workers)}.")
+    def _build_chunk_plan(self) -> None:
+        if self.lifecycle.state.is_running:
+            return
+        if not self._ensure_project():
+            return
+        assert self.project is not None
+        model = self._sync_model()
+        try:
+            plan_entries = run_build_chunk_plan(self.project, model)
+        except ValueError as exc:
+            self.error_surface.emit_exception_actionable(
+                exc,
+                location="Build chunk plan",
+                hint="review profile settings and retry",
+                mode="mixed",
+            )
+            return
+        self._populate_chunk_plan(plan_entries)
+        total_rows = sum(entry.rows_in_chunk for entry in plan_entries)
+        max_stage = max((entry.stage for entry in plan_entries), default=0)
+        self.surface.set_status(
+            f"Chunk plan ready: tables={len({e.table_name for e in plan_entries})}, "
+            f"chunks={len(plan_entries)}, rows={total_rows}, max stage={max_stage}."
+        )
         self.surface.set_focus("plan")
 
     def _cancel_run(self) -> None:
-        self.lifecycle.request_cancel("Cancellation requested. Waiting for current task to stop...")
+        self.lifecycle.request_cancel("Cancellation requested. Waiting for current step to finish...")
 
     def _is_cancel_requested(self) -> bool:
         return self.lifecycle.is_cancel_requested()
 
-    def _on_runtime_event(self, event: MultiprocessEvent) -> None:
-        self.lifecycle.handle_multiprocess_event(event)
-        if event.kind == "partition_failed" and event.partition_id:
-            self.failures_tree.insert(
-                "",
-                "end",
-                values=(event.partition_id, event.message, str(event.retry_count), "retry"),
-            )
+    def _on_runtime_event(self, event: RuntimeEvent) -> None:
+        self.lifecycle.handle_runtime_event(event)
 
     def _on_run_failed(self, message: str) -> None:
         self.lifecycle.transition_failed(message, phase="Failed")
@@ -334,50 +329,65 @@ class ExecutionOrchestratorScreen(ttk.Frame):
 
     def _on_run_cancelled(self, message: str) -> None:
         self.lifecycle.transition_cancelled(message, phase="Cancelled")
-        self.live_phase_var.set("Run cancelled.")
-        self.live_eta_var.set("ETA: cancelled")
+        self._on_runtime_event(RuntimeEvent(kind="cancelled", message="Run cancelled by user."))
 
-    def _on_run_done(self, result: MultiprocessRunResult) -> None:
-        self.lifecycle.transition_complete("Complete")
-        self._populate_partition_tree(result.partition_plan)
-        self._populate_worker_tree(result.worker_status)
-        self.surface.set_failures_rows(
-            [
-                (
-                    failure.partition_id,
-                    failure.error,
-                    str(failure.retry_count),
-                    failure.action,
-                )
-                for failure in result.failures
-            ]
-        )
-
-        csv_count = len(result.strategy_result.csv_paths)
-        sqlite_rows = sum(result.strategy_result.sqlite_counts.values())
-        fallback_text = "yes" if result.fallback_used else "no"
+    def _on_benchmark_done(self, result: BenchmarkResult) -> None:
+        self.lifecycle.transition_complete("Benchmark complete")
+        self._populate_estimates(result.estimates)
+        self._populate_chunk_plan(result.chunk_plan)
         self.surface.set_status(
-            (
-                "Run complete: "
-                f"rows={result.total_rows}, csv_files={csv_count}, sqlite_rows={sqlite_rows}, "
-                f"fallback={fallback_text}."
-            )
+            "Benchmark complete: "
+            f"tables={len(result.selected_tables)}, chunks={result.chunk_summary.total_chunks}, "
+            f"rows={result.chunk_summary.total_rows}, risk={result.estimate_summary.highest_risk}."
         )
 
-    def _start_run(self, fallback_to_single_process: bool = False) -> None:
+    def _on_generate_done(self, result: StrategyRunResult) -> None:
+        self.lifecycle.transition_complete("Generation complete")
+        csv_count = len(result.csv_paths)
+        sqlite_rows = sum(result.sqlite_counts.values())
+        self.surface.set_status(
+            "Generation complete: "
+            f"tables={len(result.selected_tables)}, rows={result.total_rows}, "
+            f"csv_files={csv_count}, sqlite_rows={sqlite_rows}."
+        )
+
+    def _start_run_benchmark(self) -> None:
         if not self._ensure_project():
             return
         assert self.project is not None
+        model = self._sync_model()
 
+        def worker() -> BenchmarkResult:
+            return run_shared_benchmark(
+                self.project,
+                model,
+                on_event=self.ui_dispatch.marshal(self._on_runtime_event),
+                cancel_requested=self._is_cancel_requested,
+            )
+
+        self.lifecycle.run_async(
+            after=self.after,
+            worker=worker,
+            on_done=lambda result: self._on_benchmark_done(result),
+            on_failed=self._on_run_failed,
+            on_cancelled=self._on_run_cancelled,
+            phase_label="Running benchmark...",
+            cancel_exceptions=(PerformanceRunCancelled,),
+            dispatcher=self.ui_dispatch,
+        )
+
+    def _start_generate_with_strategy(self) -> None:
+        if not self._ensure_project():
+            return
+        assert self.project is not None
         model = self._sync_model()
         try:
             profile = build_profile_from_model(model)
-            build_config_from_model(model)
         except ValueError as exc:
             self.error_surface.emit_exception_actionable(
                 exc,
-                location="Start run",
-                hint="fix run configuration values and retry",
+                location="Generate with strategy",
+                hint="fix profile fields before running generation",
                 mode="mixed",
             )
             return
@@ -385,124 +395,113 @@ class ExecutionOrchestratorScreen(ttk.Frame):
         output_mode = profile.output_mode
         output_csv_folder: str | None = None
         output_sqlite_path: str | None = None
-
         if output_mode in {"csv", "all"}:
-            output_csv_folder = filedialog.askdirectory(title="Choose output folder for CSV export")
+            output_csv_folder = filedialog.askdirectory(title="Choose output folder for strategy CSV export")
             if output_csv_folder in {None, ""}:
-                self.surface.set_status("Run cancelled (no CSV output folder selected).")
+                self.surface.set_status("Generate with strategy cancelled (no CSV output folder).")
                 return
-
         if output_mode in {"sqlite", "all"}:
             output_sqlite_path = filedialog.asksaveasfilename(
-                title="Choose SQLite output path",
+                title="Choose SQLite output path for strategy run",
                 defaultextension=".db",
                 filetypes=[("SQLite DB", "*.db"), ("All files", "*.*")],
-                initialfile="execution_orchestrator.db",
+                initialfile="performance_strategy.db",
             )
             if output_sqlite_path in {None, ""}:
-                self.surface.set_status("Run cancelled (no SQLite output path selected).")
+                self.surface.set_status("Generate with strategy cancelled (no SQLite output path).")
                 return
 
-        def worker() -> MultiprocessRunResult:
-            return run_generation_multiprocess(
+        def worker() -> StrategyRunResult:
+            return run_generation_strategy(
                 self.project,
                 model,
                 output_csv_folder=output_csv_folder,
                 output_sqlite_path=output_sqlite_path,
                 on_event=self.ui_dispatch.marshal(self._on_runtime_event),
                 cancel_requested=self._is_cancel_requested,
-                fallback_to_single_process=fallback_to_single_process,
             )
 
-        label = "Running with fallback..." if fallback_to_single_process else "Running..."
         self.lifecycle.run_async(
             after=self.after,
             worker=worker,
-            on_done=lambda result: self._on_run_done(result),
+            on_done=lambda result: self._on_generate_done(result),
             on_failed=self._on_run_failed,
             on_cancelled=self._on_run_cancelled,
-            phase_label=label,
-            cancel_exceptions=(MultiprocessRunCancelled,),
+            phase_label="Generating with strategy...",
+            cancel_exceptions=(PerformanceRunCancelled,),
             dispatcher=self.ui_dispatch,
         )
 
-    def _save_run_config(self) -> None:
+    def _save_profile(self) -> None:
         model = self._sync_model()
         try:
-            payload = execution_run_config_payload(model)
+            profile = build_profile_from_model(model)
+            payload = performance_profile_payload(profile)
         except ValueError as exc:
             self.error_surface.emit_exception_actionable(
                 exc,
-                location="Save run config",
-                hint="fix invalid run configuration fields and retry",
+                location="Save profile",
+                hint="fix invalid profile values and retry",
                 mode="mixed",
             )
             return
-
         output_path = filedialog.asksaveasfilename(
-            title="Save execution run config JSON",
+            title="Save performance profile JSON",
             defaultextension=".json",
-            initialfile="execution_orchestrator_config.json",
+            initialfile="performance_profile.json",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
         )
         if output_path == "":
-            self.surface.set_status("Save run config cancelled.")
+            self.surface.set_status("Save profile cancelled.")
             return
-
         try:
             Path(output_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except OSError as exc:
             self.error_surface.emit(
-                location="Save run config",
-                issue=f"could not write config file ({exc})",
+                location="Save profile",
+                issue=f"could not write profile file ({exc})",
                 hint="choose a writable output path",
                 mode="mixed",
             )
             return
+        self.surface.set_status(f"Saved performance profile to {output_path}.")
 
-        self.surface.set_status(f"Saved run config to {output_path}.")
-
-    def _load_run_config(self) -> None:
-        config_path = filedialog.askopenfilename(
-            title="Load execution run config JSON",
+    def _load_profile(self) -> None:
+        profile_path = filedialog.askopenfilename(
+            title="Load performance profile JSON",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
         )
-        if config_path == "":
-            self.surface.set_status("Load run config cancelled.")
+        if profile_path == "":
+            self.surface.set_status("Load profile cancelled.")
             return
-
         try:
-            payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            payload = json.loads(Path(profile_path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             self.error_surface.emit(
-                location="Load run config",
-                issue=f"failed to read config JSON ({exc})",
-                hint="choose a valid JSON config file",
+                location="Load profile",
+                issue=f"failed to read profile JSON ({exc})",
+                hint="choose a valid JSON profile file",
                 mode="mixed",
             )
             return
-
         if not isinstance(payload, dict):
             self.error_surface.emit(
-                location="Load run config",
-                issue="config JSON must be an object",
-                hint="store profile and multiprocess fields in a JSON object",
+                location="Load profile",
+                issue="profile JSON must be an object",
+                hint="store profile fields in a JSON object",
                 mode="mixed",
             )
             return
-
         try:
-            apply_execution_run_config_payload(self.model, payload)
+            apply_performance_profile_payload(self.model, payload)
             build_profile_from_model(self.model)
-            build_config_from_model(self.model)
         except ValueError as exc:
             self.error_surface.emit_exception_actionable(
                 exc,
-                location="Load run config",
-                hint="correct payload values and retry",
+                location="Load profile",
+                hint="correct the profile payload fields and retry",
                 mode="mixed",
             )
             return
-
         self.surface.sync_vars_from_model()
-        self.surface.set_status(f"Loaded run config from {config_path}.")
+        self.surface.set_status(f"Loaded performance profile from {profile_path}.")

@@ -25,7 +25,7 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
             self.root.destroy()
 
     def _routes(self) -> tuple[str, str]:
-        return ("performance_workbench", PERFORMANCE_V2_ROUTE)
+        return ("performance_workbench_v2", PERFORMANCE_V2_ROUTE)
 
     def test_estimate_and_plan_paths_use_bulk_surface_setters(self) -> None:
         estimate_payload = SimpleNamespace(
@@ -65,14 +65,14 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
                 screen.project = object()
 
                 with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_home.run_shared_estimate",
+                    "src.gui_performance_workbench_base.run_shared_estimate",
                     return_value=estimate_payload,
                 ), mock.patch.object(screen.surface, "set_diagnostics_rows") as set_diagnostics:
                     screen._estimate_workload()
                     set_diagnostics.assert_called_once()
 
                 with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_home.run_build_chunk_plan",
+                    "src.gui_performance_workbench_base.run_build_chunk_plan",
                     return_value=plan_payload,
                 ), mock.patch.object(screen.surface, "set_plan_rows") as set_plan:
                     screen._build_chunk_plan()
@@ -138,7 +138,7 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
                     set_plan.assert_called_once()
 
                 with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_home.build_profile_from_model",
+                    "src.gui_performance_workbench_base.build_profile_from_model",
                     return_value=SimpleNamespace(output_mode="preview"),
                 ), mock.patch.object(
                     screen.lifecycle,
@@ -160,20 +160,20 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
 
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     profile_path = f"{tmp_dir}/profile.json"
-                    with mock.patch("src.gui_home.build_profile_from_model", return_value=SimpleNamespace(output_mode="preview")), mock.patch(
-                        "src.gui_home.performance_profile_payload",
+                    with mock.patch("src.gui_performance_workbench_base.build_profile_from_model", return_value=SimpleNamespace(output_mode="preview")), mock.patch(
+                        "src.gui_performance_workbench_base.performance_profile_payload",
                         return_value={"output_mode": "preview"},
                     ), mock.patch(
-                        "src.gui_home.filedialog.asksaveasfilename",
+                        "src.gui_performance_workbench_base.filedialog.asksaveasfilename",
                         return_value=profile_path,
                     ):
                         screen._save_profile()
                     self.assertTrue(screen.surface.status_var.get().startswith("Saved performance profile"))
 
-                    with mock.patch("src.gui_home.filedialog.askopenfilename", return_value=profile_path), mock.patch(
-                        "src.gui_home.apply_performance_profile_payload",
+                    with mock.patch("src.gui_performance_workbench_base.filedialog.askopenfilename", return_value=profile_path), mock.patch(
+                        "src.gui_performance_workbench_base.apply_performance_profile_payload",
                     ), mock.patch(
-                        "src.gui_home.build_profile_from_model",
+                        "src.gui_performance_workbench_base.build_profile_from_model",
                         return_value=SimpleNamespace(output_mode="preview"),
                     ):
                         screen._load_profile()
@@ -182,3 +182,5 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

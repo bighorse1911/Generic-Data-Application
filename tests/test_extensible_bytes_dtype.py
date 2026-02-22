@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from src.generator_project import generate_project_rows
-from src.gui_schema_project import _csv_export_value
+from src.gui_schema_shared import _csv_export_value
 from src.schema_project_io import build_project_sql_ddl
 from src.schema_project_model import ColumnSpec, SchemaProject, TableSpec, validate_project
 from src.storage_sqlite_project import create_tables, insert_project_rows
@@ -97,3 +97,5 @@ class TestExtensibleBytesDtype(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

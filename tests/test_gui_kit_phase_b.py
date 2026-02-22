@@ -6,7 +6,7 @@ from src.config import AppConfig
 from src.gui_home import App
 from src.gui_kit.column_chooser import normalize_column_preferences
 from src.gui_kit.validation import InlineValidationEntry
-from src.gui_schema_project import ValidationIssue
+from src.gui_schema_shared import ValidationIssue
 
 
 class TestGUIKitPhaseB(unittest.TestCase):
@@ -39,44 +39,44 @@ class TestGUIKitPhaseB(unittest.TestCase):
         )
 
     def test_kit_screen_dirty_guard_marks_dirty_and_cleans_on_save(self):
-        screen = self.app.screens["schema_project"]
+        screen = self.app.screens["schema_project_v2"]
         self.assertFalse(screen.is_dirty)
         screen._add_table()
         self.assertTrue(screen.is_dirty)
 
         with mock.patch(
-            "src.gui_schema_project.filedialog.asksaveasfilename",
+            "src.gui_schema_core.filedialog.asksaveasfilename",
             return_value="phase_b_test_project.json",
-        ), mock.patch("src.gui_schema_project.save_project_to_json"):
+        ), mock.patch("src.gui_schema_core.save_project_to_json"):
             saved = screen._save_project()
 
         self.assertTrue(saved)
         self.assertFalse(screen.is_dirty)
 
     def test_kit_screen_back_navigation_respects_dirty_prompt(self):
-        screen = self.app.screens["schema_project"]
+        screen = self.app.screens["schema_project_v2"]
         screen._add_table()
         self.assertTrue(screen.is_dirty)
 
         with mock.patch("src.gui_kit.layout.messagebox.askyesnocancel", return_value=None), mock.patch.object(
-            screen.app, "go_home"
-        ) as go_home:
+            screen.app, "show_screen"
+        ) as show_screen:
             screen._on_back_requested()
-            go_home.assert_not_called()
+            show_screen.assert_not_called()
 
         with mock.patch("src.gui_kit.layout.messagebox.askyesnocancel", return_value=False), mock.patch.object(
-            screen.app, "go_home"
-        ) as go_home:
+            screen.app, "show_screen"
+        ) as show_screen:
             screen._on_back_requested()
-            go_home.assert_called_once()
+            show_screen.assert_called_once_with("schema_studio_v2")
 
     def test_kit_screen_inline_validation_summary_is_populated(self):
-        screen = self.app.screens["schema_project"]
+        screen = self.app.screens["schema_project_v2"]
         screen._run_validation()
         self.assertGreaterEqual(len(screen.inline_validation.tree.get_children()), 1)
 
     def test_kit_screen_validation_jump_selects_table_and_column(self):
-        screen = self.app.screens["schema_project"]
+        screen = self.app.screens["schema_project_v2"]
         screen._add_table()
         table = screen.project.tables[0].table_name
         column = f"{table}_id"
@@ -104,3 +104,5 @@ class TestGUIKitPhaseB(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

@@ -3,8 +3,8 @@ import unittest
 
 
 TARGET_MODULES = [
-    Path("src/gui_schema_project.py"),
-    Path("src/gui_schema_project_kit.py"),
+    Path("src/gui_schema_core.py"),
+    Path("src/gui_schema_editor_base.py"),
     Path("src/gui_tools/erd_designer_view.py"),
     Path("src/gui_tools/location_selector_view.py"),
 ]
@@ -21,3 +21,5 @@ class TestGuiErrorSurfaceStaticGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

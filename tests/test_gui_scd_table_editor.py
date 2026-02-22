@@ -29,7 +29,7 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         screen._add_column()
 
     def test_legacy_screen_applies_scd1_and_preserves_fields_on_column_edit(self):
-        screen = self.app.screens["schema_project_legacy"]
+        screen = self.app.screens["schema_project_v2"]
         screen._add_table()
         idx = screen.selected_table_index
         self.assertIsNotNone(idx)
@@ -68,7 +68,7 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         self.assertEqual(table_after.scd_tracked_columns, ["segment"])
 
     def test_kit_screen_applies_scd2_table_configuration(self):
-        screen = self.app.screens["schema_project_kit"]
+        screen = self.app.screens["schema_project_v2"]
         screen._add_table()
         idx = screen.selected_table_index
         self.assertIsNotNone(idx)
@@ -99,7 +99,7 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         self.assertEqual(table.scd_active_to_column, "valid_to")
 
     def test_kit_screen_uses_safe_threaded_job_for_long_running_actions(self):
-        screen = self.app.screens["schema_project_kit"]
+        screen = self.app.screens["schema_project_v2"]
         screen._add_table()
         idx = screen.selected_table_index
         self.assertIsNotNone(idx)
@@ -121,7 +121,7 @@ class TestGuiSCDTableEditor(unittest.TestCase):
                 on_ok({table_name: 1})
 
         with mock.patch.object(screen, "safe_threaded_job", side_effect=fake_safe_job), mock.patch(
-            "src.gui_schema_project.messagebox.showinfo"
+            "src.gui_schema_core.messagebox.showinfo"
         ):
             screen._on_generate_project()
             screen._on_generate_sample()
@@ -132,7 +132,7 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         self.assertEqual(calls, ["safe_threaded_job", "safe_threaded_job", "safe_threaded_job"])
 
     def test_kit_screen_can_edit_selected_column(self):
-        screen = self.app.screens["schema_project_kit"]
+        screen = self.app.screens["schema_project_v2"]
         screen._add_table()
         idx = screen.selected_table_index
         self.assertIsNotNone(idx)
@@ -159,7 +159,7 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         self.assertEqual(edited.depends_on, [f"{table.table_name}_id"])
 
     def test_edit_column_requires_selected_row_with_actionable_error(self):
-        screen = self.app.screens["schema_project_kit"]
+        screen = self.app.screens["schema_project_v2"]
         screen._add_table()
         self._add_non_nullable_column(screen, "city", "text")
         screen.columns_tree.selection_remove(screen.columns_tree.selection())
@@ -176,13 +176,13 @@ class TestGuiSCDTableEditor(unittest.TestCase):
         self.assertIn("Fix:", message)
 
     def test_kit_screen_uses_default_theme(self):
-        screen = self.app.screens["schema_project_kit"]
+        screen = self.app.screens["schema_project_v2"]
         self.assertFalse(getattr(screen, "kit_dark_mode_enabled", False))
         default_canvas_bg = tk.Canvas(screen).cget("background")
         self.assertEqual(str(screen.scroll.canvas.cget("background")), str(default_canvas_bg))
 
     def test_business_key_unique_count_can_be_authored_in_legacy_and_kit_screens(self):
-        for screen_key in ("schema_project_legacy", "schema_project_kit"):
+        for screen_key in ("schema_project_v2", "schema_project_v2"):
             screen = self.app.screens[screen_key]
             screen._add_table()
             idx = screen.selected_table_index
@@ -203,3 +203,5 @@ class TestGuiSCDTableEditor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

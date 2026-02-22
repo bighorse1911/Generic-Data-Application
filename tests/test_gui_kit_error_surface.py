@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import actionable_error
@@ -77,3 +77,5 @@ class TestErrorSurface(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

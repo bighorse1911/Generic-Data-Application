@@ -21,12 +21,12 @@ class TestGUIAsyncLifecycleConsistency(unittest.TestCase):
             self.root.destroy()
 
     def test_schema_kit_uses_shared_job_lifecycle_controller(self):
-        screen = self.app.screens["schema_project"]
+        screen = self.app.screens["schema_project_v2"]
         self.assertTrue(hasattr(screen, "job_lifecycle"))
         self.assertFalse(screen.job_lifecycle.state.is_running)
 
     def test_legacy_schema_post_ui_callback_is_teardown_safe(self):
-        screen = self.app.screens["schema_project_legacy"]
+        screen = self.app.screens["schema_project_v2"]
         calls: list[str] = []
         with mock.patch.object(screen, "_ui_alive", return_value=True), mock.patch.object(
             screen,
@@ -40,3 +40,5 @@ class TestGUIAsyncLifecycleConsistency(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

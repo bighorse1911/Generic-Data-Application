@@ -2,7 +2,7 @@
 import unittest
 import tkinter as tk
 from unittest import mock
-from src.gui_schema_project import ScrollableFrame
+from src.gui_schema_shared import ScrollableFrame
 
 
 class TestScrollableFrameDestructionGuard(unittest.TestCase):
@@ -131,3 +131,5 @@ class TestScrollableFrameDestructionGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

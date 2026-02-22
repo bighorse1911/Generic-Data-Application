@@ -9,8 +9,6 @@ from tkinter import filedialog, ttk
 from src.config import AppConfig
 from src.gui_route_policy import ORCHESTRATOR_V2_ROUTE
 from src.gui_route_policy import PERFORMANCE_V2_ROUTE
-from src.gui_route_policy import SCHEMA_DEMO_V2_ROUTE
-from src.gui_route_policy import SCHEMA_PRIMARY_ROUTE
 from src.gui_route_policy import SCHEMA_V2_ROUTE
 from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
@@ -229,17 +227,6 @@ class HomeV2Screen(tk.Frame):
         header.pack(fill="x", padx=16, pady=(16, 10))
         header.pack_propagate(False)
 
-        tk.Button(
-            header,
-            text="Back to Classic Home",
-            command=lambda: self.app.show_screen("home"),
-            bg="#d9d2c4",
-            fg="#1f1f1f",
-            relief="flat",
-            padx=12,
-            pady=6,
-        ).pack(side="left", padx=(10, 10), pady=10)
-
         tk.Label(
             header,
             text="Home v2 - Full Visual Redesign",
@@ -289,12 +276,6 @@ class HomeV2Screen(tk.Frame):
             "Schema Project v2",
             "Native v2 schema authoring route with canonical validation and generation behavior.",
             lambda: self.app.show_screen(SCHEMA_V2_ROUTE),
-        )
-        self._add_card(
-            self.cards_frame,
-            "Schema Demo v2",
-            "Mockup-inspired schema workflow experiment with full model-backed behavior.",
-            lambda: self.app.show_screen(SCHEMA_DEMO_V2_ROUTE),
         )
         self._add_card(
             self.cards_frame,
@@ -393,10 +374,6 @@ class SchemaStudioV2Screen(tk.Frame):
             "Run Center",
             lambda: self._navigate_with_guard("run_center_v2", "opening Run Center"),
         )
-        self.shell.add_header_action(
-            "Classic Home",
-            lambda: self._navigate_with_guard("home", "returning to Classic Home"),
-        )
 
         self.section_tabs = ttk.Notebook(self.shell.workspace)
         self.section_tabs.pack(fill="both", expand=True, padx=10, pady=10)
@@ -458,9 +435,6 @@ class SchemaStudioV2Screen(tk.Frame):
         screen = screens.get(SCHEMA_V2_ROUTE)
         if screen is not None and bool(getattr(screen, "is_dirty", False)):
             return screen
-        screen = screens.get(SCHEMA_PRIMARY_ROUTE)
-        if screen is not None and bool(getattr(screen, "is_dirty", False)):
-            return screen
         return None
 
     def _navigate_with_guard(self, target_route: str, action_name: str) -> None:
@@ -504,7 +478,6 @@ class RunCenterV2Screen(tk.Frame):
         self.shell.add_header_action("Workbench v2", lambda: self.app.show_screen(PERFORMANCE_V2_ROUTE))
         self.shell.add_header_action("Shortcuts", self._show_shortcuts_help)
         self.shell.add_header_action("Schema Studio", lambda: self.app.show_screen("schema_studio_v2"))
-        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
 
         self.shell.add_nav_button("config", "Run Config", lambda: self._set_focus("config"))
         self.shell.add_nav_button("diagnostics", "Diagnostics", lambda: self._set_focus("diagnostics"))
@@ -1033,56 +1006,6 @@ class RunCenterV2Screen(tk.Frame):
         self.shell.set_status(f"Loaded config from {input_path}.")
 
 
-class ToolBridgeV2Screen(tk.Frame):
-    """Phase VR-UI-3 bridge shell that routes to an existing production screen."""
-
-    def __init__(
-        self,
-        parent: tk.Widget,
-        app: object,
-        *,
-        title: str,
-        launch_label: str,
-        launch_route: str,
-        description: str,
-        inspector_title: str,
-        inspector_lines: list[str],
-    ) -> None:
-        super().__init__(parent, bg=V2_BG)
-        self.app = app
-        self.launch_route = launch_route
-        self._inspector_title = inspector_title
-        self._inspector_lines = inspector_lines
-
-        self.shell = V2ShellFrame(self, title=title, on_back=lambda: self.app.show_screen("home_v2"))
-        self.shell.pack(fill="both", expand=True)
-        self.shell.set_status(f"{title}: bridge ready.")
-        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
-        self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
-
-        self.shell.add_nav_button("overview", "Overview", command=self._show_overview)
-        self.shell.add_nav_button("open", "Open Current Tool", command=self._open_current)
-
-        self.body_card = tk.Frame(self.shell.workspace, bg=V2_PANEL, bd=1, relief="solid")
-        self.body_card.pack(fill="x", padx=12, pady=12)
-        tk.Label(self.body_card, text=description, bg=V2_PANEL, fg="#333333", anchor="w", justify="left", wraplength=760, font=("Calibri", 10)).pack(fill="x", padx=12, pady=(12, 10))
-
-        self.launch_btn = tk.Button(self.body_card, text=launch_label, command=self._open_current, bg=V2_NAV_ACTIVE, fg="#ffffff", relief="flat", padx=12, pady=6)
-        self.launch_btn.pack(anchor="e", padx=12, pady=(0, 12))
-
-        self._show_overview()
-
-    def _show_overview(self) -> None:
-        self.shell.set_nav_active("overview")
-        self.shell.set_inspector(self._inspector_title, self._inspector_lines)
-        self.shell.set_status("Bridge overview ready.")
-
-    def _open_current(self) -> None:
-        self.shell.set_nav_active("open")
-        self.shell.set_status(f"Opening production route '{self.launch_route}'.")
-        self.app.show_screen(self.launch_route)
-
-
 class ERDDesignerV2Screen(tk.Frame):
     """Native v2 route for ERD designer behavior."""
 
@@ -1092,8 +1015,6 @@ class ERDDesignerV2Screen(tk.Frame):
         self.view_model = ERDDesignerV2ViewModel()
         self.shell = V2ShellFrame(self, title="ERD Designer v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
-        self.shell.add_header_action("Open Classic Tool", lambda: self.app.show_screen("erd_designer"))
-        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
         self.shell.add_nav_button("tool", "ERD Tool", command=self._show_tool)
         self.shell.add_nav_button("overview", "Overview", command=self._show_overview)
@@ -1141,8 +1062,6 @@ class LocationSelectorV2Screen(tk.Frame):
         self.view_model = LocationSelectorV2ViewModel()
         self.shell = V2ShellFrame(self, title="Location Selector v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
-        self.shell.add_header_action("Open Classic Tool", lambda: self.app.show_screen("location_selector"))
-        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
         self.shell.add_nav_button("tool", "Location Tool", command=self._show_tool)
         self.shell.add_nav_button("overview", "Overview", command=self._show_overview)
@@ -1190,7 +1109,6 @@ class GenerationBehaviorsGuideV2Screen(tk.Frame):
         self.view_model = GenerationGuideV2ViewModel()
         self.shell = V2ShellFrame(self, title="Generation Guide v2", on_back=lambda: self.app.show_screen("home_v2"))
         self.shell.pack(fill="both", expand=True)
-        self.shell.add_header_action("Classic Home", lambda: self.app.show_screen("home"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
         self.shell.add_nav_button("guide", "Guide", command=self._show_guide)
         self.shell.add_nav_button("overview", "Overview", command=self._show_overview)
@@ -1226,61 +1144,4 @@ class GenerationBehaviorsGuideV2Screen(tk.Frame):
             ],
         )
         self.shell.set_status("Generation Guide v2 overview.")
-
-
-class ERDDesignerV2BridgeScreen(ToolBridgeV2Screen):
-    """Hidden fallback bridge route for ERD designer."""
-
-    def __init__(self, parent: tk.Widget, app: object, _cfg: AppConfig) -> None:
-        super().__init__(
-            parent,
-            app,
-            title="ERD Designer v2 Bridge",
-            launch_label="Open current ERD Designer",
-            launch_route="erd_designer",
-            description="Fallback bridge route to the production ERD designer.",
-            inspector_title="ERD Bridge Notes",
-            inspector_lines=[
-                "This route is retained temporarily for rollback safety.",
-                "Primary v2 ERD behavior now lives on erd_designer_v2.",
-            ],
-        )
-
-
-class LocationSelectorV2BridgeScreen(ToolBridgeV2Screen):
-    """Hidden fallback bridge route for location selector."""
-
-    def __init__(self, parent: tk.Widget, app: object, _cfg: AppConfig) -> None:
-        super().__init__(
-            parent,
-            app,
-            title="Location Selector v2 Bridge",
-            launch_label="Open current Location Selector",
-            launch_route="location_selector",
-            description="Fallback bridge route to the production location selector.",
-            inspector_title="Location Bridge Notes",
-            inspector_lines=[
-                "This route is retained temporarily for rollback safety.",
-                "Primary v2 location behavior now lives on location_selector_v2.",
-            ],
-        )
-
-
-class GenerationBehaviorsGuideV2BridgeScreen(ToolBridgeV2Screen):
-    """Hidden fallback bridge route for generation guide."""
-
-    def __init__(self, parent: tk.Widget, app: object, _cfg: AppConfig) -> None:
-        super().__init__(
-            parent,
-            app,
-            title="Generation Guide v2 Bridge",
-            launch_label="Open current Generation Behaviors Guide",
-            launch_route="generation_behaviors_guide",
-            description="Fallback bridge route to the production generation guide.",
-            inspector_title="Guide Bridge Notes",
-            inspector_lines=[
-                "This route is retained temporarily for rollback safety.",
-                "Primary v2 guide behavior now lives on generation_behaviors_guide_v2.",
-            ],
-        )
 

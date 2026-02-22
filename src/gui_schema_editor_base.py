@@ -17,20 +17,20 @@ from src.gui_kit.table import TableView
 from src.gui_kit.tokens import TokenEntry
 from src.gui_kit.validation import InlineValidationEntry, InlineValidationSummary
 from src.schema_project_model import validate_project
-from src.gui_schema_project import (
+from src.gui_schema_core import SchemaProjectDesignerScreen
+from src.gui_schema_shared import (
     DTYPES,
     EXPORT_OPTIONS,
     GENERATORS,
     PATTERN_PRESETS,
     SCD_MODES,
-    SchemaProjectDesignerScreen,
     ValidationIssue,
     ValidationHeatmap,
 )
 from src.storage_sqlite_project import create_tables, insert_project_rows
 
 
-class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
+class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
     """
     Layout-only refactor of SchemaProjectDesignerScreen using reusable gui_kit
     components. Business logic and callbacks are inherited unchanged.
@@ -905,7 +905,7 @@ class SchemaProjectDesignerKitScreen(SchemaProjectDesignerScreen, BaseScreen):
         before_status = self.status_var.get()
         self._suspend_project_meta_dirty = True
         try:
-            super()._load_project()
+            super()._load_project(confirm_unsaved=False)
         finally:
             self._suspend_project_meta_dirty = False
         after_status = self.status_var.get()

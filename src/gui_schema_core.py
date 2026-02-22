@@ -3371,8 +3371,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._show_error_dialog("Save failed", str(exc))
             return False
 
-    def _load_project(self) -> None:
-        if not self._confirm_discard_or_save("loading another project"):
+    def _load_project(self, *, confirm_unsaved: bool = True) -> None:
+        if confirm_unsaved and not self._confirm_discard_or_save("loading another project"):
             return
         try:
             path = filedialog.askopenfilename(

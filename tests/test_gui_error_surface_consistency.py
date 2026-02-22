@@ -6,27 +6,18 @@ from src.gui_home import App
 
 
 EXPECTED_TITLES = {
-    "schema_project": ("Schema project error", "Schema project warning"),
-    "schema_project_kit": ("Schema project error", "Schema project warning"),
-    "schema_project_legacy": ("Schema project legacy error", "Schema project legacy warning"),
-    "erd_designer": ("ERD designer error", "ERD designer warning"),
+    "schema_project_v2": ("Schema project error", "Schema project warning"),
     "erd_designer_v2": ("ERD designer error", "ERD designer warning"),
-    "location_selector": ("Location selector error", "Location selector warning"),
     "location_selector_v2": ("Location selector error", "Location selector warning"),
-    "performance_workbench": ("Performance workbench error", "Performance workbench warning"),
-    "execution_orchestrator": ("Execution orchestrator error", "Execution orchestrator warning"),
+    "performance_workbench_v2": ("Performance workbench error", "Performance workbench warning"),
+    "execution_orchestrator_v2": ("Execution orchestrator error", "Execution orchestrator warning"),
     "run_center_v2": ("Run Center v2 error", "Run Center v2 warning"),
 }
 
 READ_ONLY_ROUTES = (
-    "home",
     "home_v2",
     "schema_studio_v2",
-    "generation_behaviors_guide",
     "generation_behaviors_guide_v2",
-    "erd_designer_v2_bridge",
-    "location_selector_v2_bridge",
-    "generation_behaviors_guide_v2_bridge",
 )
 
 
@@ -34,7 +25,7 @@ class TestGuiErrorSurfaceConsistency(unittest.TestCase):
     def setUp(self) -> None:
         try:
             self.root = tk.Tk()
-        except tk.TclError as exc:  # pragma: no cover - depends on CI display support
+        except tk.TclError as exc:  # pragma: no cover
             self.skipTest(f"Tk GUI not available in this environment: {exc}")
             return
         self.root.withdraw()

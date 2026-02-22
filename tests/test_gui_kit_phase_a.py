@@ -70,7 +70,7 @@ class TestGUIKitPhaseAComponents(unittest.TestCase):
 
     def test_kit_screen_exposes_phase_a_widgets(self):
         app = App(self.root, AppConfig())
-        screen = app.screens["schema_project"]
+        screen = app.screens["schema_project_v2"]
         self.assertTrue(hasattr(screen, "toast_center"))
         self.assertTrue(hasattr(screen, "shortcut_manager"))
         self.assertTrue(hasattr(screen, "tables_search"))
@@ -85,3 +85,5 @@ class TestGUIKitPhaseAComponents(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

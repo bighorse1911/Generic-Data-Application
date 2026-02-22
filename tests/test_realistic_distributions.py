@@ -3,7 +3,7 @@ import unittest
 
 from src.generator_project import generate_project_rows
 from src.generators import GenContext, get_generator
-from src.gui_schema_project import GENERATORS
+from src.gui_schema_shared import GENERATORS
 from src.schema_project_model import ColumnSpec, SchemaProject, TableSpec, validate_project
 
 
@@ -127,3 +127,5 @@ class TestRealisticDistributions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

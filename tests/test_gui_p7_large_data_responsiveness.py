@@ -31,7 +31,7 @@ class TestGuiP7LargeDataResponsiveness(unittest.TestCase):
             self.root.update()
 
     def test_performance_workbench_bulk_setters_and_auto_paging(self):
-        screen = self.app.screens["performance_workbench"]
+        screen = self.app.screens["performance_workbench_v2"]
         estimates = [
             SimpleNamespace(
                 table_name=f"table_{idx}",
@@ -66,7 +66,7 @@ class TestGuiP7LargeDataResponsiveness(unittest.TestCase):
         self.assertEqual(len(screen.chunk_plan_tree.get_children()), 200)
 
     def test_execution_orchestrator_bulk_population_stays_paged(self):
-        screen = self.app.screens["execution_orchestrator"]
+        screen = self.app.screens["execution_orchestrator_v2"]
         partitions = [
             PartitionPlanEntry(
                 partition_id=f"p_{idx}",
@@ -205,27 +205,22 @@ class TestGuiP7LargeDataResponsiveness(unittest.TestCase):
             set_plan_rows.assert_called_once()
             set_failures_rows.assert_called_once()
 
-    def test_schema_preview_tables_enable_large_data_mode_with_parity(self):
-        primary = self.app.screens["schema_project"]
-        legacy = self.app.screens["schema_project_legacy"]
+    def test_schema_preview_table_large_data_mode_stays_paged(self):
+        screen = self.app.screens["schema_project_v2"]
 
-        self.assertTrue(primary.preview_table._large_data_enabled)
-        self.assertTrue(legacy.preview_table._large_data_enabled)
-        self.assertEqual(primary.preview_table._large_data_chunk_size, 150)
-        self.assertEqual(legacy.preview_table._large_data_chunk_size, 150)
+        self.assertTrue(screen.preview_table._large_data_enabled)
+        self.assertEqual(screen.preview_table._large_data_chunk_size, 150)
 
-        primary.preview_table.set_columns(["id"])
-        primary.preview_table.enable_pagination(page_size=100)
-        primary.preview_table.set_rows([[idx] for idx in range(1200)])
+        screen.preview_table.set_columns(["id"])
+        screen.preview_table.enable_pagination(page_size=100)
+        screen.preview_table.set_rows([[idx] for idx in range(1200)])
         self._drain()
-        self.assertEqual(len(primary.preview_tree.get_children()), primary.preview_table.page_size)
 
-        legacy.preview_table.set_columns(["id"])
-        legacy.preview_table.set_rows([[idx] for idx in range(1200)])
-        self._drain()
-        self.assertFalse(legacy.preview_table._pagination_enabled)
-        self.assertEqual(len(legacy.preview_tree.get_children()), 1200)
+        self.assertTrue(screen.preview_table._pagination_enabled)
+        self.assertEqual(len(screen.preview_tree.get_children()), screen.preview_table.page_size)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

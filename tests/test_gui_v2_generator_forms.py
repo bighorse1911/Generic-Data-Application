@@ -1,6 +1,6 @@
 import unittest
 
-from src.gui_schema_project import GENERATORS
+from src.gui_schema_shared import GENERATORS
 from src.gui_v2.generator_forms import GeneratorFormState
 from src.gui_v2.generator_forms import missing_form_specs_for_generators
 from src.gui_v2.generator_forms import parse_field_text
@@ -48,3 +48,5 @@ class TestGuiV2GeneratorForms(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
