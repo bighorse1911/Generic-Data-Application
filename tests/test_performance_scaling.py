@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -49,6 +50,70 @@ class TestPerformanceScaling(unittest.TestCase):
                     min_children=1,
                     max_children=4,
                 )
+            ],
+        )
+
+    def _timeline_project(self) -> SchemaProject:
+        return SchemaProject(
+            name="perf_timeline",
+            seed=17,
+            tables=[
+                TableSpec(
+                    table_name="customers",
+                    row_count=3,
+                    columns=[
+                        ColumnSpec("customer_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec(
+                            "signup_date",
+                            "date",
+                            nullable=False,
+                            generator="date",
+                            params={"start": "2025-01-01", "end": "2025-01-05"},
+                        ),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    row_count=3,
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_id", "int", nullable=False),
+                        ColumnSpec(
+                            "ordered_date",
+                            "date",
+                            nullable=False,
+                            generator="date",
+                            params={"start": "2024-12-01", "end": "2025-02-01"},
+                        ),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec(
+                    child_table="orders",
+                    child_column="customer_id",
+                    parent_table="customers",
+                    parent_column="customer_id",
+                    min_children=1,
+                    max_children=1,
+                )
+            ],
+            timeline_constraints=[
+                {
+                    "rule_id": "signup_to_order",
+                    "child_table": "orders",
+                    "child_column": "ordered_date",
+                    "references": [
+                        {
+                            "parent_table": "customers",
+                            "parent_column": "signup_date",
+                            "via_child_fk": "customer_id",
+                            "direction": "after",
+                            "min_days": 0,
+                            "max_days": 2,
+                        }
+                    ],
+                }
             ],
         )
 
@@ -331,6 +396,28 @@ class TestPerformanceScaling(unittest.TestCase):
             run_generation_with_strategy(self._project(), sqlite_profile)
         self.assertIn("Performance Workbench / Run", str(sqlite_ctx.exception))
         self.assertIn("Fix:", str(sqlite_ctx.exception))
+
+    def test_generation_with_row_overrides_preserves_timeline_constraints(self):
+        project = self._timeline_project()
+        profile = build_performance_profile(
+            **{
+                **self._profile_kwargs(),
+                "target_tables_value": "customers,orders",
+                "row_overrides_json_value": "{\"customers\": 4, \"orders\": 4}",
+                "output_mode_value": "preview",
+                "chunk_size_rows_value": "50",
+            }
+        )
+
+        result = run_generation_with_strategy(project, profile)
+        customer_rows = {int(row["customer_id"]): row for row in result.rows_by_table["customers"]}
+        for row in result.rows_by_table["orders"]:
+            customer = customer_rows[int(row["customer_id"])]
+            signup = date.fromisoformat(str(customer["signup_date"]))
+            ordered = date.fromisoformat(str(row["ordered_date"]))
+            delta_days = (ordered - signup).days
+            self.assertGreaterEqual(delta_days, 0)
+            self.assertLessEqual(delta_days, 2)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
+from src.gui_kit.feedback import ToastCenter
 from src.gui_kit.run_commands import apply_run_center_payload
 from src.gui_kit.run_commands import build_profile_from_model
 from src.gui_kit.run_commands import run_benchmark as run_shared_benchmark
@@ -23,6 +24,8 @@ from src.gui_kit.run_commands import run_estimate as run_shared_estimate
 from src.gui_kit.run_commands import run_generation_multiprocess
 from src.gui_kit.run_lifecycle import RunLifecycleController
 from src.gui_kit.shortcuts import ShortcutManager
+from src.gui_kit.theme_tokens import V2_THEME
+from src.gui_kit.theme_tokens import v2_button_options
 from src.gui_kit.ui_dispatch import UIDispatcher
 from src.gui_tools import ERDDesignerToolFrame
 from src.gui_tools import GenerationGuideToolFrame
@@ -44,12 +47,12 @@ from src.performance_scaling import PerformanceRunCancelled
 from src.performance_scaling import RuntimeEvent
 from src.schema_project_io import load_project_from_json
 
-V2_BG = "#f4efe6"
-V2_PANEL = "#fbf8f1"
-V2_NAV_BG = "#14334f"
-V2_NAV_ACTIVE = "#c76d2a"
-V2_HEADER_BG = "#0f2138"
-V2_INSPECTOR_BG = "#e9deca"
+V2_BG = V2_THEME.colors.app_bg
+V2_PANEL = V2_THEME.colors.panel_bg
+V2_NAV_BG = V2_THEME.colors.nav_bg
+V2_NAV_ACTIVE = V2_THEME.colors.nav_active_bg
+V2_HEADER_BG = V2_THEME.colors.header_bg
+V2_INSPECTOR_BG = V2_THEME.colors.inspector_bg
 
 
 def _v2_error(location: str, issue: str, hint: str) -> str:
@@ -77,46 +80,47 @@ class V2ShellFrame(tk.Frame):
         on_back,
     ) -> None:
         super().__init__(parent, bg=V2_BG)
+        spacing = V2_THEME.spacing
+        type_scale = V2_THEME.type_scale
+        colors = V2_THEME.colors
         self._nav_buttons: dict[str, tk.Button] = {}
         self._active_nav_key: str | None = None
 
         self.header = tk.Frame(self, bg=V2_HEADER_BG, height=56)
-        self.header.pack(fill="x", padx=12, pady=(12, 8))
+        self.header.pack(fill="x", padx=spacing.lg, pady=(spacing.lg, spacing.sm))
         self.header.pack_propagate(False)
 
         self.back_btn = tk.Button(
             self.header,
             text="Back",
             command=on_back,
-            bg="#d9d2c4",
-            fg="#1f1f1f",
-            relief="flat",
-            padx=12,
-            pady=6,
+            padx=spacing.lg,
+            pady=spacing.sm - spacing.xs,
+            **v2_button_options("secondary"),
         )
-        self.back_btn.pack(side="left", padx=(8, 10), pady=8)
+        self.back_btn.pack(side="left", padx=(spacing.sm, spacing.md), pady=spacing.sm)
 
         self.title_label = tk.Label(
             self.header,
             text=title,
             bg=V2_HEADER_BG,
-            fg="#f5f5f5",
-            font=("Cambria", 16, "bold"),
+            fg=colors.header_fg,
+            font=type_scale.page_title,
         )
-        self.title_label.pack(side="left", pady=8)
+        self.title_label.pack(side="left", pady=spacing.sm)
 
         self.header_actions = tk.Frame(self.header, bg=V2_HEADER_BG)
-        self.header_actions.pack(side="right", padx=8, pady=8)
+        self.header_actions.pack(side="right", padx=spacing.sm, pady=spacing.sm)
 
         self.body = tk.Frame(self, bg=V2_BG)
-        self.body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        self.body.pack(fill="both", expand=True, padx=spacing.lg, pady=(0, spacing.sm))
 
         self.nav = tk.Frame(self.body, bg=V2_NAV_BG, width=180)
         self.nav.pack(side="left", fill="y")
         self.nav.pack_propagate(False)
 
         self.workspace = tk.Frame(self.body, bg=V2_PANEL)
-        self.workspace.pack(side="left", fill="both", expand=True, padx=(10, 10))
+        self.workspace.pack(side="left", fill="both", expand=True, padx=(spacing.md, spacing.md))
 
         self.inspector = tk.Frame(self.body, bg=V2_INSPECTOR_BG, width=240)
         self.inspector.pack(side="right", fill="y")
@@ -126,78 +130,83 @@ class V2ShellFrame(tk.Frame):
             self.inspector,
             text="Inspector",
             bg=V2_INSPECTOR_BG,
-            fg="#2b2b2b",
-            font=("Cambria", 13, "bold"),
+            fg=colors.text_primary,
+            font=type_scale.section_title,
         )
-        self.inspector_title.pack(anchor="w", padx=10, pady=(10, 4))
+        self.inspector_title.pack(anchor="w", padx=spacing.md, pady=(spacing.md, spacing.xs))
 
         self.inspector_text = tk.Label(
             self.inspector,
             text="Select a section to view details.",
             bg=V2_INSPECTOR_BG,
-            fg="#2b2b2b",
+            fg=colors.text_primary,
             justify="left",
             anchor="nw",
             wraplength=220,
-            font=("Calibri", 10),
+            font=type_scale.body_small,
         )
-        self.inspector_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.inspector_text.pack(fill="both", expand=True, padx=spacing.md, pady=(0, spacing.md))
 
         self.status_var = tk.StringVar(value="Ready.")
         self.status_strip = tk.Label(
             self,
             textvariable=self.status_var,
             anchor="w",
-            bg="#d7ccba",
-            fg="#242424",
-            padx=12,
-            pady=6,
-            font=("Calibri", 10, "bold"),
+            bg=colors.status_bg,
+            fg=colors.status_fg,
+            padx=spacing.lg,
+            pady=spacing.sm - spacing.xs,
+            font=type_scale.body_bold,
         )
-        self.status_strip.pack(fill="x", padx=12, pady=(0, 12))
+        self.status_strip.pack(fill="x", padx=spacing.lg, pady=(0, spacing.lg))
 
     def add_header_action(self, text: str, command) -> tk.Button:
+        spacing = V2_THEME.spacing
         button = tk.Button(
             self.header_actions,
             text=text,
             command=command,
-            bg="#d9d2c4",
-            fg="#1f1f1f",
-            relief="flat",
-            padx=10,
-            pady=6,
+            padx=spacing.md,
+            pady=spacing.sm - spacing.xs,
+            **v2_button_options("secondary"),
         )
-        button.pack(side="right", padx=(8, 0))
+        button.pack(side="right", padx=(spacing.sm, 0))
         return button
 
     def add_nav_button(self, key: str, text: str, command) -> tk.Button:
+        spacing = V2_THEME.spacing
         button = tk.Button(
             self.nav,
             text=text,
             command=command,
-            bg=V2_NAV_BG,
-            fg="#f5f5f5",
-            activebackground=V2_NAV_ACTIVE,
-            activeforeground="#ffffff",
-            relief="flat",
             anchor="w",
-            padx=14,
-            pady=10,
-            bd=0,
-            highlightthickness=0,
+            padx=spacing.lg + spacing.xs,
+            pady=spacing.md,
+            **v2_button_options("nav"),
         )
-        button.pack(fill="x", pady=(2, 0))
+        button.pack(fill="x", pady=(spacing.xxs, 0))
         self._nav_buttons[key] = button
         return button
 
     def set_nav_active(self, key: str) -> None:
+        colors = V2_THEME.colors
         active_found = False
         for button_key, button in self._nav_buttons.items():
             if button_key == key:
-                button.configure(bg=V2_NAV_ACTIVE, fg="#ffffff")
+                button.configure(
+                    bg=colors.nav_active_bg,
+                    fg=colors.nav_active_fg,
+                    activebackground=colors.nav_active_bg,
+                    activeforeground=colors.nav_active_fg,
+                )
                 active_found = True
             else:
-                button.configure(bg=V2_NAV_BG, fg="#f5f5f5")
+                button.configure(
+                    bg=colors.nav_bg,
+                    fg=colors.nav_fg,
+                    activebackground=colors.nav_active_bg,
+                    activeforeground=colors.nav_active_fg,
+                )
         if active_found:
             self._active_nav_key = key
 
@@ -221,19 +230,22 @@ class HomeV2Screen(tk.Frame):
 
     def __init__(self, parent: tk.Widget, app: object) -> None:
         super().__init__(parent, bg=V2_BG)
+        spacing = V2_THEME.spacing
+        colors = V2_THEME.colors
+        type_scale = V2_THEME.type_scale
         self.app = app
 
         header = tk.Frame(self, bg=V2_HEADER_BG, height=68)
-        header.pack(fill="x", padx=16, pady=(16, 10))
+        header.pack(fill="x", padx=spacing.xl, pady=(spacing.xl, spacing.md))
         header.pack_propagate(False)
 
         tk.Label(
             header,
             text="Home v2 - Full Visual Redesign",
             bg=V2_HEADER_BG,
-            fg="#f5f5f5",
-            font=("Cambria", 18, "bold"),
-        ).pack(side="left", pady=10)
+            fg=colors.header_fg,
+            font=type_scale.display_title,
+        ).pack(side="left", pady=spacing.md)
 
         tk.Label(
             self,
@@ -242,14 +254,14 @@ class HomeV2Screen(tk.Frame):
                 "tool pages."
             ),
             bg=V2_BG,
-            fg="#2a2a2a",
+            fg=colors.text_primary,
             anchor="w",
             justify="left",
-            font=("Calibri", 11),
-        ).pack(fill="x", padx=22, pady=(0, 10))
+            font=type_scale.body,
+        ).pack(fill="x", padx=spacing.xxl, pady=(0, spacing.md))
 
         cards_host = tk.Frame(self, bg=V2_BG)
-        cards_host.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        cards_host.pack(fill="both", expand=True, padx=spacing.xl, pady=(0, spacing.xl))
         cards_host.columnconfigure(0, weight=1)
         cards_host.rowconfigure(0, weight=1)
 
@@ -321,39 +333,40 @@ class HomeV2Screen(tk.Frame):
         self.cards_canvas.itemconfigure(self._cards_window, width=event.width)
 
     def _add_card(self, parent: tk.Widget, title: str, detail: str, command) -> None:
+        spacing = V2_THEME.spacing
+        colors = V2_THEME.colors
+        type_scale = V2_THEME.type_scale
         card = tk.Frame(parent, bg=V2_PANEL, bd=1, relief="solid", highlightthickness=0)
-        card.pack(fill="x", pady=(0, 10))
+        card.pack(fill="x", pady=(0, spacing.md))
 
         tk.Label(
             card,
             text=title,
             bg=V2_PANEL,
-            fg="#1b1b1b",
-            font=("Cambria", 14, "bold"),
+            fg=colors.text_primary,
+            font=type_scale.section_title,
             anchor="w",
-        ).pack(fill="x", padx=14, pady=(10, 4))
+        ).pack(fill="x", padx=spacing.lg + spacing.xs, pady=(spacing.md, spacing.xs))
 
         tk.Label(
             card,
             text=detail,
             bg=V2_PANEL,
-            fg="#333333",
+            fg=colors.text_muted,
             justify="left",
             anchor="w",
             wraplength=820,
-            font=("Calibri", 10),
-        ).pack(fill="x", padx=14, pady=(0, 8))
+            font=type_scale.body_small,
+        ).pack(fill="x", padx=spacing.lg + spacing.xs, pady=(0, spacing.sm))
 
         tk.Button(
             card,
             text="Open",
             command=command,
-            bg=V2_NAV_ACTIVE,
-            fg="#ffffff",
-            relief="flat",
-            padx=12,
-            pady=6,
-        ).pack(anchor="e", padx=14, pady=(0, 10))
+            padx=spacing.lg,
+            pady=spacing.sm - spacing.xs,
+            **v2_button_options("primary"),
+        ).pack(anchor="e", padx=spacing.lg + spacing.xs, pady=(0, spacing.md))
 
 
 class SchemaStudioV2Screen(tk.Frame):
@@ -476,6 +489,7 @@ class RunCenterV2Screen(tk.Frame):
         self.shell.pack(fill="both", expand=True)
         self.shell.add_header_action("Orchestrator v2", lambda: self.app.show_screen(ORCHESTRATOR_V2_ROUTE))
         self.shell.add_header_action("Workbench v2", lambda: self.app.show_screen(PERFORMANCE_V2_ROUTE))
+        self.shell.add_header_action("Notifications", self._show_notifications_history)
         self.shell.add_header_action("Shortcuts", self._show_shortcuts_help)
         self.shell.add_header_action("Schema Studio", lambda: self.app.show_screen("schema_studio_v2"))
 
@@ -551,6 +565,7 @@ class RunCenterV2Screen(tk.Frame):
         )
         self.shortcut_manager = ShortcutManager(self)
         self.focus_controller = FocusController(self)
+        self.toast_center = ToastCenter(self)
         self._register_focus_anchors()
         self._register_shortcuts()
 
@@ -627,6 +642,18 @@ class RunCenterV2Screen(tk.Frame):
 
     def _show_shortcuts_help(self) -> None:
         self.shortcut_manager.show_help_dialog(title="Run Center v2 Shortcuts")
+
+    def _show_notifications_history(self) -> None:
+        if hasattr(self, "toast_center"):
+            self.toast_center.show_history_dialog(title="Run Center Notifications")
+
+    def _notify(self, message: str, *, level: str = "info", duration_ms: int | None = None) -> None:
+        text = str(message).strip()
+        if text == "":
+            return
+        self.shell.set_status(text)
+        if hasattr(self, "toast_center"):
+            self.toast_center.notify(text, level=level, duration_ms=duration_ms)
 
     def _set_inspector_for_config(self) -> None:
         self.shell.set_inspector(
@@ -733,6 +760,7 @@ class RunCenterV2Screen(tk.Frame):
         self.lifecycle.transition_cancelled(message, phase="Cancelled")
         self.live_phase_var.set("Run cancelled.")
         self.live_eta_var.set("ETA: cancelled")
+        self._notify("Run cancelled by user request.", level="warn", duration_ms=3200)
         self._append_history("cancelled", self.surface.execution_mode_var.get(), False, 0)
 
     def _run_estimate(self) -> None:
@@ -764,7 +792,11 @@ class RunCenterV2Screen(tk.Frame):
                 for estimate in diagnostics.estimates
             ]
         )
-        self.shell.set_status(f"Estimate complete: rows={diagnostics.summary.total_rows}, risk={diagnostics.summary.highest_risk}.")
+        self._notify(
+            f"Estimate complete: rows={diagnostics.summary.total_rows}, risk={diagnostics.summary.highest_risk}.",
+            level="success",
+            duration_ms=3400,
+        )
         self._set_focus("diagnostics")
 
     def _run_build_plan(self) -> None:
@@ -795,7 +827,11 @@ class RunCenterV2Screen(tk.Frame):
                 for entry in entries
             ]
         )
-        self.shell.set_status(f"Partition plan ready: partitions={len(entries)}.")
+        self._notify(
+            f"Partition plan ready: partitions={len(entries)}.",
+            level="success",
+            duration_ms=3400,
+        )
         self._set_focus("plan")
 
     def _start_benchmark(self) -> None:
@@ -841,7 +877,11 @@ class RunCenterV2Screen(tk.Frame):
                     for entry in result.chunk_plan
                 ]
             )
-            self.shell.set_status(f"Benchmark complete: chunks={result.chunk_summary.total_chunks}, rows={result.chunk_summary.total_rows}.")
+            self._notify(
+                f"Benchmark complete: chunks={result.chunk_summary.total_chunks}, rows={result.chunk_summary.total_rows}.",
+                level="success",
+                duration_ms=3600,
+            )
             self._append_history("benchmark_complete", self.surface.execution_mode_var.get(), False, result.chunk_summary.total_rows)
 
         self.lifecycle.run_async(
@@ -932,8 +972,10 @@ class RunCenterV2Screen(tk.Frame):
 
             csv_count = len(result.strategy_result.csv_paths)
             sqlite_rows = sum(result.strategy_result.sqlite_counts.values())
-            self.shell.set_status(
-                f"Run complete: rows={result.total_rows}, csv_files={csv_count}, sqlite_rows={sqlite_rows}, fallback={'yes' if result.fallback_used else 'no'}."
+            self._notify(
+                f"Run complete: rows={result.total_rows}, csv_files={csv_count}, sqlite_rows={sqlite_rows}, fallback={'yes' if result.fallback_used else 'no'}.",
+                level="success",
+                duration_ms=4200,
             )
             self._append_history("run_complete", result.mode, result.fallback_used, result.total_rows)
 
@@ -972,7 +1014,7 @@ class RunCenterV2Screen(tk.Frame):
                 mode="mixed",
             )
             return
-        self.shell.set_status(f"Saved config to {output_path}.")
+        self._notify(f"Saved config to {output_path}.", level="success", duration_ms=3200)
 
     def _load_profile(self) -> None:
         input_path = filedialog.askopenfilename(
@@ -1003,7 +1045,7 @@ class RunCenterV2Screen(tk.Frame):
 
         apply_run_center_payload(self.view_model, payload)
         self.surface.sync_vars_from_model()
-        self.shell.set_status(f"Loaded config from {input_path}.")
+        self._notify(f"Loaded config from {input_path}.", level="success", duration_ms=3200)
 
 
 class ERDDesignerV2Screen(tk.Frame):

@@ -9,6 +9,8 @@ from tkinter import ttk
 from src.config import AppConfig
 from src.gui_kit.forms import FormBuilder
 from src.gui_kit.json_editor import JsonEditorDialog
+from src.gui_kit.theme_tokens import V2_THEME
+from src.gui_kit.theme_tokens import v2_button_options
 from src.gui_schema_editor_base import SchemaEditorBaseScreen
 from src.gui_schema_shared import default_generator_params_template
 from src.gui_v2.generator_forms import CROSS_CUTTING_FIELDS
@@ -19,10 +21,8 @@ from src.gui_v2.generator_forms import parse_field_text
 from src.gui_v2.generator_forms import split_form_state
 from src.gui_v2.generator_forms import visible_fields_for
 
-V2_HEADER_BG = "#0f2138"
-V2_HEADER_FG = "#f5f5f5"
-V2_ACTION_BG = "#d9d2c4"
-V2_ACTION_FG = "#1f1f1f"
+V2_HEADER_BG = V2_THEME.colors.header_bg
+V2_HEADER_FG = V2_THEME.colors.header_fg
 
 
 @dataclass
@@ -55,45 +55,51 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
         return panel
 
     def build_header(self):  # type: ignore[override]
+        spacing = V2_THEME.spacing
+        type_scale = V2_THEME.type_scale
         header = tk.Frame(self._root_content, bg=V2_HEADER_BG, height=58)
-        header.pack(fill="x", pady=(0, 10))
+        header.pack(fill="x", pady=(0, spacing.md))
         header.pack_propagate(False)
 
         tk.Button(
             header,
             text="Back",
             command=self._on_back_requested,
-            bg=V2_ACTION_BG,
-            fg=V2_ACTION_FG,
-            relief="flat",
-            padx=10,
-            pady=5,
-        ).pack(side="left", padx=(8, 8), pady=8)
+            padx=spacing.md,
+            pady=spacing.sm - spacing.xs,
+            **v2_button_options("secondary"),
+        ).pack(side="left", padx=(spacing.sm, spacing.sm), pady=spacing.sm)
         tk.Label(
             header,
             text="Schema Project v2",
             bg=V2_HEADER_BG,
             fg=V2_HEADER_FG,
-            font=("Cambria", 16, "bold"),
-        ).pack(side="left", pady=8)
+            font=type_scale.page_title,
+        ).pack(side="left", pady=spacing.sm)
         tk.Label(
             header,
             textvariable=self._dirty_indicator_var,
             bg=V2_HEADER_BG,
             fg=V2_HEADER_FG,
-            font=("Calibri", 10, "bold"),
-        ).pack(side="left", padx=(10, 0), pady=8)
+            font=type_scale.body_bold,
+        ).pack(side="left", padx=(spacing.md, 0), pady=spacing.sm)
 
         tk.Button(
             header,
             text="Shortcuts",
             command=self._show_shortcuts_help,
-            bg=V2_ACTION_BG,
-            fg=V2_ACTION_FG,
-            relief="flat",
-            padx=10,
-            pady=5,
-        ).pack(side="right", padx=(0, 8), pady=8)
+            padx=spacing.md,
+            pady=spacing.sm - spacing.xs,
+            **v2_button_options("secondary"),
+        ).pack(side="right", padx=(0, spacing.sm), pady=spacing.sm)
+        tk.Button(
+            header,
+            text="Notifications",
+            command=self._show_notifications_history,
+            padx=spacing.md,
+            pady=spacing.sm - spacing.xs,
+            **v2_button_options("secondary"),
+        ).pack(side="right", padx=(0, spacing.sm), pady=spacing.sm)
         return header
 
     def _on_back_requested(self) -> None:

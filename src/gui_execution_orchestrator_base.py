@@ -12,6 +12,7 @@ from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
+from src.gui_kit.feedback import ToastCenter
 from src.gui_kit.run_commands import apply_execution_run_config_payload
 from src.gui_kit.run_commands import build_config_from_model
 from src.gui_kit.run_commands import build_profile_from_model
@@ -57,6 +58,7 @@ class ExecutionOrchestratorBase(ttk.Frame):
         header.pack(fill="x", pady=(0, 8))
         ttk.Button(header, text="\u2190 Back", command=lambda: self.app.go_home()).pack(side="left")
         ttk.Label(header, text="Execution Orchestrator", font=("Segoe UI", 16, "bold")).pack(side="left", padx=(10, 0))
+        ttk.Button(header, text="Notifications", command=self._show_notifications_history).pack(side="right", padx=(0, 6))
         ttk.Button(header, text="Shortcuts", command=self._show_shortcuts_help).pack(side="right")
 
         self.surface = RunWorkflowSurface(
@@ -73,6 +75,7 @@ class ExecutionOrchestratorBase(ttk.Frame):
         )
         self.surface.pack(fill="both", expand=True)
         self.surface.set_status("Load a schema and build a partition plan.")
+        self.toast_center = ToastCenter(self)
 
         self.surface.browse_btn.configure(command=self._browse_schema_path)
         self.surface.load_schema_btn.configure(command=self._load_schema)
@@ -186,6 +189,18 @@ class ExecutionOrchestratorBase(ttk.Frame):
     def _show_shortcuts_help(self) -> None:
         self.shortcut_manager.show_help_dialog(title="Execution Orchestrator Shortcuts")
 
+    def _show_notifications_history(self) -> None:
+        if hasattr(self, "toast_center"):
+            self.toast_center.show_history_dialog(title="Execution Orchestrator Notifications")
+
+    def _notify(self, message: str, *, level: str = "info", duration_ms: int | None = None) -> None:
+        text = str(message).strip()
+        if text == "":
+            return
+        self.surface.set_status(text)
+        if hasattr(self, "toast_center"):
+            self.toast_center.notify(text, level=level, duration_ms=duration_ms)
+
     def _sync_model(self) -> RunWorkflowViewModel:
         return self.surface.sync_model_from_vars()
 
@@ -223,7 +238,11 @@ class ExecutionOrchestratorBase(ttk.Frame):
         self.surface.clear_tree(self.partition_tree)
         self.surface.clear_tree(self.worker_tree)
         self.surface.clear_tree(self.failures_tree)
-        self.surface.set_status(f"Loaded schema '{loaded.name}' with {len(loaded.tables)} tables.")
+        self._notify(
+            f"Loaded schema '{loaded.name}' with {len(loaded.tables)} tables.",
+            level="success",
+            duration_ms=3200,
+        )
         self.surface.set_inline_error("")
         return True
 
@@ -310,7 +329,11 @@ class ExecutionOrchestratorBase(ttk.Frame):
         self._populate_partition_tree(plan)
         self._populate_worker_tree(workers)
         total_rows = sum(entry.rows_in_partition for entry in plan)
-        self.surface.set_status(f"Partition plan ready: partitions={len(plan)}, rows={total_rows}, workers={len(workers)}.")
+        self._notify(
+            f"Partition plan ready: partitions={len(plan)}, rows={total_rows}, workers={len(workers)}.",
+            level="success",
+            duration_ms=3600,
+        )
         self.surface.set_focus("plan")
 
     def _cancel_run(self) -> None:
@@ -336,6 +359,7 @@ class ExecutionOrchestratorBase(ttk.Frame):
         self.lifecycle.transition_cancelled(message, phase="Cancelled")
         self.live_phase_var.set("Run cancelled.")
         self.live_eta_var.set("ETA: cancelled")
+        self._notify("Run cancelled by user request.", level="warn", duration_ms=3200)
 
     def _on_run_done(self, result: MultiprocessRunResult) -> None:
         self.lifecycle.transition_complete("Complete")
@@ -356,12 +380,12 @@ class ExecutionOrchestratorBase(ttk.Frame):
         csv_count = len(result.strategy_result.csv_paths)
         sqlite_rows = sum(result.strategy_result.sqlite_counts.values())
         fallback_text = "yes" if result.fallback_used else "no"
-        self.surface.set_status(
-            (
-                "Run complete: "
-                f"rows={result.total_rows}, csv_files={csv_count}, sqlite_rows={sqlite_rows}, "
-                f"fallback={fallback_text}."
-            )
+        self._notify(
+            "Run complete: "
+            f"rows={result.total_rows}, csv_files={csv_count}, sqlite_rows={sqlite_rows}, "
+            f"fallback={fallback_text}.",
+            level="success",
+            duration_ms=4200,
         )
 
     def _start_run(self, fallback_to_single_process: bool = False) -> None:
@@ -460,7 +484,7 @@ class ExecutionOrchestratorBase(ttk.Frame):
             )
             return
 
-        self.surface.set_status(f"Saved run config to {output_path}.")
+        self._notify(f"Saved run config to {output_path}.", level="success", duration_ms=3200)
 
     def _load_run_config(self) -> None:
         config_path = filedialog.askopenfilename(
@@ -505,4 +529,4 @@ class ExecutionOrchestratorBase(ttk.Frame):
             return
 
         self.surface.sync_vars_from_model()
-        self.surface.set_status(f"Loaded run config from {config_path}.")
+        self._notify(f"Loaded run config from {config_path}.", level="success", duration_ms=3200)

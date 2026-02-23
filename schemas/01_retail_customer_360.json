@@ -1,0 +1,438 @@
+{
+  "name": "retail_customer_360",
+  "seed": 20260222,
+  "tables": [
+    {
+      "table_name": "customers_dim",
+      "row_count": 60,
+      "columns": [
+        {
+          "name": "customer_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "customer_code",
+          "dtype": "text",
+          "nullable": false
+        },
+        {
+          "name": "first_name",
+          "dtype": "text",
+          "nullable": false,
+          "pattern": "^[a-z]{5,14}$"
+        },
+        {
+          "name": "segment",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "enterprise",
+              "mid_market",
+              "consumer"
+            ],
+            "weights": [
+              0.2,
+              0.3,
+              0.5
+            ]
+          }
+        },
+        {
+          "name": "home_city",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 0
+          }
+        },
+        {
+          "name": "home_country",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 1,
+            "match_column": "home_city",
+            "match_column_index": 0
+          },
+          "depends_on": [
+            "home_city"
+          ]
+        },
+        {
+          "name": "lifecycle_stage",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "ordered_choice",
+          "params": {
+            "orders": {
+              "growth": [
+                "trial",
+                "active",
+                "expanding",
+                "renewed"
+              ],
+              "steady": [
+                "trial",
+                "active",
+                "active",
+                "renewed"
+              ]
+            },
+            "order_weights": {
+              "growth": 0.55,
+              "steady": 0.45
+            },
+            "move_weights": [
+              0.1,
+              0.75,
+              0.15
+            ],
+            "start_index": 0
+          }
+        },
+        {
+          "name": "signup_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2021-01-01",
+            "end": "2025-12-31"
+          }
+        },
+        {
+          "name": "valid_from",
+          "dtype": "date",
+          "nullable": false
+        },
+        {
+          "name": "valid_to",
+          "dtype": "date",
+          "nullable": false
+        },
+        {
+          "name": "profile_blob",
+          "dtype": "bytes",
+          "nullable": false,
+          "params": {
+            "min_length": 16,
+            "max_length": 48
+          }
+        },
+        {
+          "name": "churn_probability",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "percent",
+          "params": {
+            "min": 1.0,
+            "max": 40.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "engagement_score",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "normal",
+          "params": {
+            "mean": 68.0,
+            "stdev": 14.0,
+            "decimals": 2,
+            "clamp_min": 0.0,
+            "clamp_max": 100.0
+          }
+        },
+        {
+          "name": "notes",
+          "dtype": "text",
+          "nullable": true,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "upgrade_candidate",
+              "stable_account",
+              "needs_follow_up"
+            ],
+            "weights": [
+              0.25,
+              0.55,
+              0.2
+            ],
+            "null_rate": 0.2
+          }
+        }
+      ],
+      "business_key": [
+        "customer_code"
+      ],
+      "business_key_unique_count": 30,
+      "business_key_static_columns": [
+        "first_name",
+        "home_country"
+      ],
+      "business_key_changing_columns": [
+        "segment",
+        "home_city",
+        "lifecycle_stage",
+        "churn_probability"
+      ],
+      "scd_mode": "scd2",
+      "scd_active_from_column": "valid_from",
+      "scd_active_to_column": "valid_to"
+    },
+    {
+      "table_name": "products_dim",
+      "row_count": 24,
+      "columns": [
+        {
+          "name": "product_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "parent_category",
+          "dtype": "text",
+          "nullable": false,
+          "choices": [
+            "electronics",
+            "home",
+            "apparel"
+          ]
+        },
+        {
+          "name": "subcategory",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "hierarchical_category",
+          "params": {
+            "parent_column": "parent_category",
+            "hierarchy": {
+              "electronics": [
+                "audio",
+                "mobile",
+                "gaming"
+              ],
+              "home": [
+                "kitchen",
+                "furniture",
+                "decor"
+              ],
+              "apparel": [
+                "outerwear",
+                "footwear",
+                "accessories"
+              ]
+            }
+          },
+          "depends_on": [
+            "parent_category"
+          ]
+        },
+        {
+          "name": "base_price",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "lognormal",
+          "params": {
+            "median": 85.0,
+            "sigma": 0.65,
+            "decimals": 2,
+            "min": 5.0,
+            "max": 3200.0
+          }
+        },
+        {
+          "name": "quality_score",
+          "dtype": "int",
+          "nullable": false,
+          "generator": "uniform_int",
+          "params": {
+            "min": 60,
+            "max": 99
+          }
+        },
+        {
+          "name": "shelf_life_days",
+          "dtype": "int",
+          "nullable": false,
+          "min_value": 30,
+          "max_value": 720
+        },
+        {
+          "name": "manual_rating",
+          "dtype": "decimal",
+          "nullable": false,
+          "min_value": 1.0,
+          "max_value": 5.0
+        },
+        {
+          "name": "in_catalog",
+          "dtype": "bool",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "table_name": "orders_fact",
+      "columns": [
+        {
+          "name": "order_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "customer_sk",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "product_sk",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "order_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2023-01-01",
+            "end": "2026-12-31"
+          }
+        },
+        {
+          "name": "order_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "ship_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "time_offset",
+          "params": {
+            "base_column": "order_date",
+            "direction": "after",
+            "min_days": 1,
+            "max_days": 14
+          },
+          "depends_on": [
+            "order_date"
+          ]
+        },
+        {
+          "name": "delivered_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "time_offset",
+          "params": {
+            "base_column": "order_ts",
+            "direction": "after",
+            "min_seconds": 1800,
+            "max_seconds": 432000
+          },
+          "depends_on": [
+            "order_ts"
+          ]
+        },
+        {
+          "name": "order_total",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "money",
+          "params": {
+            "min": 8.0,
+            "max": 1800.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "discount_rate",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "percent",
+          "params": {
+            "min": 0.0,
+            "max": 35.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "line_count",
+          "dtype": "int",
+          "nullable": false,
+          "generator": "uniform_int",
+          "params": {
+            "min": 1,
+            "max": 12
+          }
+        },
+        {
+          "name": "anomaly_factor",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 0.1,
+            "max": 1.2,
+            "decimals": 3,
+            "outlier_rate": 0.03,
+            "outlier_scale": 9.0,
+            "clamp_min": 0.0,
+            "clamp_max": 12.0
+          }
+        },
+        {
+          "name": "priority_flag",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "line_count",
+            "operator": "!=",
+            "value": 1,
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "line_count"
+          ]
+        }
+      ]
+    }
+  ],
+  "foreign_keys": [
+    {
+      "child_table": "orders_fact",
+      "child_column": "customer_sk",
+      "parent_table": "customers_dim",
+      "parent_column": "customer_sk",
+      "min_children": 1,
+      "max_children": 4
+    },
+    {
+      "child_table": "orders_fact",
+      "child_column": "product_sk",
+      "parent_table": "products_dim",
+      "parent_column": "product_sk",
+      "min_children": 1,
+      "max_children": 6
+    }
+  ]
+}

@@ -13,7 +13,7 @@ project. It is authoritative for:
 If behavior is unclear, this document overrides assumptions.
 If you make updates to any DATA_SEMANTICS in the project, update this file too.
 
-## Implementation status (2026-02-10)
+## Implementation status (2026-02-23)
 
 Direction 3 (float -> decimal) is completed.
 
@@ -56,6 +56,9 @@ Direction 3 (float -> decimal) is completed.
 - GUI-only update (2026-02-14): visual redesign parity bridge routes (`erd_designer_v2`, `location_selector_v2`, `generation_behaviors_guide_v2`) added as additive navigation shells without changing canonical generator semantics.
 - GUI-only update (2026-02-14): visual redesign feature completion added v2 run-center runtime integration (`estimate|plan|benchmark|start`) and schema-studio dirty-route guards without changing canonical generator semantics.
 - GUI-only update (2026-02-16): specialist v2 route restoration kept `erd_designer_v2` and `location_selector_v2` explicitly accessible from scrollable `home_v2` cards and added open-classic tool actions without changing canonical generator semantics.
+- Data-generation update (2026-02-22): DG01 correlated column groups implemented via table-level `correlation_groups` with target rank-correlation matrices, deterministic seeded sampling, and GUI authoring exposure.
+- Data-generation update (2026-02-23): DG02 `state_transition` implemented for deterministic per-entity lifecycle trajectories with allowed transition maps, explicit terminal states, dwell-time controls, GUI authoring exposure, and SCD2 tracked-column transition-step mutation support.
+- Data-generation update (2026-02-23): DG03 cross-table temporal integrity planner implemented via project-level `timeline_constraints` with FK-linked interval intersection enforcement and preserve-valid/clamp-invalid runtime policy.
 
 ## Core design principle
 
@@ -277,6 +280,73 @@ Rules:
 - `start_index` must be within every configured order length.
 - Validation/runtime errors must include location + issue + fix hint.
 
+### 2.5 Lifecycle state-transition generator (`state_transition`) (DG02 implemented)
+
+Definition:
+- Deterministic per-entity Markov-style state progression for lifecycle/status columns.
+- State progression is tracked independently per entity value and target column.
+- Dwell controls determine how many consecutive entity-occurrences a state is retained before transitioning.
+
+Params:
+- `entity_column` (required): source column name identifying the entity trajectory within the same table.
+- `states` (required): non-empty ordered list of allowed states (`text` for `dtype=text`, `int` for `dtype=int`).
+- `start_state` (optional): fixed initial state for each new entity (defaults to first `states` entry when neither start option is set).
+- `start_weights` (optional): weighted initial-state map keyed by state values; mutually exclusive with `start_state`.
+- `transitions` (required): object map `{from_state: {to_state: weight}}`.
+- `terminal_states` (optional): state list that must have no outbound transitions and remain absorbing.
+- `dwell_min` (optional): global minimum dwell count (default `1`).
+- `dwell_max` (optional): global maximum dwell count (default `dwell_min`).
+- `dwell_by_state` (optional): per-state dwell override object `{state: {"min": int, "max": int}}`.
+
+Rules:
+- Target column dtype must be `text` or `int`.
+- `entity_column` must exist, must not be the target column itself, and must be listed in `depends_on`.
+- `states` must be unique and non-empty.
+- `start_state` and `start_weights` cannot both be set.
+- `start_weights` keys must exactly match `states`, be non-negative, and include at least one value > 0.
+- `transitions` cannot include self edges.
+- Non-terminal states must define outbound transitions with at least one weight > 0.
+- Terminal states cannot define outbound transitions and remain absorbing.
+- Dwell bounds must be integers with `min >= 1` and `max >= min` globally and per-state.
+- Validation/runtime errors must include location + issue + fix hint.
+
+### 2.6 Cross-table temporal integrity planner (`timeline_constraints`) (DG03 implemented)
+
+Definition:
+- Project-level temporal integrity rules that constrain child `date|datetime` values against FK-linked parent temporal columns.
+- Supports bounded before/after windows and multi-parent interval intersection for each constrained child row.
+
+Project contract:
+- `SchemaProject.timeline_constraints` is optional.
+- When provided, it must be a non-empty list of rule objects.
+- Each rule targets exactly one `(child_table, child_column)` temporal column.
+
+Rule fields:
+- `rule_id` (required): unique non-empty string.
+- `child_table` / `child_column` (required): existing child table + `date|datetime` column.
+- `references` (required): non-empty list of FK-linked parent references.
+- `mode` (optional): currently locked to `enforce`.
+
+Reference fields:
+- `parent_table` / `parent_column` (required): existing parent table + temporal column.
+- `via_child_fk` (required): child FK column that directly links child row to parent row.
+- `direction` (required): `after` or `before`.
+- For `date` rules: `min_days` / `max_days` (defaults `0` / `min_days`).
+- For `datetime` rules: `min_seconds` / `max_seconds` (defaults `0` / `min_seconds`).
+
+Rules:
+- Parent/child temporal dtypes must match exactly (`date->date`, `datetime->datetime`).
+- `via_child_fk` must directly reference `parent_table` through declared FK metadata.
+- Offset bounds must be non-negative integers with `max >= min`.
+- Runtime enforcement order: after FK assignment and table-level correlation/SCD transforms, before committing table rows to final results.
+- Runtime policy:
+  - preserve parseable in-range child values,
+  - clamp parseable out-of-range child values to nearest boundary,
+  - repair null/unparseable child values to interval lower bound.
+- Parent temporal values must be parseable; unparseable parent values are runtime errors.
+- Multi-reference rules intersect allowed intervals; empty intersections are runtime errors.
+- Validation/runtime errors must include location + issue + fix hint.
+
 ---
 
 # 3. Identity Concepts
@@ -467,6 +537,28 @@ Rules:
 - Dependent columns generate after dependencies
 - Generator must not mutate unrelated columns
 
+## 6.1 Correlation groups (`correlation_groups`) (DG01 implemented)
+
+Definition:
+- Optional table-level correlation controls that coordinate multiple already-generated columns so their rank-order relationship matches configured targets while preserving each column's marginal value distribution.
+
+Representation (`TableSpec`):
+- `correlation_groups`: optional non-empty list of group objects.
+- Group object keys:
+  - `group_id` (required): unique non-empty string within the table.
+  - `columns` (required): two or more existing column names.
+  - `rank_correlation` (required): symmetric NxN numeric matrix in `[-1, 1]` with diagonal `1.0`, where `N = len(columns)`.
+  - `strength` (optional): blend factor `0.0..1.0` (default `1.0`) controlling how strongly the target matrix is applied.
+  - `categorical_orders` (optional): object mapping column names to ordered scalar value lists used when ranking categorical/text-like values.
+
+Rules:
+- Correlation-group columns must not include PK, incoming FK child columns, business-key columns, or `bytes` dtype columns.
+- Correlation-group columns cannot participate in `depends_on` (as source or target) in this implementation slice.
+- A table column can belong to at most one correlation group.
+- `rank_correlation` must be positive semi-definite; invalid matrices are rejected during validation.
+- Runtime application is deterministic for a fixed `project.seed` and `group_id`.
+- Runtime preserves each grouped column's value multiset (rank-reordering, not value mutation).
+
 ---
 
 # 7. Nullability
@@ -506,6 +598,8 @@ Example shape:
 7. No circular dependency in `depends_on`
 8. When SCD1 is enabled, exactly one row exists per business key.
 9. When SCD2 is enabled, no overlapping active periods for the same business key and exactly one current version per business key.
+10. Correlation groups preserve deterministic output and enforce valid rank-correlation matrix constraints.
+11. `state_transition` trajectories are deterministic per entity and never emit forbidden/self transitions.
 
 These invariants require unit tests.
 

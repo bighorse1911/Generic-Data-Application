@@ -545,6 +545,7 @@ def _clone_table_with_row_count(table: TableSpec, row_count: int) -> TableSpec:
         scd_tracked_columns=table.scd_tracked_columns,
         scd_active_from_column=table.scd_active_from_column,
         scd_active_to_column=table.scd_active_to_column,
+        correlation_groups=table.correlation_groups,
     )
 
 
@@ -560,6 +561,7 @@ def _clone_project_with_row_overrides(project: SchemaProject, overrides: dict[st
         seed=project.seed,
         tables=tables,
         foreign_keys=project.foreign_keys,
+        timeline_constraints=project.timeline_constraints,
     )
 
 

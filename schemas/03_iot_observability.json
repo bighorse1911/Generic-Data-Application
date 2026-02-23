@@ -1,0 +1,262 @@
+{
+  "name": "iot_observability",
+  "seed": 20260309,
+  "tables": [
+    {
+      "table_name": "devices",
+      "row_count": 35,
+      "columns": [
+        {
+          "name": "device_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "device_code",
+          "dtype": "text",
+          "nullable": false,
+          "pattern": "^[a-z]{5,14}$"
+        },
+        {
+          "name": "device_type",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "gateway",
+              "sensor",
+              "camera",
+              "controller"
+            ],
+            "weights": [
+              0.2,
+              0.45,
+              0.2,
+              0.15
+            ]
+          }
+        },
+        {
+          "name": "install_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2020-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "last_service_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2021-01-01",
+            "end": "2026-12-31"
+          }
+        },
+        {
+          "name": "device_lat",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "latitude",
+          "params": {
+            "min": 33.0,
+            "max": 49.0,
+            "decimals": 6
+          }
+        },
+        {
+          "name": "device_lon",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "longitude",
+          "params": {
+            "min": -124.0,
+            "max": -67.0,
+            "decimals": 6
+          }
+        },
+        {
+          "name": "firmware_blob",
+          "dtype": "bytes",
+          "nullable": false,
+          "params": {
+            "min_length": 64,
+            "max_length": 256
+          }
+        },
+        {
+          "name": "criticality",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "weights": [
+              0.5,
+              0.35,
+              0.15
+            ]
+          }
+        },
+        {
+          "name": "requires_watch",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "criticality",
+            "operator": "==",
+            "value": "high",
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "criticality"
+          ]
+        }
+      ]
+    },
+    {
+      "table_name": "telemetry_events",
+      "columns": [
+        {
+          "name": "event_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "device_sk",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "event_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2024-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "ingest_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "time_offset",
+          "params": {
+            "base_column": "event_ts",
+            "direction": "after",
+            "min_seconds": 1,
+            "max_seconds": 180
+          },
+          "depends_on": [
+            "event_ts"
+          ]
+        },
+        {
+          "name": "temperature_c",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "normal",
+          "params": {
+            "mean": 22.0,
+            "stdev": 6.0,
+            "decimals": 2,
+            "min": -20.0,
+            "max": 60.0
+          }
+        },
+        {
+          "name": "vibration_g",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 0.0,
+            "max": 3.0,
+            "decimals": 3,
+            "outlier_rate": 0.02,
+            "outlier_scale": 8.0,
+            "clamp_min": 0.0,
+            "clamp_max": 10.0
+          }
+        },
+        {
+          "name": "battery_pct",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "percent",
+          "params": {
+            "min": 0.0,
+            "max": 100.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "payload",
+          "dtype": "bytes",
+          "nullable": false,
+          "params": {
+            "min_length": 32,
+            "max_length": 512
+          }
+        },
+        {
+          "name": "health_bucket",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "healthy",
+              "degraded",
+              "critical"
+            ],
+            "weights": [
+              0.7,
+              0.22,
+              0.08
+            ]
+          }
+        },
+        {
+          "name": "alert_required",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "health_bucket",
+            "operator": "==",
+            "value": "critical",
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "health_bucket"
+          ]
+        }
+      ]
+    }
+  ],
+  "foreign_keys": [
+    {
+      "child_table": "telemetry_events",
+      "child_column": "device_sk",
+      "parent_table": "devices",
+      "parent_column": "device_sk",
+      "min_children": 20,
+      "max_children": 120
+    }
+  ]
+}

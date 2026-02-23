@@ -56,6 +56,51 @@ class TestERDDesigner(unittest.TestCase):
             ],
         )
 
+    def _project_with_timeline_constraints(self) -> SchemaProject:
+        return SchemaProject(
+            name="erd_timeline",
+            seed=11,
+            tables=[
+                TableSpec(
+                    table_name="signup",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("signup_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("signup_date", "date", nullable=False, generator="date"),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("signup_id", "int", nullable=False),
+                        ColumnSpec("ordered_date", "date", nullable=False, generator="date"),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec("orders", "signup_id", "signup", "signup_id", 1, 1),
+            ],
+            timeline_constraints=[
+                {
+                    "rule_id": "signup_to_order",
+                    "child_table": "orders",
+                    "child_column": "ordered_date",
+                    "references": [
+                        {
+                            "parent_table": "signup",
+                            "parent_column": "signup_date",
+                            "via_child_fk": "signup_id",
+                            "direction": "after",
+                            "min_days": 0,
+                            "max_days": 5,
+                        }
+                    ],
+                }
+            ],
+        )
+
     def test_new_erd_schema_project_requires_name_and_integer_seed(self):
         project = new_erd_schema_project(name_value=" draft_schema ", seed_value="42")
         self.assertEqual(project.name, "draft_schema")
@@ -207,6 +252,11 @@ class TestERDDesigner(unittest.TestCase):
         clients = next(table for table in project.tables if table.table_name == "clients")
         self.assertEqual(clients.row_count, 12)
         self.assertEqual(project.foreign_keys[0].parent_table, "clients")
+
+    def test_add_table_preserves_timeline_constraints(self):
+        project = self._project_with_timeline_constraints()
+        updated = add_table_to_erd_project(project, table_name_value="audit_log", row_count_value=5)
+        self.assertEqual(updated.timeline_constraints, project.timeline_constraints)
 
     def test_update_column_in_erd_project_updates_relationship_references(self):
         project = update_column_in_erd_project(

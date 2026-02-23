@@ -2,6 +2,7 @@ import os
 import tempfile
 import tkinter as tk
 import unittest
+from datetime import date
 
 from src.config import AppConfig
 from src.generator_project import generate_project_rows
@@ -132,6 +133,75 @@ class TestInvariants(unittest.TestCase):
             for count in counts_by_parent.values():
                 self.assertGreaterEqual(count, fk.min_children)
                 self.assertLessEqual(count, fk.max_children)
+
+    def test_dg03_timeline_constraints_are_deterministic_and_enforced(self):
+        project = SchemaProject(
+            name="invariants_dg03",
+            seed=333,
+            tables=[
+                TableSpec(
+                    table_name="signup",
+                    row_count=4,
+                    columns=[
+                        ColumnSpec("signup_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec(
+                            "signup_date",
+                            "date",
+                            nullable=False,
+                            generator="date",
+                            params={"start": "2025-01-01", "end": "2025-01-10"},
+                        ),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("signup_id", "int", nullable=False),
+                        ColumnSpec(
+                            "ordered_date",
+                            "date",
+                            nullable=False,
+                            generator="date",
+                            params={"start": "2024-12-01", "end": "2025-03-01"},
+                        ),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec("orders", "signup_id", "signup", "signup_id", 1, 1),
+            ],
+            timeline_constraints=[
+                {
+                    "rule_id": "signup_to_order",
+                    "child_table": "orders",
+                    "child_column": "ordered_date",
+                    "references": [
+                        {
+                            "parent_table": "signup",
+                            "parent_column": "signup_date",
+                            "via_child_fk": "signup_id",
+                            "direction": "after",
+                            "min_days": 0,
+                            "max_days": 3,
+                        }
+                    ],
+                }
+            ],
+        )
+        first = generate_project_rows(project)
+        second = generate_project_rows(project)
+        self.assertEqual(first, second)
+
+        signup_by_id = {int(row["signup_id"]): row for row in first["signup"]}
+        for row in first["orders"]:
+            parent = signup_by_id[int(row["signup_id"])]
+            delta = (
+                date.fromisoformat(str(row["ordered_date"]))
+                - date.fromisoformat(str(parent["signup_date"]))
+            ).days
+            self.assertGreaterEqual(delta, 0)
+            self.assertLessEqual(delta, 3)
 
     def test_json_roundtrip_preserves_project(self):
         project = self._project(seed=9)
@@ -286,6 +356,7 @@ class TestInvariants(unittest.TestCase):
         self.assertIn("time_offset", GENERATORS)
         self.assertIn("hierarchical_category", GENERATORS)
         self.assertIn("ordered_choice", GENERATORS)
+        self.assertIn("state_transition", GENERATORS)
 
     def test_gui_navigation_contract_v2_only(self):
         try:
@@ -347,6 +418,8 @@ class TestInvariants(unittest.TestCase):
             guide_titles = {entry[0] for entry in GENERATION_BEHAVIOR_GUIDE}
             self.assertIn("sample_csv generator", guide_titles)
             self.assertIn("Business key + SCD table behaviors", guide_titles)
+            self.assertIn("state_transition lifecycle generator", guide_titles)
+            self.assertIn("DG03 cross-table temporal integrity planner", guide_titles)
 
             schema_screen = app.screens[SCHEMA_V2_ROUTE]
             self.assertTrue(hasattr(schema_screen, "preview_table"))

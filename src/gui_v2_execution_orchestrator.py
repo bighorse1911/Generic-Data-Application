@@ -10,6 +10,7 @@ from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
+from src.gui_kit.feedback import ToastCenter
 from src.gui_kit.run_lifecycle import RunLifecycleController
 from src.gui_kit.run_models import RunWorkflowViewModel
 from src.gui_kit.shortcuts import ShortcutManager
@@ -42,6 +43,7 @@ class ExecutionOrchestratorV2Screen(ExecutionOrchestratorBase):
         self.shell.pack(fill="both", expand=True)
         self.shell.add_header_action("Run Center", lambda: self.app.show_screen("run_center_v2"))
         self.shell.add_header_action("Home v2", lambda: self.app.show_screen("home_v2"))
+        self.shell.add_header_action("Notifications", self._show_notifications_history)
 
         self.shell.add_nav_button("config", "Config", lambda: self._set_focus("config"))
         self.shell.add_nav_button("plan", "Plan", lambda: self._set_focus("plan"))
@@ -109,6 +111,7 @@ class ExecutionOrchestratorV2Screen(ExecutionOrchestratorBase):
         )
         self.shortcut_manager = ShortcutManager(self)
         self.focus_controller = FocusController(self)
+        self.toast_center = ToastCenter(self)
         self._register_focus_anchors()
         self._register_shortcuts()
 

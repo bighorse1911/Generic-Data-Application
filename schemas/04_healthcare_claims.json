@@ -1,0 +1,329 @@
+{
+  "name": "healthcare_claims",
+  "seed": 20260317,
+  "tables": [
+    {
+      "table_name": "providers",
+      "row_count": 18,
+      "columns": [
+        {
+          "name": "provider_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "provider_code",
+          "dtype": "text",
+          "nullable": false
+        },
+        {
+          "name": "specialty_family",
+          "dtype": "text",
+          "nullable": false,
+          "choices": [
+            "primary",
+            "surgical",
+            "diagnostic"
+          ]
+        },
+        {
+          "name": "specialty",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "hierarchical_category",
+          "params": {
+            "parent_column": "specialty_family",
+            "hierarchy": {
+              "primary": [
+                "family_medicine",
+                "internal_medicine"
+              ],
+              "surgical": [
+                "orthopedic_surgery",
+                "general_surgery"
+              ],
+              "diagnostic": [
+                "radiology",
+                "pathology"
+              ]
+            }
+          },
+          "depends_on": [
+            "specialty_family"
+          ]
+        },
+        {
+          "name": "region",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "north",
+              "south",
+              "east",
+              "west"
+            ],
+            "weights": [
+              0.28,
+              0.24,
+              0.22,
+              0.26
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "table_name": "patients",
+      "row_count": 48,
+      "columns": [
+        {
+          "name": "patient_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "patient_code",
+          "dtype": "text",
+          "nullable": false
+        },
+        {
+          "name": "birth_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "1950-01-01",
+            "end": "2005-12-31"
+          }
+        },
+        {
+          "name": "home_city",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 0
+          }
+        },
+        {
+          "name": "home_country",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 1,
+            "match_column": "home_city",
+            "match_column_index": 0
+          },
+          "depends_on": [
+            "home_city"
+          ]
+        },
+        {
+          "name": "risk_segment",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "weights": [
+              0.5,
+              0.35,
+              0.15
+            ]
+          }
+        },
+        {
+          "name": "smoker_flag",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "risk_segment",
+            "operator": "==",
+            "value": "high",
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "risk_segment"
+          ]
+        }
+      ]
+    },
+    {
+      "table_name": "claims_fact",
+      "columns": [
+        {
+          "name": "claim_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "patient_sk",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "provider_sk",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "service_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2023-01-01",
+            "end": "2026-12-31"
+          }
+        },
+        {
+          "name": "submitted_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "adjudicated_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "time_offset",
+          "params": {
+            "base_column": "submitted_ts",
+            "direction": "after",
+            "min_seconds": 3600,
+            "max_seconds": 259200
+          },
+          "depends_on": [
+            "submitted_ts"
+          ]
+        },
+        {
+          "name": "claim_stage",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "ordered_choice",
+          "params": {
+            "orders": {
+              "clean": [
+                "received",
+                "reviewed",
+                "approved"
+              ],
+              "needs_work": [
+                "received",
+                "pending_docs",
+                "reviewed",
+                "denied"
+              ]
+            },
+            "order_weights": {
+              "clean": 0.72,
+              "needs_work": 0.28
+            },
+            "move_weights": [
+              0.05,
+              0.7,
+              0.25
+            ],
+            "start_index": 0
+          }
+        },
+        {
+          "name": "claim_amount",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "money",
+          "params": {
+            "min": 20.0,
+            "max": 15000.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "approved_ratio",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 0.0,
+            "max": 1.0,
+            "decimals": 4
+          }
+        },
+        {
+          "name": "approved_flag",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "claim_stage",
+            "operator": "==",
+            "value": "approved",
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "claim_stage"
+          ]
+        },
+        {
+          "name": "denial_reason",
+          "dtype": "text",
+          "nullable": true,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "none",
+              "coding",
+              "eligibility",
+              "medical_necessity"
+            ],
+            "weights": [
+              0.65,
+              0.15,
+              0.1,
+              0.1
+            ],
+            "null_rate": 0.4
+          }
+        }
+      ]
+    }
+  ],
+  "foreign_keys": [
+    {
+      "child_table": "claims_fact",
+      "child_column": "patient_sk",
+      "parent_table": "patients",
+      "parent_column": "patient_sk",
+      "min_children": 1,
+      "max_children": 6
+    },
+    {
+      "child_table": "claims_fact",
+      "child_column": "provider_sk",
+      "parent_table": "providers",
+      "parent_column": "provider_sk",
+      "min_children": 1,
+      "max_children": 16
+    }
+  ]
+}

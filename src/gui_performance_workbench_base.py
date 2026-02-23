@@ -10,6 +10,7 @@ from src.gui_kit.accessibility import FocusController
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
+from src.gui_kit.feedback import ToastCenter
 from src.gui_kit.run_commands import apply_performance_profile_payload
 from src.gui_kit.run_commands import build_profile_from_model
 from src.gui_kit.run_commands import performance_profile_payload
@@ -43,6 +44,7 @@ class PerformanceWorkbenchBase(ttk.Frame):
         header.pack(fill="x", pady=(0, 8))
         ttk.Button(header, text="\u2190 Back", command=self.app.go_home).pack(side="left")
         ttk.Label(header, text="Performance Workbench", font=("Segoe UI", 16, "bold")).pack(side="left", padx=(10, 0))
+        ttk.Button(header, text="Notifications", command=self._show_notifications_history).pack(side="right", padx=(0, 6))
         ttk.Button(header, text="Shortcuts", command=self._show_shortcuts_help).pack(side="right")
 
         subtitle = ttk.Label(
@@ -70,6 +72,7 @@ class PerformanceWorkbenchBase(ttk.Frame):
         )
         self.surface.pack(fill="both", expand=True)
         self.surface.set_status("Load a schema and estimate workload strategy.")
+        self.toast_center = ToastCenter(self)
 
         self.surface.browse_btn.configure(command=self._browse_schema_path)
         self.surface.load_schema_btn.configure(command=self._load_schema)
@@ -178,6 +181,18 @@ class PerformanceWorkbenchBase(ttk.Frame):
     def _show_shortcuts_help(self) -> None:
         self.shortcut_manager.show_help_dialog(title="Performance Workbench Shortcuts")
 
+    def _show_notifications_history(self) -> None:
+        if hasattr(self, "toast_center"):
+            self.toast_center.show_history_dialog(title="Performance Workbench Notifications")
+
+    def _notify(self, message: str, *, level: str = "info", duration_ms: int | None = None) -> None:
+        text = str(message).strip()
+        if text == "":
+            return
+        self.surface.set_status(text)
+        if hasattr(self, "toast_center"):
+            self.toast_center.notify(text, level=level, duration_ms=duration_ms)
+
     def _sync_model(self) -> RunWorkflowViewModel:
         return self.surface.sync_model_from_vars()
 
@@ -280,11 +295,13 @@ class PerformanceWorkbenchBase(ttk.Frame):
             )
             return
         self._populate_estimates(diagnostics.estimates)
-        self.surface.set_status(
+        self._notify(
             "Estimate complete: "
             f"rows={diagnostics.summary.total_rows}, memory={diagnostics.summary.total_memory_mb:.3f} MB, "
             f"write={diagnostics.summary.total_write_mb:.3f} MB, time={diagnostics.summary.total_seconds:.3f} s, "
-            f"highest risk={diagnostics.summary.highest_risk}."
+            f"highest risk={diagnostics.summary.highest_risk}.",
+            level="success",
+            duration_ms=3600,
         )
         self.surface.set_focus("diagnostics")
 
@@ -308,9 +325,11 @@ class PerformanceWorkbenchBase(ttk.Frame):
         self._populate_chunk_plan(plan_entries)
         total_rows = sum(entry.rows_in_chunk for entry in plan_entries)
         max_stage = max((entry.stage for entry in plan_entries), default=0)
-        self.surface.set_status(
+        self._notify(
             f"Chunk plan ready: tables={len({e.table_name for e in plan_entries})}, "
-            f"chunks={len(plan_entries)}, rows={total_rows}, max stage={max_stage}."
+            f"chunks={len(plan_entries)}, rows={total_rows}, max stage={max_stage}.",
+            level="success",
+            duration_ms=3600,
         )
         self.surface.set_focus("plan")
 
@@ -330,25 +349,30 @@ class PerformanceWorkbenchBase(ttk.Frame):
     def _on_run_cancelled(self, message: str) -> None:
         self.lifecycle.transition_cancelled(message, phase="Cancelled")
         self._on_runtime_event(RuntimeEvent(kind="cancelled", message="Run cancelled by user."))
+        self._notify("Run cancelled by user request.", level="warn", duration_ms=3200)
 
     def _on_benchmark_done(self, result: BenchmarkResult) -> None:
         self.lifecycle.transition_complete("Benchmark complete")
         self._populate_estimates(result.estimates)
         self._populate_chunk_plan(result.chunk_plan)
-        self.surface.set_status(
+        self._notify(
             "Benchmark complete: "
             f"tables={len(result.selected_tables)}, chunks={result.chunk_summary.total_chunks}, "
-            f"rows={result.chunk_summary.total_rows}, risk={result.estimate_summary.highest_risk}."
+            f"rows={result.chunk_summary.total_rows}, risk={result.estimate_summary.highest_risk}.",
+            level="success",
+            duration_ms=3800,
         )
 
     def _on_generate_done(self, result: StrategyRunResult) -> None:
         self.lifecycle.transition_complete("Generation complete")
         csv_count = len(result.csv_paths)
         sqlite_rows = sum(result.sqlite_counts.values())
-        self.surface.set_status(
+        self._notify(
             "Generation complete: "
             f"tables={len(result.selected_tables)}, rows={result.total_rows}, "
-            f"csv_files={csv_count}, sqlite_rows={sqlite_rows}."
+            f"csv_files={csv_count}, sqlite_rows={sqlite_rows}.",
+            level="success",
+            duration_ms=4000,
         )
 
     def _start_run_benchmark(self) -> None:
@@ -464,7 +488,7 @@ class PerformanceWorkbenchBase(ttk.Frame):
                 mode="mixed",
             )
             return
-        self.surface.set_status(f"Saved performance profile to {output_path}.")
+        self._notify(f"Saved performance profile to {output_path}.", level="success", duration_ms=3200)
 
     def _load_profile(self) -> None:
         profile_path = filedialog.askopenfilename(
@@ -504,4 +528,4 @@ class PerformanceWorkbenchBase(ttk.Frame):
             )
             return
         self.surface.sync_vars_from_model()
-        self.surface.set_status(f"Loaded performance profile from {profile_path}.")
+        self._notify(f"Loaded performance profile from {profile_path}.", level="success", duration_ms=3200)

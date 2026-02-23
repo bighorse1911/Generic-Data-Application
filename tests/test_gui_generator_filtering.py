@@ -28,11 +28,13 @@ class TestGUIGeneratorFiltering(unittest.TestCase):
         self.assertIn("sample_csv", text_generators)
         self.assertIn("choice_weighted", text_generators)
         self.assertIn("ordered_choice", text_generators)
+        self.assertIn("state_transition", text_generators)
         self.assertIn("hierarchical_category", text_generators)
         self.assertNotIn("uniform_int", text_generators)
 
         int_generators = valid_generators_for_dtype("int")
         self.assertIn("ordered_choice", int_generators)
+        self.assertIn("state_transition", int_generators)
 
         bool_generators = valid_generators_for_dtype("bool")
         self.assertEqual(bool_generators, ["", "if_then"])
@@ -61,6 +63,22 @@ class TestGUIGeneratorFiltering(unittest.TestCase):
         self.assertIn("order_weights", template)
         self.assertIn("move_weights", template)
         self.assertIn("start_index", template)
+
+    def test_default_generator_params_template_handles_state_transition(self):
+        text_template = default_generator_params_template("state_transition", "text")
+        self.assertIsNotNone(text_template)
+        assert text_template is not None
+        self.assertIn("entity_column", text_template)
+        self.assertIn("states", text_template)
+        self.assertIn("transitions", text_template)
+        self.assertIn("terminal_states", text_template)
+
+        int_template = default_generator_params_template("state_transition", "int")
+        self.assertIsNotNone(int_template)
+        assert int_template is not None
+        states = int_template.get("states")
+        self.assertIsInstance(states, list)
+        self.assertTrue(all(isinstance(value, int) for value in states))
 
     def test_invalid_generator_for_dtype_has_actionable_error(self):
         try:

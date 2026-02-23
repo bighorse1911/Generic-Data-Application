@@ -8,16 +8,19 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+from src.gui_kit.command_palette import CommandPalette, CommandPaletteAction, CommandPaletteRegistry
 from src.gui_kit.column_chooser import ColumnChooserDialog
 from src.gui_kit.forms import FormBuilder
-from src.gui_kit.feedback import ToastCenter
+from src.gui_kit.feedback import NotificationCenter, NotificationEntry, ToastCenter
 from src.gui_kit.json_editor import JsonEditorDialog, parse_json_text
 from src.gui_kit.layout import BaseScreen
 from src.gui_kit.panels import CollapsiblePanel, Tabs
+from src.gui_kit.preferences import WorkspacePreferencesStore, default_workspace_preferences_path
 from src.gui_kit.search import SearchEntry
 from src.gui_kit.shortcuts import ShortcutManager
 from src.gui_kit.scroll import ScrollFrame, wheel_units_from_delta
 from src.gui_kit.table import TableView
+from src.gui_kit.theme_tokens import V2_THEME, v2_button_options
 from src.gui_kit.tokens import TokenEntry
 from src.gui_kit.validation import InlineValidationEntry, InlineValidationSummary
 
@@ -32,6 +35,9 @@ class GUIKitComponent(TypedDict):
 
 __all__ = [
     "BaseScreen",
+    "CommandPalette",
+    "CommandPaletteAction",
+    "CommandPaletteRegistry",
     "CollapsiblePanel",
     "ColumnChooserDialog",
     "FormBuilder",
@@ -39,15 +45,21 @@ __all__ = [
     "InlineValidationSummary",
     "JsonEditorDialog",
     "GUIKitComponent",
+    "NotificationCenter",
+    "NotificationEntry",
+    "WorkspacePreferencesStore",
+    "default_workspace_preferences_path",
     "SearchEntry",
     "ShortcutManager",
     "ScrollFrame",
     "TableView",
+    "V2_THEME",
     "ToastCenter",
     "TokenEntry",
     "Tabs",
     "get_component_catalog",
     "parse_json_text",
+    "v2_button_options",
     "wheel_units_from_delta",
 ]
 
@@ -57,6 +69,24 @@ _COMPONENT_CATALOG: tuple[GUIKitComponent, ...] = (
         "module": "src.gui_kit.layout",
         "kind": "screen_base",
         "summary": "Base class with shared status/busy/thread helpers for screens.",
+    },
+    {
+        "export": "CommandPalette",
+        "module": "src.gui_kit.command_palette",
+        "kind": "command_palette",
+        "summary": "Global searchable action launcher dialog with keyboard-first dispatch.",
+    },
+    {
+        "export": "CommandPaletteAction",
+        "module": "src.gui_kit.command_palette",
+        "kind": "command_palette_model",
+        "summary": "Dataclass model describing one command-palette action entry.",
+    },
+    {
+        "export": "CommandPaletteRegistry",
+        "module": "src.gui_kit.command_palette",
+        "kind": "command_palette_registry",
+        "summary": "Action registry with deterministic fuzzy search and dispatch helpers.",
     },
     {
         "export": "ColumnChooserDialog",
@@ -81,6 +111,30 @@ _COMPONENT_CATALOG: tuple[GUIKitComponent, ...] = (
         "module": "src.gui_kit.feedback",
         "kind": "feedback",
         "summary": "Non-blocking stacked toasts for success/warn/error status messages.",
+    },
+    {
+        "export": "NotificationCenter",
+        "module": "src.gui_kit.feedback",
+        "kind": "notification_center",
+        "summary": "Non-blocking notifications with in-memory history and history dialog.",
+    },
+    {
+        "export": "NotificationEntry",
+        "module": "src.gui_kit.feedback",
+        "kind": "notification_model",
+        "summary": "Dataclass payload for one notification history entry.",
+    },
+    {
+        "export": "WorkspacePreferencesStore",
+        "module": "src.gui_kit.preferences",
+        "kind": "preferences_store",
+        "summary": "Versioned route-keyed workspace state persistence store.",
+    },
+    {
+        "export": "default_workspace_preferences_path",
+        "module": "src.gui_kit.preferences",
+        "kind": "preferences_helper",
+        "summary": "Returns default workspace-state file path with env override support.",
     },
     {
         "export": "SearchEntry",
@@ -125,6 +179,12 @@ _COMPONENT_CATALOG: tuple[GUIKitComponent, ...] = (
         "summary": "Treeview wrapper with normalization, auto-sizing, and optional pagination.",
     },
     {
+        "export": "V2_THEME",
+        "module": "src.gui_kit.theme_tokens",
+        "kind": "theme_tokens",
+        "summary": "Shared v2 visual token set (colors, typography, spacing, focus, button hierarchy).",
+    },
+    {
         "export": "InlineValidationEntry",
         "module": "src.gui_kit.validation",
         "kind": "validation_model",
@@ -147,6 +207,12 @@ _COMPONENT_CATALOG: tuple[GUIKitComponent, ...] = (
         "module": "src.gui_kit.scroll",
         "kind": "scroll_helper",
         "summary": "Normalizes raw mouse-wheel delta values to Tk scroll units.",
+    },
+    {
+        "export": "v2_button_options",
+        "module": "src.gui_kit.theme_tokens",
+        "kind": "theme_helper",
+        "summary": "Returns tokenized tk.Button visual options by hierarchy role.",
     },
 )
 

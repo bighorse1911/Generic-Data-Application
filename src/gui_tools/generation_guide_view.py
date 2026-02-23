@@ -72,6 +72,16 @@ GENERATION_BEHAVIOR_GUIDE: tuple[GuideEntry, ...] = (
         "Set Generator='ordered_choice' with params.orders, optional params.order_weights, params.move_weights, and optional params.start_index (for example {\"orders\": {\"A\": [\"1\", \"2\", \"3\"], \"B\": [\"4\", \"5\", \"6\"]}, \"order_weights\": {\"A\": 0.5, \"B\": 0.5}, \"move_weights\": [0.1, 0.8, 0.1], \"start_index\": 0}).",
     ),
     (
+        "state_transition lifecycle generator",
+        "Builds deterministic per-entity state trajectories using allowed transitions and dwell-time bounds.",
+        "Set Generator='state_transition', include params.entity_column in Depends on column, then configure params.states, params.transitions, optional params.start_state or params.start_weights, optional params.terminal_states, and dwell controls (params.dwell_min/params.dwell_max, optional params.dwell_by_state).",
+    ),
+    (
+        "DG03 cross-table temporal integrity planner",
+        "Enforces bounded temporal ordering across FK-linked rows (for example signup -> order -> ship -> invoice).",
+        "Set Project-level Timeline constraints JSON with rules that target a child date/datetime column and one or more FK-linked parent references (direction + min/max days/seconds). Runtime preserves valid child values and clamps invalid/unparseable values into the allowed interval.",
+    ),
+    (
         "Correlated generator via depends_on (advanced JSON)",
         "Builds one column from another column in the same row.",
         "Use Generator='salary_from_age' (or another correlated generator), set required params, and include source columns in depends_on.",

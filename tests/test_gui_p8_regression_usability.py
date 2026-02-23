@@ -8,6 +8,16 @@ from src.gui_home import App
 from src.gui_route_policy import SCHEMA_V2_ROUTE
 from src.multiprocessing_runtime import MultiprocessEvent
 
+# Coverage handoff (de-duplication):
+# - Removed overlapping schema-studio dirty navigation assertions.
+#   Canonical ownership: tests/test_schema_route_consolidation.py::
+#   test_schema_studio_guard_checks_schema_project_v2_dirty_state_only.
+# - Removed overlapping retired-route absence assertions.
+#   Canonical ownership: tests/test_invariants.py::test_gui_navigation_contract_v2_only.
+# - Removed overlapping run-center shortcut lifecycle assertions.
+#   Canonical ownership: tests/test_gui_p6_route_keyboard_flow.py::
+#   test_route_scoped_shortcut_activation_switches_between_screens.
+
 
 class TestGuiP8RegressionUsability(unittest.TestCase):
     def setUp(self):
@@ -69,21 +79,6 @@ class TestGuiP8RegressionUsability(unittest.TestCase):
         self.assertEqual(studio.shell.active_nav_key, "run")
         self.assertIn("run section", studio.shell.status_var.get().lower())
 
-    def test_schema_studio_dirty_navigation_block_and_allow(self):
-        self.app.show_screen("schema_studio_v2")
-        studio = self.app.screens["schema_studio_v2"]
-        schema_v2 = self.app.screens[SCHEMA_V2_ROUTE]
-        schema_v2.mark_dirty("test")  # type: ignore[attr-defined]
-
-        with mock.patch.object(schema_v2, "confirm_discard_or_save", return_value=False):
-            studio._navigate_with_guard("run_center_v2", "opening Run Center")
-            self.assertEqual(self.app.current_screen_name, "schema_studio_v2")
-            self.assertIn("navigation cancelled", studio.shell.status_var.get().lower())
-
-        with mock.patch.object(schema_v2, "confirm_discard_or_save", return_value=True):
-            studio._navigate_with_guard("run_center_v2", "opening Run Center")
-            self.assertEqual(self.app.current_screen_name, "run_center_v2")
-
     def test_schema_studio_guard_error_sets_retryable_status(self):
         self.app.show_screen("schema_studio_v2")
         studio = self.app.screens["schema_studio_v2"]
@@ -95,40 +90,6 @@ class TestGuiP8RegressionUsability(unittest.TestCase):
 
         self.assertEqual(self.app.current_screen_name, "schema_studio_v2")
         self.assertIn("unable to confirm schema changes", studio.shell.status_var.get().lower())
-
-    def test_legacy_bridge_and_demo_routes_are_absent(self):
-        retired = [
-            "home",
-            "schema_project",
-            "schema_project_kit",
-            "schema_project_legacy",
-            "generation_behaviors_guide",
-            "erd_designer",
-            "location_selector",
-            "performance_workbench",
-            "execution_orchestrator",
-            "schema_demo_v2",
-            "erd_designer_v2_bridge",
-            "location_selector_v2_bridge",
-            "generation_behaviors_guide_v2_bridge",
-        ]
-        for route in retired:
-            with self.subTest(route=route):
-                with self.assertRaises(KeyError):
-                    self.app.show_screen(route)
-
-    def test_run_center_shortcuts_toggle_on_route_switch(self):
-        run_center = self.app.screens["run_center_v2"]
-        self.assertFalse(run_center.shortcut_manager.is_active)
-
-        self.app.show_screen("run_center_v2")
-        self.assertTrue(run_center.shortcut_manager.is_active)
-
-        self.app.show_screen("schema_studio_v2")
-        self.assertFalse(run_center.shortcut_manager.is_active)
-
-        self.app.show_screen("run_center_v2")
-        self.assertTrue(run_center.shortcut_manager.is_active)
 
     def test_run_center_cancel_if_running_invokes_cancel_only_while_running(self):
         run_center = self.app.screens["run_center_v2"]

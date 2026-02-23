@@ -1,11 +1,15 @@
-import time
 import tkinter as tk
 import unittest
+from unittest import mock
 
 from src.gui_kit.run_lifecycle import RunLifecycleController
 from src.gui_kit.ui_dispatch import UIDispatcher
 from src.multiprocessing_runtime import MultiprocessEvent
 from src.performance_scaling import RuntimeEvent
+
+# Coverage handoff:
+# - No test removals in this module.
+# - Quality hardening only: async-thread assertions now run deterministically.
 
 
 class _Widget:
@@ -19,6 +23,15 @@ class _Widget:
 
 class _CancelError(RuntimeError):
     pass
+
+
+class _ImmediateThread:
+    def __init__(self, *, target, daemon: bool = True):
+        self._target = target
+        self.daemon = daemon
+
+    def start(self) -> None:
+        self._target()
 
 
 class TestRunLifecycleController(unittest.TestCase):
@@ -159,21 +172,17 @@ class TestRunLifecycleController(unittest.TestCase):
         dispatcher = UIDispatcher(after=bad_after, is_alive=lambda: True)
         calls: list[str] = []
 
-        controller.run_async(
-            after=bad_after,
-            worker=lambda: 5,
-            on_done=lambda value: calls.append(f"done:{value}"),
-            on_failed=lambda message: calls.append(f"failed:{message}"),
-            on_cancelled=lambda message: calls.append(f"cancel:{message}"),
-            phase_label="Working",
-            cancel_exceptions=(_CancelError,),
-            dispatcher=dispatcher,
-        )
-
-        for _ in range(50):
-            if not controller.state.is_running:
-                break
-            time.sleep(0.01)
+        with mock.patch("src.gui_kit.run_lifecycle.threading.Thread", _ImmediateThread):
+            controller.run_async(
+                after=bad_after,
+                worker=lambda: 5,
+                on_done=lambda value: calls.append(f"done:{value}"),
+                on_failed=lambda message: calls.append(f"failed:{message}"),
+                on_cancelled=lambda message: calls.append(f"cancel:{message}"),
+                phase_label="Working",
+                cancel_exceptions=(_CancelError,),
+                dispatcher=dispatcher,
+            )
 
         self.assertFalse(controller.state.is_running)
         self.assertEqual(calls, [])
@@ -194,44 +203,36 @@ class TestRunLifecycleController(unittest.TestCase):
             callback()
             return None
 
-        def wait_until_idle() -> None:
-            for _ in range(50):
-                if not controller.state.is_running:
-                    return
-                time.sleep(0.01)
+        with mock.patch("src.gui_kit.run_lifecycle.threading.Thread", _ImmediateThread):
+            controller.run_async(
+                after=after,
+                worker=lambda: 7,
+                on_done=lambda value: (calls.append(f"done:{value}"), controller.transition_complete("Done")),
+                on_failed=lambda message: (calls.append(f"failed:{message}"), controller.transition_failed(message)),
+                on_cancelled=lambda message: (calls.append(f"cancel:{message}"), controller.transition_cancelled(message)),
+                phase_label="Working",
+                cancel_exceptions=(_CancelError,),
+            )
 
-        controller.run_async(
-            after=after,
-            worker=lambda: 7,
-            on_done=lambda value: (calls.append(f"done:{value}"), controller.transition_complete("Done")),
-            on_failed=lambda message: (calls.append(f"failed:{message}"), controller.transition_failed(message)),
-            on_cancelled=lambda message: (calls.append(f"cancel:{message}"), controller.transition_cancelled(message)),
-            phase_label="Working",
-            cancel_exceptions=(_CancelError,),
-        )
-        wait_until_idle()
+            controller.run_async(
+                after=after,
+                worker=lambda: (_ for _ in ()).throw(_CancelError("cancelled")),
+                on_done=lambda value: (calls.append(f"done:{value}"), controller.transition_complete("Done")),
+                on_failed=lambda message: (calls.append(f"failed:{message}"), controller.transition_failed(message)),
+                on_cancelled=lambda message: (calls.append(f"cancel:{message}"), controller.transition_cancelled(message)),
+                phase_label="Working",
+                cancel_exceptions=(_CancelError,),
+            )
 
-        controller.run_async(
-            after=after,
-            worker=lambda: (_ for _ in ()).throw(_CancelError("cancelled")),
-            on_done=lambda value: (calls.append(f"done:{value}"), controller.transition_complete("Done")),
-            on_failed=lambda message: (calls.append(f"failed:{message}"), controller.transition_failed(message)),
-            on_cancelled=lambda message: (calls.append(f"cancel:{message}"), controller.transition_cancelled(message)),
-            phase_label="Working",
-            cancel_exceptions=(_CancelError,),
-        )
-        wait_until_idle()
-
-        controller.run_async(
-            after=after,
-            worker=lambda: (_ for _ in ()).throw(ValueError("boom")),
-            on_done=lambda value: (calls.append(f"done:{value}"), controller.transition_complete("Done")),
-            on_failed=lambda message: (calls.append(f"failed:{message}"), controller.transition_failed(message)),
-            on_cancelled=lambda message: (calls.append(f"cancel:{message}"), controller.transition_cancelled(message)),
-            phase_label="Working",
-            cancel_exceptions=(_CancelError,),
-        )
-        wait_until_idle()
+            controller.run_async(
+                after=after,
+                worker=lambda: (_ for _ in ()).throw(ValueError("boom")),
+                on_done=lambda value: (calls.append(f"done:{value}"), controller.transition_complete("Done")),
+                on_failed=lambda message: (calls.append(f"failed:{message}"), controller.transition_failed(message)),
+                on_cancelled=lambda message: (calls.append(f"cancel:{message}"), controller.transition_cancelled(message)),
+                phase_label="Working",
+                cancel_exceptions=(_CancelError,),
+            )
 
         self.assertIn("done:7", calls)
         self.assertIn("cancel:cancelled", calls)

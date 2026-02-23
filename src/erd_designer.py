@@ -124,7 +124,13 @@ def new_erd_schema_project(
         hint="enter a non-empty schema project name",
     )
     seed = _parse_seed(seed_value)
-    return SchemaProject(name=name, seed=seed, tables=[], foreign_keys=[])
+    return SchemaProject(
+        name=name,
+        seed=seed,
+        tables=[],
+        foreign_keys=[],
+        timeline_constraints=None,
+    )
 
 
 def add_table_to_erd_project(
@@ -158,6 +164,7 @@ def add_table_to_erd_project(
         seed=current.seed,
         tables=[*current.tables, new_table],
         foreign_keys=list(current.foreign_keys),
+        timeline_constraints=current.timeline_constraints,
     )
 
 
@@ -254,6 +261,7 @@ def add_column_to_erd_project(
                     scd_tracked_columns=candidate.scd_tracked_columns,
                     scd_active_from_column=candidate.scd_active_from_column,
                     scd_active_to_column=candidate.scd_active_to_column,
+                    correlation_groups=candidate.correlation_groups,
                 )
             )
         else:
@@ -264,6 +272,7 @@ def add_column_to_erd_project(
         seed=current.seed,
         tables=next_tables,
         foreign_keys=list(current.foreign_keys),
+        timeline_constraints=current.timeline_constraints,
     )
 
 
@@ -415,6 +424,7 @@ def add_relationship_to_erd_project(
         seed=current.seed,
         tables=list(current.tables),
         foreign_keys=[*current.foreign_keys, next_fk],
+        timeline_constraints=current.timeline_constraints,
     )
 
 
@@ -496,6 +506,7 @@ def update_table_in_erd_project(
                 scd_tracked_columns=table.scd_tracked_columns,
                 scd_active_from_column=table.scd_active_from_column,
                 scd_active_to_column=table.scd_active_to_column,
+                correlation_groups=table.correlation_groups,
             )
         )
 
@@ -517,6 +528,7 @@ def update_table_in_erd_project(
         seed=current.seed,
         tables=next_tables,
         foreign_keys=next_foreign_keys,
+        timeline_constraints=current.timeline_constraints,
     )
 
 
@@ -732,6 +744,7 @@ def update_column_in_erd_project(
                     old_name=current_column_name,
                     new_name=new_column_name,
                 ),
+                correlation_groups=table.correlation_groups,
             )
         )
 
@@ -761,6 +774,7 @@ def update_column_in_erd_project(
         seed=current.seed,
         tables=next_tables,
         foreign_keys=next_foreign_keys,
+        timeline_constraints=current.timeline_constraints,
     )
 
 

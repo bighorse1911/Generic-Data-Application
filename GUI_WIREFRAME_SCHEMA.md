@@ -14,7 +14,7 @@ this project. It is authoritative for:
 If GUI behavior is unclear, this document and `PROJECT_CANON.md` override
 ad-hoc assumptions.
 
-## Implementation Status (2026-02-17)
+## Implementation Status (2026-02-23)
 
 - Current runtime GUI: Tkinter (`src/gui_home.py`)
 - Production modular route: `schema_project` uses `src/gui_schema_project_kit.py` with `src/gui_kit`.
@@ -36,11 +36,14 @@ ad-hoc assumptions.
 - Extensible data types update: GUI dtype authoring now includes `bytes`.
 - Realistic distributions update: column generator selector includes `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted`.
 - Ordered choices update: column generator selector includes `ordered_choice` with params JSON authoring support for multi-order progression behavior.
+- DG02 update: column generator selector now includes `state_transition` for deterministic per-entity lifecycle trajectories with transition-map, terminal-state, and dwell-time params authoring.
+- DG03 update: Project panel now includes optional `Timeline constraints JSON` authoring/edit controls for cross-table temporal integrity rules.
 - GUI authoring ergonomics update: generator selector options are filtered by selected dtype, pattern presets are available for regex fields, and generator params template fill is available in column editor.
 - GUI kit modernization phase A update: modular schema screen now uses debounced search controls (tables/columns/FKs), token-style editors for comma-separated business-key fields, non-blocking toasts for success feedback, params JSON editor dialog with parse location hints, and centralized shortcuts + help dialog.
 - GUI kit modernization phase B update: modular schema screen now uses preview pagination, preview column visibility/order chooser, inline validation summary with jump actions, and dirty-state prompts for unsaved navigation/load flows.
 - GUI kit modernization phase C update: legacy fallback screen now includes low-risk adoption of Phase B UX patterns (opt-in preview pagination, preview column chooser, inline validation jumps, dirty-state prompts).
 - Business-key cardinality update: table editor now exposes optional `business_key_unique_count` to configure unique business keys separately from table row count.
+- DG01 update: table editor now exposes optional `correlation_groups` JSON authoring with dedicated JSON-editor access for deterministic multi-column rank-correlation configuration.
 - `sample_csv` authoring update: params JSON now supports optional dependent CSV sampling via `match_column` + `match_column_index` (with `depends_on` linkage).
 - Location selector update: Home now routes to `location_selector` for map zoom/pan, point selection, radius-based GeoJSON output, and deterministic sample lat/lon preview.
 - Location selector update: sample lat/lon output now includes one-click CSV save action.
@@ -68,6 +71,15 @@ ad-hoc assumptions.
 - Specialist v2 route restoration update: `home_v2` cards region is scrollable so all v2 cards remain reachable; `erd_designer_v2` and `location_selector_v2` include explicit `Open Classic Tool` actions while preserving native v2 route behavior.
 - Experimental route update: additive route `schema_demo_v2` is available from `home_v2` as a strict mockup-style schema screen (modeled on `demopage.png`) with full model-backed authoring/generation/save/export behavior and independent route-local preloaded demo state.
 - v2 generator GUI migration update: `schema_project_v2` now includes v2-only structured inline generator configuration for all registered generators with raw params JSON fallback, passthrough unknown-key preservation, source-column dependency auto-add, and advanced optional params controls (`null_rate`, `outlier_rate`, `outlier_scale`, bytes length).
+- Async schema project IO update: `schema_project_v2` Save/Load project JSON actions now execute via non-blocking job lifecycle callbacks with busy/status feedback, duplicate-operation guards, and explicit cancel/abort-safe behavior when dialogs are dismissed.
+- Incremental validation engine update: `schema_project_v2` now stages table/column/FK edits into debounced scope-aware incremental validation and preserves full-project validation before generate/export actions.
+- Scalable search/filter pipeline update: `schema_project_v2` now uses indexed + paged filtering for columns and relationships to avoid full Treeview detach/reattach passes on each search keystroke.
+- Undo/redo authoring update: `schema_project_v2` now keeps bounded command-stack undo/redo history for table/column/FK/SCD edits with route-scoped keyboard accelerators.
+- Workspace-state persistence update: `schema_project_v2` now stores/restores route-scoped panel collapse state, active tab, preview page size, and preview column visibility/order using a versioned preferences store.
+- Command palette update: app shell now exposes global `Ctrl/Cmd+K` launcher with searchable route jumps and active-route high-frequency actions (validate/load/save/generate/plan/benchmark) while preserving route-scoped shortcuts.
+- Notification center update: interactive routes now use non-blocking notifications with history for informational/success feedback, while modal dialogs remain for blocking decisions and actionable error/warning interruptions.
+- V2 visual system update: shared token module now owns v2 type scale, spacing scale, color roles, focus-ring state, and button hierarchy; `home_v2` shell/routes and `schema_project_v2` header consume these tokens instead of route-local literals.
+- Guided empty-state/onboarding update: schema authoring and run-workflow routes now surface contextual empty states, inline next-action hints, and starter-schema shortcuts to reduce first-run time-to-success.
 - This schema is now the definitive place to record GUI design decisions so
   future library migrations can preserve behavior contracts.
 
@@ -218,10 +230,14 @@ P5 standardization rules:
 - status line
 - Required behavior:
 - validation gating for generation buttons
+- debounced scope-aware incremental validation for table/column/FK deltas; manual validation remains full-project.
+- full-project validation required before generate/export actions.
+- bounded undo/redo history for table/column/FK/SCD edits with explicit undo/redo controls and shortcuts.
+- persisted workspace-state continuity for panel collapse state, selected tab, preview page size, and preview visible-column order.
 - busy/progress during generation/export tasks via `BaseScreen.safe_threaded_job`
 - actionable error dialogs for invalid actions
 - column editor allows editing the selected column and validates edits before apply
-- generator selector includes conditional/time-aware/hierarchical options `if_then`, `time_offset`, `hierarchical_category`, ordered-sequence option `ordered_choice`, plus distribution/weighted options `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted` (configured via Params JSON + depends_on where applicable)
+- generator selector includes conditional/time-aware/hierarchical options `if_then`, `time_offset`, `hierarchical_category`, ordered-sequence option `ordered_choice`, lifecycle sequence option `state_transition`, plus distribution/weighted options `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted` (configured via Params JSON + depends_on where applicable)
 - generator selector list is filtered by selected dtype and blocks invalid dtype/generator combinations in column apply actions.
 - regex field includes pattern preset controls for common patterns while still supporting custom regex input.
 - generator params JSON includes template-fill action to reduce manual JSON authoring.
@@ -230,15 +246,22 @@ P5 standardization rules:
 - SCD configuration flow with mode selection (`scd1` or `scd2`) and business-key linkage.
 - Business-key behavior controls: token-style comma-separated static/changing/business-key column editors, validated against existing table columns.
 - Table editor includes optional unique business-key count (`business_key_unique_count`) to support scenarios where generated row count exceeds unique business keys.
+- Table editor includes optional correlation-group JSON controls (`correlation_groups`) and JSON-editor dialog access for matrix-based rank-correlation authoring.
+- Project editor includes optional timeline-constraints JSON control (`timeline_constraints`) and dedicated JSON-editor access for DG03 cross-table temporal rule authoring.
 - SCD1 controls: tracked slowly-changing column selection.
 - SCD2 controls: active period boundary columns (`from`/`to`, using `date` or `datetime`) plus tracked slowly-changing column selection; applies to root and incoming-FK child tables.
 - Includes discoverable keyboard shortcuts help and debounced search controls for large schema navigation.
+- Includes discoverable notification-history access for recent informational/success workflow events.
+- Columns/FKs search rendering uses indexed + paged filtering and avoids full detach/reattach passes on each query update.
+- Includes first-run quick-start controls (`Create starter schema`, `Load starter fixture`, `Open Generate tab`) and contextual empty-state hints for project/tables/relationships/generate regions.
 - Uses route-scoped shortcut lifecycle (`on_show`/`on_hide`) so shortcuts only apply while this route is active.
 - Supports explicit major-region keyboard traversal via `F6` (next) and `Shift+F6` (previous).
 - Supports search focus accelerators: `Ctrl/Cmd+F` (table search), `Ctrl/Cmd+Shift+F` (column search), `Ctrl/Cmd+G` (FK search).
+- Supports undo/redo accelerators: `Ctrl/Cmd+Z` (undo), `Ctrl/Cmd+Y` and `Ctrl/Cmd+Shift+Z` (redo).
 - Preview table supports paged rendering for large row previews.
 - Preview table uses chunked non-blocking refresh on large row sets while preserving explicit page-size controls.
 - Preview supports a column chooser dialog for visibility and display-order control without mutating schema column order.
+- Workspace preferences persist across app restarts for active tab, panel collapse state, preview page size, and preview column chooser selections.
 - Screen-level dirty-state behavior prompts on unsaved back/load navigation and exposes an unsaved indicator.
 - Uses `gui_kit` primitives (`BaseScreen`, `ScrollFrame`, `CollapsiblePanel`, `Tabs`, `FormBuilder`, `TableView`, `ColumnChooserDialog`, `InlineValidationSummary`).
 
@@ -363,8 +386,10 @@ P5 standardization rules:
 - SQLite strategy mode creates tables and inserts rows using configured batch size
 - profile save/load uses JSON object payload and re-validates loaded values before apply
 - Header includes a visible shortcuts help action.
+- Header includes a visible notifications history action.
 - Shortcut contract: `F1` help, `F6`/`Shift+F6` region traversal, `Ctrl/Cmd+B` browse schema, `Ctrl/Cmd+L` load schema, `Ctrl/Cmd+S` save profile, `Ctrl/Cmd+O` load profile, `F5` estimate, `Ctrl/Cmd+Enter` benchmark, `Esc` cancel when running.
 - Diagnostics/plan tables use adapter-backed bulk row updates with chunked non-blocking refresh and auto-paging for large datasets.
+- Run-config and results regions expose contextual empty-state hints plus inline next-action guidance for first-run workflows.
 
 ### 4.9 `execution_orchestrator`
 
@@ -402,6 +427,7 @@ P5 standardization rules:
 - Header includes a visible shortcuts help action.
 - Shortcut contract: `F1` help, `F6`/`Shift+F6` region traversal, `Ctrl/Cmd+B` browse schema, `Ctrl/Cmd+L` load schema, `Ctrl/Cmd+S` save config, `Ctrl/Cmd+O` load config, `F5` build plan, `Ctrl/Cmd+Enter` start run, `Esc` cancel when running.
 - Plan/workers/failures tables use adapter-backed bulk row updates with chunked non-blocking refresh; plan/workers auto-page at large row counts.
+- Run-config and results regions expose contextual empty-state hints plus inline next-action guidance for first-run workflows.
 
 ### 4.10 `home_v2`
 
@@ -465,6 +491,7 @@ P5 standardization rules:
 - Shortcut contract: `F1` help, `F6`/`Shift+F6` region traversal, `Ctrl/Cmd+B` browse schema, `Ctrl/Cmd+L` load schema, `Ctrl/Cmd+S` save config, `Ctrl/Cmd+O` load config, `F5` estimate, `Ctrl/Cmd+Enter` start run, `Esc` cancel when running.
 - Diagnostics/plan/failures/history tables use adapter-backed bulk row updates with chunked non-blocking refresh; diagnostics/plan auto-page at large row counts.
 - Scenario acceptance contract: cancel/fallback flows must keep terminal state deterministic (`cancelled|failed|complete`), preserve non-blocking UI behavior, and append expected history/failure visibility updates.
+- Run-config and results regions expose contextual empty-state hints plus inline next-action guidance for first-run workflows.
 
 ### 4.13 `erd_designer_v2`
 
@@ -543,11 +570,17 @@ P5 standardization rules:
 - full schema authoring/editor regions from canonical schema route contract (project/tables/columns/relationships/generate/status)
 - Required behavior:
 - preserves canonical schema validation/generation/export/JSON IO behavior of `schema_project`
+- consumes shared v2 visual tokens for header typography/color/button hierarchy/focus-ring styling
 - exposes route-scoped shortcuts/focus lifecycle parity with classic modular schema route
 - includes a v2-only structured generator configuration region in the column editor for all registered generators while preserving raw params JSON/manual entry fallback
 - structured generator fields and raw params JSON stay two-way synchronized; unknown params keys remain preserved during edit/save/load roundtrips
-- source-column generator fields (`if_column`, `base_column`, `match_column`, `parent_column`) auto-add required entries to `depends_on` while leaving `depends_on` manually editable
+- source-column generator fields (`if_column`, `base_column`, `match_column`, `parent_column`, `entity_column`) auto-add required entries to `depends_on` while leaving `depends_on` manually editable
 - includes advanced optional controls for `null_rate`, `outlier_rate`, `outlier_scale`, and bytes length bounds (`min_length`, `max_length`) without changing canonical schema/runtime contracts
+- includes table-level `correlation_groups` JSON authoring + editor support for deterministic rank-correlation group configuration
+- Save/Load project JSON actions execute through non-blocking async lifecycle jobs with visible busy/status feedback
+- duplicate Save/Load requests while a project IO job is active are safely blocked with actionable status guidance
+- dialog cancellations (`Save As`/`Open`) abort safely without entering async running state; unsaved-change confirmation save path remains synchronous for deterministic guard behavior
+- includes first-run quick-start shortcuts (`Create starter schema`, `Load starter fixture`, `Open Generate tab`) and contextual empty-state hints across project/tables/relationships/generate panels
 - includes visible `Open Classic` fallback action to `schema_project`
 - remains additive; classic `schema_project` route stays available
 
@@ -559,6 +592,7 @@ P5 standardization rules:
 - run config/workflow surface with diagnostics + chunk plan result tabs
 - Required behavior:
 - preserves canonical estimate, chunk-plan, benchmark, strategy generation, cancellation, and profile save/load contracts
+- consumes shared v2 shell visual tokens for header/nav/inspector/status/button styling
 - reuses shared lifecycle/error/table workflow primitives
 - remains additive; classic `performance_workbench` route stays available
 
@@ -570,6 +604,7 @@ P5 standardization rules:
 - run config/workflow surface with plan/workers/failures tabs
 - Required behavior:
 - preserves canonical build-plan/start/start+fallback/cancel and run-config save/load contracts
+- consumes shared v2 shell visual tokens for header/nav/inspector/status/button styling
 - reuses shared lifecycle/error/table workflow primitives and worker/failure runtime event handling
 - remains additive; classic `execution_orchestrator` route stays available
 

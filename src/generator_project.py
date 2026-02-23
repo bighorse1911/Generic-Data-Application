@@ -4,7 +4,14 @@ import random
 import re
 from datetime import date, datetime, timedelta, timezone
 from src.generators import GenContext, get_generator, reset_runtime_generator_state
-from src.schema_project_model import SchemaProject, TableSpec, ColumnSpec, ForeignKeySpec, validate_project
+from src.schema_project_model import (
+    SchemaProject,
+    TableSpec,
+    ColumnSpec,
+    ForeignKeySpec,
+    correlation_cholesky_lower,
+    validate_project,
+)
 
 logger = logging.getLogger("generator_project")
 
@@ -28,6 +35,345 @@ def _iso_date(d: date) -> str:
 
 def _iso_datetime(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso_date_value(value: object) -> date:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or value.strip() == "":
+        raise ValueError("not a date string")
+    return date.fromisoformat(value.strip())
+
+
+def _parse_iso_datetime_value(value: object) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip() != "":
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    else:
+        raise ValueError("not a datetime string")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt
+
+
+def _parse_child_temporal_or_none(value: object, *, dtype: str) -> object | None:
+    if value is None:
+        return None
+    try:
+        if dtype == "date":
+            return _parse_iso_date_value(value)
+        return _parse_iso_datetime_value(value)
+    except Exception:
+        return None
+
+
+def _fk_lookup_identity(value: object) -> tuple[str, object]:
+    if value is None:
+        return ("none", None)
+    if isinstance(value, bool):
+        return ("bool", bool(value))
+    if isinstance(value, int):
+        return ("int", int(value))
+    if isinstance(value, float) and value.is_integer():
+        return ("int", int(value))
+    if isinstance(value, str):
+        text = value.strip()
+        if text != "":
+            try:
+                return ("int", int(text))
+            except (TypeError, ValueError):
+                return ("str", value)
+        return ("str", value)
+    return (type(value).__name__, repr(value))
+
+
+def _compile_timeline_constraints(project: SchemaProject) -> dict[str, list[dict[str, object]]]:
+    raw_rules = project.timeline_constraints
+    if not raw_rules:
+        return {}
+
+    table_map = {table.table_name: table for table in project.tables}
+    fk_parent_pk_by_edge: dict[tuple[str, str, str], str] = {}
+    for fk in project.foreign_keys:
+        fk_parent_pk_by_edge[(fk.child_table, fk.child_column, fk.parent_table)] = fk.parent_column
+
+    compiled: dict[str, list[dict[str, object]]] = {}
+    for index, raw_rule in enumerate(raw_rules):
+        if not isinstance(raw_rule, dict):
+            continue
+        child_table = str(raw_rule.get("child_table", "")).strip()
+        child_column = str(raw_rule.get("child_column", "")).strip()
+        if child_table == "" or child_column == "":
+            continue
+
+        table = table_map.get(child_table)
+        if table is None:
+            continue
+        child_dtype: str | None = None
+        for column in table.columns:
+            if column.name == child_column:
+                child_dtype = column.dtype
+                break
+        if child_dtype not in {"date", "datetime"}:
+            continue
+
+        mode = str(raw_rule.get("mode", "enforce")).strip().lower()
+        if mode != "enforce":
+            continue
+
+        references_raw = raw_rule.get("references")
+        if not isinstance(references_raw, list) or len(references_raw) == 0:
+            continue
+
+        rule_id_raw = raw_rule.get("rule_id")
+        if isinstance(rule_id_raw, str) and rule_id_raw.strip() != "":
+            rule_id = rule_id_raw.strip()
+        else:
+            rule_id = f"rule_{index + 1}"
+
+        compiled_references: list[dict[str, object]] = []
+        for ref_index, raw_reference in enumerate(references_raw):
+            if not isinstance(raw_reference, dict):
+                continue
+            parent_table = str(raw_reference.get("parent_table", "")).strip()
+            parent_column = str(raw_reference.get("parent_column", "")).strip()
+            via_child_fk = str(raw_reference.get("via_child_fk", "")).strip()
+            direction = str(raw_reference.get("direction", "")).strip().lower()
+            parent_pk_column = fk_parent_pk_by_edge.get((child_table, via_child_fk, parent_table))
+            if (
+                parent_table == ""
+                or parent_column == ""
+                or via_child_fk == ""
+                or direction not in {"after", "before"}
+                or not isinstance(parent_pk_column, str)
+                or parent_pk_column.strip() == ""
+            ):
+                continue
+
+            if child_dtype == "date":
+                try:
+                    min_offset = int(raw_reference.get("min_days", 0))
+                    max_offset = int(raw_reference.get("max_days", min_offset))
+                except (TypeError, ValueError):
+                    continue
+            else:
+                try:
+                    min_offset = int(raw_reference.get("min_seconds", 0))
+                    max_offset = int(raw_reference.get("max_seconds", min_offset))
+                except (TypeError, ValueError):
+                    continue
+            if min_offset < 0 or max_offset < min_offset:
+                continue
+
+            compiled_references.append(
+                {
+                    "reference_index": ref_index,
+                    "parent_table": parent_table,
+                    "parent_column": parent_column,
+                    "parent_pk_column": parent_pk_column,
+                    "via_child_fk": via_child_fk,
+                    "direction": direction,
+                    "min_offset": min_offset,
+                    "max_offset": max_offset,
+                }
+            )
+
+        if not compiled_references:
+            continue
+
+        compiled.setdefault(child_table, []).append(
+            {
+                "rule_index": index,
+                "rule_id": rule_id,
+                "child_column": child_column,
+                "dtype": child_dtype,
+                "references": compiled_references,
+            }
+        )
+
+    return compiled
+
+
+def _build_parent_lookup(
+    parent_rows: list[dict[str, object]],
+    *,
+    parent_table: str,
+    parent_pk_column: str,
+) -> dict[tuple[str, object], dict[str, object]]:
+    lookup: dict[tuple[str, object], dict[str, object]] = {}
+    for idx, row in enumerate(parent_rows, start=1):
+        key_raw = row.get(parent_pk_column)
+        if key_raw is None:
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{parent_table}', row {idx}, column '{parent_pk_column}'",
+                    "parent lookup key is null during DG03 timeline enforcement",
+                    "ensure parent PK values are generated and non-null before timeline enforcement",
+                )
+            )
+        lookup[_fk_lookup_identity(key_raw)] = row
+    return lookup
+
+
+def _enforce_table_timeline_constraints(
+    table: TableSpec,
+    rows: list[dict[str, object]],
+    *,
+    results: dict[str, list[dict[str, object]]],
+    compiled_constraints: dict[str, list[dict[str, object]]],
+) -> None:
+    if not rows:
+        return
+    rules = compiled_constraints.get(table.table_name, [])
+    if not rules:
+        return
+
+    parent_lookup_cache: dict[tuple[str, str], dict[tuple[str, object], dict[str, object]]] = {}
+
+    for rule in rules:
+        child_column = str(rule.get("child_column"))
+        dtype = str(rule.get("dtype"))
+        rule_id = str(rule.get("rule_id"))
+        references = rule.get("references")
+        if dtype not in {"date", "datetime"} or not isinstance(references, list) or not references:
+            continue
+
+        for row_index, row in enumerate(rows, start=1):
+            row_location = f"Table '{table.table_name}', row {row_index}, column '{child_column}'"
+
+            lower_bound: object | None = None
+            upper_bound: object | None = None
+
+            for raw_reference in references:
+                if not isinstance(raw_reference, dict):
+                    continue
+                parent_table = str(raw_reference.get("parent_table"))
+                parent_column = str(raw_reference.get("parent_column"))
+                parent_pk_column = str(raw_reference.get("parent_pk_column"))
+                via_child_fk = str(raw_reference.get("via_child_fk"))
+                direction = str(raw_reference.get("direction")).lower()
+                min_offset = int(raw_reference.get("min_offset", 0))
+                max_offset = int(raw_reference.get("max_offset", min_offset))
+
+                parent_rows = results.get(parent_table)
+                if parent_rows is None:
+                    raise ValueError(
+                        _runtime_error(
+                            row_location,
+                            f"parent table '{parent_table}' rows are unavailable for DG03 timeline enforcement",
+                            "ensure parent tables are generated before constrained child tables",
+                        )
+                    )
+
+                cache_key = (parent_table, parent_pk_column)
+                if cache_key not in parent_lookup_cache:
+                    parent_lookup_cache[cache_key] = _build_parent_lookup(
+                        parent_rows,
+                        parent_table=parent_table,
+                        parent_pk_column=parent_pk_column,
+                    )
+                parent_lookup = parent_lookup_cache[cache_key]
+
+                fk_value_raw = row.get(via_child_fk)
+                if fk_value_raw is None:
+                    raise ValueError(
+                        _runtime_error(
+                            row_location,
+                            f"child FK '{via_child_fk}' is null and cannot resolve parent '{parent_table}'",
+                            "ensure FK assignment occurs before DG03 timeline enforcement",
+                        )
+                    )
+                parent_row = parent_lookup.get(_fk_lookup_identity(fk_value_raw))
+                if parent_row is None:
+                    raise ValueError(
+                        _runtime_error(
+                            row_location,
+                            (
+                                f"could not resolve parent row in '{parent_table}' via "
+                                f"child FK '{via_child_fk}' value '{fk_value_raw}'"
+                            ),
+                            "ensure FK values map to existing parent keys before DG03 timeline enforcement",
+                        )
+                    )
+
+                parent_value_raw = parent_row.get(parent_column)
+                if dtype == "date":
+                    try:
+                        parent_value = _parse_iso_date_value(parent_value_raw)
+                    except Exception as exc:
+                        raise ValueError(
+                            _runtime_error(
+                                row_location,
+                                (
+                                    f"parent value '{parent_table}.{parent_column}' is not a valid ISO date "
+                                    f"(value={parent_value_raw!r})"
+                                ),
+                                "fix parent temporal values to valid 'YYYY-MM-DD' dates",
+                            )
+                        ) from exc
+                    if direction == "after":
+                        reference_lower = parent_value + timedelta(days=min_offset)
+                        reference_upper = parent_value + timedelta(days=max_offset)
+                    else:
+                        reference_lower = parent_value - timedelta(days=max_offset)
+                        reference_upper = parent_value - timedelta(days=min_offset)
+                else:
+                    try:
+                        parent_value = _parse_iso_datetime_value(parent_value_raw)
+                    except Exception as exc:
+                        raise ValueError(
+                            _runtime_error(
+                                row_location,
+                                (
+                                    f"parent value '{parent_table}.{parent_column}' is not a valid ISO datetime "
+                                    f"(value={parent_value_raw!r})"
+                                ),
+                                "fix parent temporal values to valid ISO datetimes with UTC-compatible timezone",
+                            )
+                        ) from exc
+                    if direction == "after":
+                        reference_lower = parent_value + timedelta(seconds=min_offset)
+                        reference_upper = parent_value + timedelta(seconds=max_offset)
+                    else:
+                        reference_lower = parent_value - timedelta(seconds=max_offset)
+                        reference_upper = parent_value - timedelta(seconds=min_offset)
+
+                if lower_bound is None or reference_lower > lower_bound:
+                    lower_bound = reference_lower
+                if upper_bound is None or reference_upper < upper_bound:
+                    upper_bound = reference_upper
+
+            if lower_bound is None or upper_bound is None:
+                continue
+            if lower_bound > upper_bound:
+                raise ValueError(
+                    _runtime_error(
+                        row_location,
+                        f"timeline interval intersection is empty for DG03 rule '{rule_id}'",
+                        "adjust DG03 direction/min/max offsets so parent-derived intervals overlap",
+                    )
+                )
+
+            child_value_raw = row.get(child_column)
+            child_value = _parse_child_temporal_or_none(child_value_raw, dtype=dtype)
+
+            if child_value is not None and lower_bound <= child_value <= upper_bound:
+                continue
+
+            if child_value is None or child_value < lower_bound:
+                replacement = lower_bound
+            elif child_value > upper_bound:
+                replacement = upper_bound
+            else:
+                replacement = lower_bound
+
+            if dtype == "date":
+                row[child_column] = _iso_date(replacement)
+            else:
+                row[child_column] = _iso_datetime(replacement)
 
 def _maybe_null(col, ctx: GenContext) -> bool:
     # PKs cannot be null
@@ -75,6 +421,157 @@ def _apply_numeric_post(col, v: object) -> object:
 
     return x
 
+
+def _categorical_order_lookup(order_values: object) -> dict[object, int]:
+    if not isinstance(order_values, list):
+        return {}
+    lookup: dict[object, int] = {}
+    for idx, value in enumerate(order_values):
+        if value not in lookup:
+            lookup[value] = idx
+        text_key = str(value)
+        if text_key not in lookup:
+            lookup[text_key] = idx
+    return lookup
+
+
+def _correlation_sort_key(value: object, *, categorical_order: dict[object, int]) -> tuple[int, float, str]:
+    if value is None:
+        return (0, 0.0, "")
+
+    try:
+        if value in categorical_order:
+            return (1, float(categorical_order[value]), "")
+    except TypeError:
+        pass
+    text_value = str(value)
+    if text_value in categorical_order:
+        return (1, float(categorical_order[text_value]), "")
+
+    if isinstance(value, bool):
+        return (2, 1.0 if value else 0.0, "")
+    if isinstance(value, (int, float)):
+        return (2, float(value), "")
+    return (3, 0.0, text_value)
+
+
+def _apply_table_correlation_groups(
+    table: TableSpec,
+    rows: list[dict[str, object]],
+    *,
+    project_seed: int,
+) -> None:
+    groups = table.correlation_groups
+    if not rows or not groups:
+        return
+    if not isinstance(groups, list):
+        return
+
+    for group_index, raw_group in enumerate(groups):
+        if not isinstance(raw_group, dict):
+            continue
+        columns_raw = raw_group.get("columns")
+        matrix_raw = raw_group.get("rank_correlation")
+        if not isinstance(columns_raw, list) or not isinstance(matrix_raw, list):
+            continue
+        columns = [name.strip() for name in columns_raw if isinstance(name, str) and name.strip() != ""]
+        if len(columns) < 2:
+            continue
+        size = len(columns)
+        if len(matrix_raw) != size:
+            continue
+
+        matrix: list[list[float]] = []
+        matrix_valid = True
+        for row_raw in matrix_raw:
+            if not isinstance(row_raw, list) or len(row_raw) != size:
+                matrix_valid = False
+                break
+            try:
+                matrix.append([float(value) for value in row_raw])
+            except (TypeError, ValueError):
+                matrix_valid = False
+                break
+        if not matrix_valid:
+            continue
+
+        try:
+            lower = correlation_cholesky_lower(matrix)
+        except ValueError:
+            continue
+
+        try:
+            strength = float(raw_group.get("strength", 1.0))
+        except (TypeError, ValueError):
+            strength = 1.0
+        if strength <= 0.0:
+            continue
+        if strength > 1.0:
+            strength = 1.0
+
+        categorical_orders_raw = raw_group.get("categorical_orders")
+        categorical_orders: dict[str, dict[object, int]] = {}
+        if isinstance(categorical_orders_raw, dict):
+            for key, value in categorical_orders_raw.items():
+                if isinstance(key, str):
+                    categorical_orders[key.strip()] = _categorical_order_lookup(value)
+
+        eligible_indices = [
+            idx
+            for idx, row in enumerate(rows)
+            if all(row.get(column_name) is not None for column_name in columns)
+        ]
+        if len(eligible_indices) < 2:
+            continue
+
+        sorted_values_by_column: dict[str, list[object]] = {}
+        for column_name in columns:
+            order_lookup = categorical_orders.get(column_name, {})
+            ordered_row_indices = sorted(
+                eligible_indices,
+                key=lambda row_idx: (
+                    _correlation_sort_key(rows[row_idx].get(column_name), categorical_order=order_lookup),
+                    row_idx,
+                ),
+            )
+            sorted_values_by_column[column_name] = [rows[row_idx].get(column_name) for row_idx in ordered_row_indices]
+
+        group_id_raw = raw_group.get("group_id")
+        if isinstance(group_id_raw, str) and group_id_raw.strip() != "":
+            group_id = group_id_raw.strip()
+        else:
+            group_id = f"group_{group_index + 1}"
+        group_rng = random.Random(_stable_subseed(project_seed, f"corr:{table.table_name}:{group_id}"))
+
+        eligible_count = len(eligible_indices)
+        scores: list[list[float]] = [[0.0 for _ in range(size)] for _ in range(eligible_count)]
+        for local_idx in range(eligible_count):
+            base_draw = [group_rng.gauss(0.0, 1.0) for _ in range(size)]
+            correlated = [0.0 for _ in range(size)]
+            for row_idx in range(size):
+                total = 0.0
+                for col_idx in range(row_idx + 1):
+                    total += lower[row_idx][col_idx] * base_draw[col_idx]
+                correlated[row_idx] = total
+            if strength < 1.0:
+                noise = [group_rng.gauss(0.0, 1.0) for _ in range(size)]
+                for score_idx in range(size):
+                    correlated[score_idx] = (strength * correlated[score_idx]) + (
+                        (1.0 - strength) * noise[score_idx]
+                    )
+            scores[local_idx] = correlated
+
+        for col_idx, column_name in enumerate(columns):
+            ranked_local_indices = sorted(
+                range(eligible_count),
+                key=lambda local_idx: (scores[local_idx][col_idx], local_idx),
+            )
+            sorted_values = sorted_values_by_column.get(column_name, [])
+            if len(sorted_values) != eligible_count:
+                continue
+            for rank_idx, local_idx in enumerate(ranked_local_indices):
+                row_idx = eligible_indices[local_idx]
+                rows[row_idx][column_name] = sorted_values[rank_idx]
 
 
 def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: str, row: dict[str, object]) -> object:
@@ -454,6 +951,115 @@ def _mutate_scd_tracked_value(
                     out_idx = min(out_idx + int(step), len(seq_match) - 1)
                 return seq_match[out_idx]
 
+    if col.generator == "state_transition":
+        params = col.params if isinstance(col.params, dict) else {}
+        states_raw = params.get("states")
+        transitions_raw = params.get("transitions")
+        if not isinstance(states_raw, list) or len(states_raw) == 0:
+            return value
+        if not isinstance(transitions_raw, dict) or len(transitions_raw) == 0:
+            return value
+
+        state_kind: str | None = None
+        states: list[object] = []
+        for raw_state in states_raw:
+            if isinstance(raw_state, bool) or isinstance(raw_state, (dict, list)):
+                return value
+            if isinstance(raw_state, int):
+                kind = "int"
+                normalized_state: object = int(raw_state)
+            elif isinstance(raw_state, str):
+                if raw_state.strip() == "":
+                    return value
+                kind = "text"
+                normalized_state = raw_state
+            else:
+                return value
+            if state_kind is None:
+                state_kind = kind
+            elif state_kind != kind:
+                return value
+            states.append(normalized_state)
+        if state_kind is None:
+            return value
+
+        state_set = set(states)
+
+        def _coerce_state(
+            raw_state: object,
+            *,
+            allow_int_string: bool,
+        ) -> object | None:
+            if state_kind == "int":
+                if isinstance(raw_state, bool):
+                    return None
+                if isinstance(raw_state, int):
+                    normalized = int(raw_state)
+                elif allow_int_string and isinstance(raw_state, str) and raw_state.strip() != "":
+                    try:
+                        normalized = int(raw_state.strip())
+                    except (TypeError, ValueError):
+                        return None
+                else:
+                    return None
+            else:
+                if not isinstance(raw_state, str):
+                    return None
+                normalized = raw_state
+            if normalized not in state_set:
+                return None
+            return normalized
+
+        terminal_raw = params.get("terminal_states", [])
+        terminal_states: set[object] = set()
+        if isinstance(terminal_raw, list):
+            for raw_terminal in terminal_raw:
+                normalized_terminal = _coerce_state(raw_terminal, allow_int_string=False)
+                if normalized_terminal is not None:
+                    terminal_states.add(normalized_terminal)
+
+        transitions: dict[object, tuple[list[object], list[float]]] = {}
+        for raw_from, raw_targets in transitions_raw.items():
+            from_state = _coerce_state(raw_from, allow_int_string=True)
+            if from_state is None or not isinstance(raw_targets, dict) or len(raw_targets) == 0:
+                continue
+            targets: list[object] = []
+            weights: list[float] = []
+            for raw_to, raw_weight in raw_targets.items():
+                to_state = _coerce_state(raw_to, allow_int_string=True)
+                if to_state is None or to_state == from_state:
+                    continue
+                try:
+                    weight = float(raw_weight)
+                except (TypeError, ValueError):
+                    continue
+                if weight < 0:
+                    continue
+                targets.append(to_state)
+                weights.append(weight)
+            if targets and any(weight > 0 for weight in weights):
+                transitions[from_state] = (targets, weights)
+
+        current_state = _coerce_state(value, allow_int_string=(state_kind == "int"))
+        if current_state is None:
+            start_state_raw = params.get("start_state")
+            current_state = _coerce_state(start_state_raw, allow_int_string=False)
+        if current_state is None:
+            current_state = states[0]
+
+        steps = max(1, version_idx)
+        for _ in range(steps):
+            if current_state in terminal_states:
+                continue
+            transition = transitions.get(current_state)
+            if transition is None:
+                continue
+            targets, weights = transition
+            if not any(weight > 0 for weight in weights):
+                continue
+            current_state = rng.choices(targets, weights=weights, k=1)[0]
+        return current_state
+
     if col.dtype == "int":
         try:
             if isinstance(value, bool):
@@ -725,6 +1331,7 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
     """
     reset_runtime_generator_state()
     validate_project(project)
+    compiled_timeline_constraints = _compile_timeline_constraints(project)
 
     table_map: dict[str, TableSpec] = {t.table_name: t for t in project.tables}
     
@@ -828,7 +1435,14 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
                 rows.append(row)
 
+            _apply_table_correlation_groups(t, rows, project_seed=project.seed)
             rows = _apply_business_key_and_scd(t, rows, rng, incoming_fks=incoming_fks)
+            _enforce_table_timeline_constraints(
+                t,
+                rows,
+                results=results,
+                compiled_constraints=compiled_timeline_constraints,
+            )
 
             # Defensive: ensure PK exists
             for r in rows:
@@ -875,7 +1489,14 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                     rows.append(row)
                     next_pk += 1
 
+            _apply_table_correlation_groups(t, rows, project_seed=project.seed)
             rows = _apply_business_key_and_scd(t, rows, rng, incoming_fks=incoming_fks)
+            _enforce_table_timeline_constraints(
+                t,
+                rows,
+                results=results,
+                compiled_constraints=compiled_timeline_constraints,
+            )
             results[table_name] = rows
             pk_values[table_name] = [int(r[pk_col]) for r in rows]
             logger.info(
@@ -964,7 +1585,14 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 parent_table=fk.parent_table,
             )
 
+        _apply_table_correlation_groups(t, rows, project_seed=project.seed)
         rows = _apply_business_key_and_scd(t, rows, rng, incoming_fks=incoming_fks)
+        _enforce_table_timeline_constraints(
+            t,
+            rows,
+            results=results,
+            compiled_constraints=compiled_timeline_constraints,
+        )
         results[table_name] = rows
         pk_values[table_name] = [int(r[pk_col]) for r in rows]
 

@@ -1,0 +1,300 @@
+{
+  "name": "travel_loyalty_marketing",
+  "seed": 20260325,
+  "tables": [
+    {
+      "table_name": "members_snapshot",
+      "row_count": 120,
+      "columns": [
+        {
+          "name": "member_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "member_code",
+          "dtype": "text",
+          "nullable": false
+        },
+        {
+          "name": "signup_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2018-01-01",
+            "end": "2026-12-31"
+          }
+        },
+        {
+          "name": "tier",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "ordered_choice",
+          "params": {
+            "orders": {
+              "core": [
+                "bronze",
+                "silver",
+                "gold",
+                "platinum"
+              ],
+              "promo": [
+                "silver",
+                "gold",
+                "platinum",
+                "platinum"
+              ]
+            },
+            "order_weights": {
+              "core": 0.78,
+              "promo": 0.22
+            },
+            "move_weights": [
+              0.18,
+              0.64,
+              0.18
+            ],
+            "start_index": 0
+          }
+        },
+        {
+          "name": "preferred_channel",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "email",
+              "sms",
+              "push",
+              "agent"
+            ],
+            "weights": [
+              0.4,
+              0.2,
+              0.25,
+              0.15
+            ]
+          }
+        },
+        {
+          "name": "annual_spend",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "money",
+          "params": {
+            "min": 100.0,
+            "max": 25000.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "satisfaction_score",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "normal",
+          "params": {
+            "mean": 74.0,
+            "stdev": 12.0,
+            "decimals": 2,
+            "clamp_min": 0.0,
+            "clamp_max": 100.0
+          }
+        },
+        {
+          "name": "expected_churn",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "percent",
+          "params": {
+            "min": 0.5,
+            "max": 35.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "profile_token",
+          "dtype": "bytes",
+          "nullable": false,
+          "params": {
+            "min_length": 12,
+            "max_length": 24
+          }
+        }
+      ],
+      "business_key": [
+        "member_code"
+      ],
+      "business_key_unique_count": 50
+    },
+    {
+      "table_name": "trips",
+      "columns": [
+        {
+          "name": "trip_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "member_sk",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "depart_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2023-01-01",
+            "end": "2026-12-31"
+          }
+        },
+        {
+          "name": "return_date",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "time_offset",
+          "params": {
+            "base_column": "depart_date",
+            "direction": "after",
+            "min_days": 1,
+            "max_days": 21
+          },
+          "depends_on": [
+            "depart_date"
+          ]
+        },
+        {
+          "name": "depart_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "arrival_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "time_offset",
+          "params": {
+            "base_column": "depart_ts",
+            "direction": "after",
+            "min_seconds": 3600,
+            "max_seconds": 900000
+          },
+          "depends_on": [
+            "depart_ts"
+          ]
+        },
+        {
+          "name": "origin_city",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 0
+          }
+        },
+        {
+          "name": "origin_country",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 1,
+            "match_column": "origin_city",
+            "match_column_index": 0
+          },
+          "depends_on": [
+            "origin_city"
+          ]
+        },
+        {
+          "name": "booking_value",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "lognormal",
+          "params": {
+            "median": 640.0,
+            "sigma": 0.55,
+            "decimals": 2,
+            "min": 40.0,
+            "max": 12000.0
+          }
+        },
+        {
+          "name": "ancillary_spend",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 0.0,
+            "max": 400.0,
+            "decimals": 2,
+            "outlier_rate": 0.015,
+            "outlier_scale": 7.5,
+            "clamp_min": 0.0,
+            "clamp_max": 2500.0
+          }
+        },
+        {
+          "name": "trip_lat",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "latitude",
+          "params": {
+            "min": -55.0,
+            "max": 72.0,
+            "decimals": 6
+          }
+        },
+        {
+          "name": "trip_lon",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "longitude",
+          "params": {
+            "min": -170.0,
+            "max": 170.0,
+            "decimals": 6
+          }
+        },
+        {
+          "name": "travel_protection",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "booking_value",
+            "operator": "!=",
+            "value": 0,
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "booking_value"
+          ]
+        }
+      ]
+    }
+  ],
+  "foreign_keys": [
+    {
+      "child_table": "trips",
+      "child_column": "member_sk",
+      "parent_table": "members_snapshot",
+      "parent_column": "member_sk",
+      "min_children": 1,
+      "max_children": 6
+    }
+  ]
+}

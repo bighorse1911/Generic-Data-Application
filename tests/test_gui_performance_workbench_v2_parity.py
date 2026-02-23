@@ -9,6 +9,11 @@ from src.gui_home import App
 from src.gui_route_policy import PERFORMANCE_V2_ROUTE
 from src.performance_scaling import ChunkPlanEntry
 
+# Coverage handoff (de-duplication):
+# - Removed duplicate route-alias subtests that exercised the same route key twice.
+# - Route registration and v2 navigation ownership remains in:
+#   tests/test_invariants.py::test_gui_navigation_contract_v2_only.
+
 
 class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
     def setUp(self) -> None:
@@ -23,9 +28,6 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
     def tearDown(self) -> None:
         if hasattr(self, "root") and self.root.winfo_exists():
             self.root.destroy()
-
-    def _routes(self) -> tuple[str, str]:
-        return ("performance_workbench_v2", PERFORMANCE_V2_ROUTE)
 
     def test_estimate_and_plan_paths_use_bulk_surface_setters(self) -> None:
         estimate_payload = SimpleNamespace(
@@ -59,24 +61,22 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
             )
         ]
 
-        for route in self._routes():
-            with self.subTest(route=route):
-                screen = self.app.screens[route]
-                screen.project = object()
+        screen = self.app.screens[PERFORMANCE_V2_ROUTE]
+        screen.project = object()
 
-                with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_performance_workbench_base.run_shared_estimate",
-                    return_value=estimate_payload,
-                ), mock.patch.object(screen.surface, "set_diagnostics_rows") as set_diagnostics:
-                    screen._estimate_workload()
-                    set_diagnostics.assert_called_once()
+        with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
+            "src.gui_performance_workbench_base.run_shared_estimate",
+            return_value=estimate_payload,
+        ), mock.patch.object(screen.surface, "set_diagnostics_rows") as set_diagnostics:
+            screen._estimate_workload()
+            set_diagnostics.assert_called_once()
 
-                with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_performance_workbench_base.run_build_chunk_plan",
-                    return_value=plan_payload,
-                ), mock.patch.object(screen.surface, "set_plan_rows") as set_plan:
-                    screen._build_chunk_plan()
-                    set_plan.assert_called_once()
+        with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
+            "src.gui_performance_workbench_base.run_build_chunk_plan",
+            return_value=plan_payload,
+        ), mock.patch.object(screen.surface, "set_plan_rows") as set_plan:
+            screen._build_chunk_plan()
+            set_plan.assert_called_once()
 
     def test_benchmark_and_generate_paths_use_lifecycle_callbacks(self) -> None:
         benchmark_result = SimpleNamespace(
@@ -120,64 +120,60 @@ class TestGuiPerformanceWorkbenchV2Parity(unittest.TestCase):
             kwargs["on_done"](generate_result)
             return True
 
-        for route in self._routes():
-            with self.subTest(route=route):
-                screen = self.app.screens[route]
-                screen.project = object()
+        screen = self.app.screens[PERFORMANCE_V2_ROUTE]
+        screen.project = object()
 
-                with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch.object(
-                    screen.lifecycle,
-                    "run_async",
-                    side_effect=_run_async_benchmark,
-                ), mock.patch.object(screen.surface, "set_diagnostics_rows") as set_diag, mock.patch.object(
-                    screen.surface,
-                    "set_plan_rows",
-                ) as set_plan:
-                    screen._start_run_benchmark()
-                    set_diag.assert_called_once()
-                    set_plan.assert_called_once()
+        with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch.object(
+            screen.lifecycle,
+            "run_async",
+            side_effect=_run_async_benchmark,
+        ), mock.patch.object(screen.surface, "set_diagnostics_rows") as set_diag, mock.patch.object(
+            screen.surface,
+            "set_plan_rows",
+        ) as set_plan:
+            screen._start_run_benchmark()
+            set_diag.assert_called_once()
+            set_plan.assert_called_once()
 
-                with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
-                    "src.gui_performance_workbench_base.build_profile_from_model",
-                    return_value=SimpleNamespace(output_mode="preview"),
-                ), mock.patch.object(
-                    screen.lifecycle,
-                    "run_async",
-                    side_effect=_run_async_generate,
-                ):
-                    screen._start_generate_with_strategy()
-                    self.assertFalse(screen.lifecycle.state.is_running)
-                    self.assertIn("Generation complete", screen.surface.status_var.get())
+        with mock.patch.object(screen, "_ensure_project", return_value=True), mock.patch(
+            "src.gui_performance_workbench_base.build_profile_from_model",
+            return_value=SimpleNamespace(output_mode="preview"),
+        ), mock.patch.object(
+            screen.lifecycle,
+            "run_async",
+            side_effect=_run_async_generate,
+        ):
+            screen._start_generate_with_strategy()
+            self.assertFalse(screen.lifecycle.state.is_running)
+            self.assertIn("Generation complete", screen.surface.status_var.get())
 
     def test_cancel_and_profile_save_load_paths(self) -> None:
-        for route in self._routes():
-            with self.subTest(route=route):
-                screen = self.app.screens[route]
-                screen.lifecycle.set_running(True, "Running")
-                screen._cancel_run()
-                self.assertTrue(screen.lifecycle.state.cancel_requested)
-                screen.lifecycle.set_running(False, "Idle")
+        screen = self.app.screens[PERFORMANCE_V2_ROUTE]
+        screen.lifecycle.set_running(True, "Running")
+        screen._cancel_run()
+        self.assertTrue(screen.lifecycle.state.cancel_requested)
+        screen.lifecycle.set_running(False, "Idle")
 
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    profile_path = f"{tmp_dir}/profile.json"
-                    with mock.patch("src.gui_performance_workbench_base.build_profile_from_model", return_value=SimpleNamespace(output_mode="preview")), mock.patch(
-                        "src.gui_performance_workbench_base.performance_profile_payload",
-                        return_value={"output_mode": "preview"},
-                    ), mock.patch(
-                        "src.gui_performance_workbench_base.filedialog.asksaveasfilename",
-                        return_value=profile_path,
-                    ):
-                        screen._save_profile()
-                    self.assertTrue(screen.surface.status_var.get().startswith("Saved performance profile"))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            profile_path = f"{tmp_dir}/profile.json"
+            with mock.patch("src.gui_performance_workbench_base.build_profile_from_model", return_value=SimpleNamespace(output_mode="preview")), mock.patch(
+                "src.gui_performance_workbench_base.performance_profile_payload",
+                return_value={"output_mode": "preview"},
+            ), mock.patch(
+                "src.gui_performance_workbench_base.filedialog.asksaveasfilename",
+                return_value=profile_path,
+            ):
+                screen._save_profile()
+            self.assertTrue(screen.surface.status_var.get().startswith("Saved performance profile"))
 
-                    with mock.patch("src.gui_performance_workbench_base.filedialog.askopenfilename", return_value=profile_path), mock.patch(
-                        "src.gui_performance_workbench_base.apply_performance_profile_payload",
-                    ), mock.patch(
-                        "src.gui_performance_workbench_base.build_profile_from_model",
-                        return_value=SimpleNamespace(output_mode="preview"),
-                    ):
-                        screen._load_profile()
-                    self.assertTrue(screen.surface.status_var.get().startswith("Loaded performance profile"))
+            with mock.patch("src.gui_performance_workbench_base.filedialog.askopenfilename", return_value=profile_path), mock.patch(
+                "src.gui_performance_workbench_base.apply_performance_profile_payload",
+            ), mock.patch(
+                "src.gui_performance_workbench_base.build_profile_from_model",
+                return_value=SimpleNamespace(output_mode="preview"),
+            ):
+                screen._load_profile()
+            self.assertTrue(screen.surface.status_var.get().startswith("Loaded performance profile"))
 
 
 if __name__ == "__main__":

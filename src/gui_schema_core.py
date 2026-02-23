@@ -1,4 +1,5 @@
 from email import header
+from collections.abc import Callable
 import json
 import logging
 import tkinter as tk
@@ -18,6 +19,8 @@ from src.gui_kit.column_chooser import ColumnChooserDialog
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
 from src.gui_kit.error_surface import show_warning_dialog
+from src.gui_kit.feedback import ToastCenter
+from src.gui_kit.json_editor import JsonEditorDialog
 from src.gui_kit.scroll import wheel_units_from_delta
 from src.gui_kit.table import TableView
 from src.gui_kit.table_keyboard import install_treeview_keyboard_support
@@ -47,6 +50,7 @@ GENERATORS = [
     "lognormal",
     "choice_weighted",
     "ordered_choice",
+    "state_transition",
     "date",
     "timestamp_utc",
     "latitude",
@@ -65,6 +69,7 @@ GENERATOR_VALID_DTYPES: dict[str, set[str]] = {
     "lognormal": {"int", "decimal"},
     "choice_weighted": {"int", "text"},
     "ordered_choice": {"int", "text"},
+    "state_transition": {"text", "int"},
     "date": {"date"},
     "timestamp_utc": {"datetime"},
     "latitude": {"decimal"},
@@ -146,6 +151,26 @@ def default_generator_params_template(generator: str, dtype: str) -> dict[str, o
             "order_weights": {"A": 0.7, "B": 0.3},
             "move_weights": [0.1, 0.8, 0.1],
             "start_index": 0,
+        }
+    if key == "state_transition":
+        if selected_dtype == "int":
+            return {
+                "entity_column": "entity_id",
+                "states": [0, 1, 2],
+                "start_state": 0,
+                "transitions": {"0": {"1": 1.0}, "1": {"2": 1.0}},
+                "terminal_states": [2],
+                "dwell_min": 1,
+                "dwell_max": 1,
+            }
+        return {
+            "entity_column": "entity_id",
+            "states": ["new", "active", "closed"],
+            "start_state": "new",
+            "transitions": {"new": {"active": 1.0}, "active": {"closed": 1.0}},
+            "terminal_states": ["closed"],
+            "dwell_min": 1,
+            "dwell_max": 1,
         }
     if key == "date":
         return {"start": "2020-01-01", "end": "2026-12-31"}
@@ -423,8 +448,14 @@ class ValidationHeatmap(ttk.Frame):
     - cell color: ok/warn/error
     - click cell: show details
     """
-    def __init__(self, parent: tk.Widget) -> None:
+    def __init__(
+        self,
+        parent: tk.Widget,
+        *,
+        on_info: Callable[[str, str], None] | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._on_info = on_info
 
         self.canvas = tk.Canvas(self, height=220, highlightthickness=0)
         self.h = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
@@ -537,9 +568,25 @@ class ValidationHeatmap(ttk.Frame):
         ti, ci = hit
         msgs = self._cell_details.get((ti, ci), [])
         if not msgs:
-            messagebox.showinfo("Validation", "No issues.")
+            self._emit_info("Validation", "No issues.")
             return
-        messagebox.showinfo("Validation details", "\n".join(msgs))
+        self._emit_info("Validation details", "\n".join(msgs))
+
+    def _emit_info(self, title: str, message: str) -> None:
+        if callable(self._on_info):
+            self._on_info(title, message)
+            return
+        top = tk.Toplevel(self)
+        top.title(title)
+        top.transient(self.winfo_toplevel())
+        top.geometry("520x260")
+        frame = ttk.Frame(top, padding=12)
+        frame.pack(fill="both", expand=True)
+        text = tk.Text(frame, wrap="word", height=10)
+        text.pack(fill="both", expand=True)
+        text.insert("1.0", message)
+        text.configure(state="disabled")
+        ttk.Button(frame, text="Close", command=top.destroy).pack(anchor="e", pady=(10, 0))
 
 
 # ---------------- The actual screen ----------------
@@ -568,7 +615,13 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
 
         # In-memory project
-        self.project = SchemaProject(name="my_project", seed=cfg.seed, tables=[], foreign_keys=[])
+        self.project = SchemaProject(
+            name="my_project",
+            seed=cfg.seed,
+            tables=[],
+            foreign_keys=[],
+            timeline_constraints=None,
+        )
 
         # Selection state
         self.selected_table_index: int | None = None
@@ -576,6 +629,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         # Project-level vars
         self.project_name_var = tk.StringVar(value=self.project.name)
         self.seed_var = tk.StringVar(value=str(self.project.seed))
+        self.project_timeline_constraints_var = tk.StringVar(
+            value=json.dumps(self.project.timeline_constraints, sort_keys=True) if self.project.timeline_constraints else ""
+        )
         self.status_var = tk.StringVar(value="Ready.")
         self.error_surface = ErrorSurface(
             context=self.ERROR_SURFACE_CONTEXT,
@@ -585,6 +641,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             show_warning=show_warning_dialog,
             set_status=self.status_var.set,
         )
+        self.toast_center = ToastCenter(self)
 
         # Table editor vars
         self.table_name_var = tk.StringVar(value="")
@@ -597,6 +654,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_scd_tracked_columns_var = tk.StringVar(value="")
         self.table_scd_active_from_var = tk.StringVar(value="")
         self.table_scd_active_to_var = tk.StringVar(value="")
+        self.table_correlation_groups_var = tk.StringVar(value="")
 
         # Column form vars
         self.col_name_var = tk.StringVar(value="")
@@ -655,6 +713,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_generator_var.trace_add("write", self._on_column_generator_changed)
         self.project_name_var.trace_add("write", self._on_project_meta_changed)
         self.seed_var.trace_add("write", self._on_project_meta_changed)
+        self.project_timeline_constraints_var.trace_add("write", self._on_project_meta_changed)
         self._refresh_generator_options_for_dtype()
         self._sync_pattern_preset_from_pattern()
         self._refresh_tables_list()
@@ -681,6 +740,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         ttk.Button(header, text="<- Back", command=self._on_back_requested).pack(side="left")
         ttk.Label(header, text="Schema Project Designer", font=("Segoe UI", 16, "bold")).pack(side="left", padx=12)
         ttk.Label(header, textvariable=self._dirty_indicator_var).pack(side="left")
+        ttk.Button(header, text="Notifications", command=self._show_notifications_history).pack(side="right", padx=(6, 0))
         ttk.Button(header, text="Zoom +", command=self.scroll.zoom_in).pack(side="top", padx=0)
         ttk.Button(header, text="Zoom −", command=self.scroll.zoom_out).pack(side="top", padx=0)
         ttk.Button(header, text="Reset", command=self.scroll.reset_zoom).pack(side="top", padx=0)
@@ -700,8 +760,41 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         ttk.Label(proj, text="Seed:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
         ttk.Entry(proj, textvariable=self.seed_var, width=12).grid(row=0, column=3, sticky="w", padx=6, pady=6)
 
+        ttk.Label(proj, text="Timeline constraints JSON (optional):").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=6,
+            pady=6,
+        )
+        self.project_timeline_constraints_entry = ttk.Entry(
+            proj,
+            textvariable=self.project_timeline_constraints_var,
+        )
+        self.project_timeline_constraints_entry.grid(
+            row=1,
+            column=1,
+            columnspan=3,
+            sticky="ew",
+            padx=6,
+            pady=6,
+        )
+        self.project_timeline_constraints_editor_btn = ttk.Button(
+            proj,
+            text="Open timeline constraints JSON editor",
+            command=self._open_project_timeline_constraints_editor,
+        )
+        self.project_timeline_constraints_editor_btn.grid(
+            row=2,
+            column=0,
+            columnspan=4,
+            sticky="ew",
+            padx=6,
+            pady=(0, 6),
+        )
+
         btns = ttk.Frame(proj)
-        btns.grid(row=1, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
+        btns.grid(row=3, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
         btns.columnconfigure(0, weight=1)
         btns.columnconfigure(1, weight=1)
 
@@ -728,7 +821,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.validation_summary_var = tk.StringVar(value="No validation run yet.")
         ttk.Label(top, textvariable=self.validation_summary_var).pack(side="left", padx=10)
 
-        self.heatmap = ValidationHeatmap(validation_panel)
+        self.heatmap = ValidationHeatmap(validation_panel, on_info=self._on_validation_heatmap_info)
         self.heatmap.pack(fill="both", expand=True, pady=(8, 0))
         self.inline_validation = InlineValidationSummary(
             validation_panel,
@@ -830,8 +923,19 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_scd_active_to_entry = ttk.Entry(props, textvariable=self.table_scd_active_to_var)
         self.table_scd_active_to_entry.grid(row=9, column=1, sticky="ew", padx=6, pady=6)
 
+        ttk.Label(props, text="Correlation groups JSON (optional):").grid(row=10, column=0, sticky="w", padx=6, pady=6)
+        self.table_correlation_groups_entry = ttk.Entry(props, textvariable=self.table_correlation_groups_var)
+        self.table_correlation_groups_entry.grid(row=10, column=1, sticky="ew", padx=6, pady=6)
+
+        self.table_correlation_groups_editor_btn = ttk.Button(
+            props,
+            text="Open correlation groups JSON editor",
+            command=self._open_table_correlation_groups_editor,
+        )
+        self.table_correlation_groups_editor_btn.grid(row=11, column=0, columnspan=2, sticky="ew", padx=6, pady=(0, 6))
+
         self.apply_table_btn = ttk.Button(props, text="Apply table changes", command=self._apply_table_changes)
-        self.apply_table_btn.grid(row=10, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
+        self.apply_table_btn.grid(row=12, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
 
         # Column editor (grid inside col)
         col = ttk.LabelFrame(right, text="Add column", padding=10)
@@ -1356,12 +1460,29 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         )
 
     def _show_warning_dialog(self, location: str, message: object) -> str:
-        return self.error_surface.emit_warning_actionable(
+        warning_message = self.error_surface.emit_warning_actionable(
             message,
             location=(str(location).strip() or "Schema project"),
             hint="review the inputs and retry",
-            mode="mixed",
+            mode="status",
         )
+        self._notify(warning_message, level="warn", duration_ms=3200)
+        return warning_message
+
+    def _notify(self, message: str, *, level: str = "info", duration_ms: int | None = None) -> None:
+        text = str(message).strip()
+        if text == "":
+            return
+        self.status_var.set(text)
+        if hasattr(self, "toast_center"):
+            self.toast_center.notify(text, level=level, duration_ms=duration_ms)
+
+    def _show_notifications_history(self) -> None:
+        if hasattr(self, "toast_center"):
+            self.toast_center.show_history_dialog(title="Schema Project Notifications")
+
+    def _on_validation_heatmap_info(self, title: str, message: str) -> None:
+        self._notify(f"{title}: {message}", level="info", duration_ms=5200)
 
     # ---------------- Helpers ----------------
     def _set_table_editor_enabled(self, enabled: bool) -> None:
@@ -1377,6 +1498,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_scd_tracked_entry.configure(state=state)
         self.table_scd_active_from_entry.configure(state=state)
         self.table_scd_active_to_entry.configure(state=state)
+        self.table_correlation_groups_entry.configure(state=state)
+        self.table_correlation_groups_editor_btn.configure(state=state)
         self.apply_table_btn.configure(state=state)
 
         self.col_name_entry.configure(state=state)
@@ -1558,6 +1681,32 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_params_var.set(json.dumps(params))
         self.status_var.set(f"Applied params template for generator '{generator}'.")
 
+    def _open_table_correlation_groups_editor(self) -> None:
+        JsonEditorDialog(
+            self,
+            title="Correlation Groups JSON Editor",
+            initial_text=self.table_correlation_groups_var.get().strip() or "[]",
+            require_object=False,
+            on_apply=self._on_table_correlation_groups_json_apply,
+        )
+
+    def _on_table_correlation_groups_json_apply(self, pretty_json: str) -> None:
+        self.table_correlation_groups_var.set(pretty_json)
+        self.status_var.set("Applied correlation groups JSON.")
+
+    def _open_project_timeline_constraints_editor(self) -> None:
+        JsonEditorDialog(
+            self,
+            title="Timeline Constraints JSON Editor",
+            initial_text=self.project_timeline_constraints_var.get().strip() or "[]",
+            require_object=False,
+            on_apply=self._on_project_timeline_constraints_json_apply,
+        )
+
+    def _on_project_timeline_constraints_json_apply(self, pretty_json: str) -> None:
+        self.project_timeline_constraints_var.set(pretty_json)
+        self.status_var.set("Applied timeline constraints JSON.")
+
     def _on_column_selected(self, _event=None) -> None:
         if self.selected_table_index is None:
             return
@@ -1720,6 +1869,68 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             )
         return value
 
+    def _parse_table_correlation_groups(
+        self,
+        raw_value: str,
+        *,
+        location: str,
+    ) -> list[dict[str, object]] | None:
+        value = raw_value.strip()
+        if value == "":
+            return None
+        try:
+            parsed = json.loads(value)
+        except Exception as exc:
+            raise ValueError(
+                f"{location}: correlation_groups JSON is invalid ({exc}). "
+                "Fix: provide a valid JSON list of correlation-group objects."
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ValueError(
+                f"{location}: correlation_groups must be a JSON list. "
+                "Fix: use a list like [{\"group_id\": \"g1\", \"columns\": [\"a\", \"b\"], \"rank_correlation\": [[1, 0.8], [0.8, 1]]}]."
+            )
+        groups: list[dict[str, object]] = []
+        for idx, item in enumerate(parsed):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"{location}: correlation_groups[{idx}] must be a JSON object. "
+                    "Fix: provide each correlation group as an object."
+                )
+            groups.append(dict(item))
+        return groups
+
+    def _parse_project_timeline_constraints(
+        self,
+        raw_value: str,
+        *,
+        location: str,
+    ) -> list[dict[str, object]] | None:
+        value = raw_value.strip()
+        if value == "":
+            return None
+        try:
+            parsed = json.loads(value)
+        except Exception as exc:
+            raise ValueError(
+                f"{location}: timeline_constraints JSON is invalid ({exc}). "
+                "Fix: provide a valid JSON list of timeline-constraint rule objects."
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ValueError(
+                f"{location}: timeline_constraints must be a JSON list. "
+                "Fix: use a list like [{\"rule_id\": \"dg03_rule\", \"child_table\": \"orders\", \"child_column\": \"ordered_at\", \"references\": [...]}]."
+            )
+        rules: list[dict[str, object]] = []
+        for idx, item in enumerate(parsed):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"{location}: timeline_constraints[{idx}] must be a JSON object. "
+                    "Fix: provide each timeline rule as an object."
+                )
+            rules.append(dict(item))
+        return rules
+
     def _apply_project_vars_to_model(self) -> None:
         name = self.project_name_var.get().strip()
         try:
@@ -1732,11 +1943,16 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     "enter a whole number for Seed",
                 )
             ) from exc
+        timeline_constraints = self._parse_project_timeline_constraints(
+            self.project_timeline_constraints_var.get(),
+            location="Project / Timeline constraints",
+        )
         self.project = SchemaProject(
             name=name,
             seed=seed,
             tables=self.project.tables,
             foreign_keys=self.project.foreign_keys,
+            timeline_constraints=timeline_constraints,
         )
 
     # ----- FK helpers -----
@@ -1849,6 +2065,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -2323,6 +2540,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 return "Dependencies"
             if "scd" in text or "business_key" in text:
                 return "SCD/BK"
+            if "correlation" in text:
+                return "Generator"
             if "generator" in text or "params." in text:
                 return "Generator"
             if "foreign key" in text or text.startswith("fk "):
@@ -2388,6 +2607,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=tables,
                 foreign_keys=fks,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -2439,6 +2659,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.table_scd_tracked_columns_var.set(", ".join(t.scd_tracked_columns) if t.scd_tracked_columns else "")
         self.table_scd_active_from_var.set(t.scd_active_from_column or "")
         self.table_scd_active_to_var.set(t.scd_active_to_column or "")
+        self.table_correlation_groups_var.set(
+            json.dumps(t.correlation_groups, sort_keys=True) if t.correlation_groups else ""
+        )
         self._set_table_editor_enabled(True)
         self._refresh_columns_tree()
 
@@ -2523,6 +2746,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 location=location,
                 field_name="scd_active_to_column",
             )
+            correlation_groups = self._parse_table_correlation_groups(
+                self.table_correlation_groups_var.get(),
+                location=location,
+            )
             
             ## We now allow for auto-sizing of children
             # if row_count <= 0:
@@ -2555,6 +2782,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 scd_tracked_columns=scd_tracked_columns,
                 scd_active_from_column=scd_active_from_column,
                 scd_active_to_column=scd_active_to_column,
+                correlation_groups=correlation_groups,
             )
 
             new_project = SchemaProject(
@@ -2562,6 +2790,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=tables,
                 foreign_keys=fks,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -2630,6 +2859,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 scd_tracked_columns=t.scd_tracked_columns,
                 scd_active_from_column=t.scd_active_from_column,
                 scd_active_to_column=t.scd_active_to_column,
+                correlation_groups=t.correlation_groups,
             )
 
             new_project = SchemaProject(
@@ -2637,6 +2867,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -2714,6 +2945,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 scd_tracked_columns=t.scd_tracked_columns,
                 scd_active_from_column=t.scd_active_from_column,
                 scd_active_to_column=t.scd_active_to_column,
+                correlation_groups=t.correlation_groups,
             )
 
             new_project = SchemaProject(
@@ -2721,6 +2953,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -2789,6 +3022,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 scd_tracked_columns=t.scd_tracked_columns,
                 scd_active_from_column=t.scd_active_from_column,
                 scd_active_to_column=t.scd_active_to_column,
+                correlation_groups=t.correlation_groups,
             )
 
             new_project = SchemaProject(
@@ -2796,6 +3030,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -2841,6 +3076,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 scd_tracked_columns=t.scd_tracked_columns,
                 scd_active_from_column=t.scd_active_from_column,
                 scd_active_to_column=t.scd_active_to_column,
+                correlation_groups=t.correlation_groups,
             )
 
             new_project = SchemaProject(
@@ -2848,6 +3084,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -2982,6 +3219,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=self.project.tables,
                 foreign_keys=fks,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -3010,6 +3248,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 seed=self.project.seed,
                 tables=self.project.tables,
                 foreign_keys=fks,
+                timeline_constraints=self.project.timeline_constraints,
             )
             validate_project(new_project)
 
@@ -3106,9 +3345,13 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._refresh_preview()
 
         # quick summary
-        summary = "\n".join([f"{t}: {len(r)} rows" for t, r in rows.items()])
-        messagebox.showinfo("Generated", f"Generated data:\n{summary}")
-        self.status_var.set(f"Generated {sum(len(v) for v in rows.values())} rows across {len(rows)} tables.")
+        summary = ", ".join([f"{t}={len(r)}" for t, r in rows.items()])
+        total_rows = sum(len(v) for v in rows.values())
+        self._notify(
+            f"Generated {total_rows} rows across {len(rows)} tables ({summary}).",
+            level="success",
+            duration_ms=4200,
+        )
 
 
     def _refresh_preview(self) -> None:
@@ -3193,8 +3436,11 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     for r in rows:
                         w.writerow([_csv_export_value(r.get(c)) for c in cols])
 
-            self.status_var.set(f"Exported CSVs to: {folder}")
-            messagebox.showinfo("Export complete", f"Exported one CSV per table into:\n{folder}")
+            self._notify(
+                f"Exported one CSV per table to '{folder}'.",
+                level="success",
+                duration_ms=4200,
+            )
         except Exception as exc:
             self._show_error_dialog("Export failed", str(exc))
 
@@ -3240,8 +3486,12 @@ class SchemaProjectDesignerScreen(ttk.Frame):
 
     def _on_sqlite_ok(self, db_path: str, counts: dict[str, int]) -> None:
         self._set_running(False, "SQLite insert complete.")
-        summary = "\n".join([f"{t}: {n} inserted" for t, n in counts.items()])
-        messagebox.showinfo("SQLite complete", f"Inserted into:\n{db_path}\n\n{summary}")
+        total_rows = sum(counts.values())
+        self._notify(
+            f"SQLite insert complete: {total_rows} rows inserted into '{db_path}'.",
+            level="success",
+            duration_ms=4200,
+        )
 
     def _clear_generated(self) -> None:
         self.generated_rows = {}
@@ -3301,6 +3551,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     scd_tracked_columns=t.scd_tracked_columns,
                     scd_active_from_column=t.scd_active_from_column,
                     scd_active_to_column=t.scd_active_to_column,
+                    correlation_groups=t.correlation_groups,
                 )
             )
 
@@ -3309,6 +3560,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             seed=self.project.seed,
             tables=new_tables,
             foreign_keys=self.project.foreign_keys,
+            timeline_constraints=self.project.timeline_constraints,
         )
 
     def _on_generate_sample(self) -> None:
@@ -3386,6 +3638,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self._suspend_dirty_tracking = True
             self.project_name_var.set(project.name)
             self.seed_var.set(str(project.seed))
+            self.project_timeline_constraints_var.set(
+                json.dumps(project.timeline_constraints, sort_keys=True) if project.timeline_constraints else ""
+            )
             self._suspend_dirty_tracking = False
 
             self.selected_table_index = None

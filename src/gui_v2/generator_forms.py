@@ -247,6 +247,27 @@ GENERATOR_FORM_SPECS: dict[str, GeneratorFormSpec] = {
             GeneratorFieldSpec("start_index", "Start index", "int"),
         ),
     ),
+    "state_transition": GeneratorFormSpec(
+        generator_id="state_transition",
+        description="Per-entity Markov-style state progression with dwell controls.",
+        fields=(
+            GeneratorFieldSpec(
+                "entity_column",
+                "Entity column",
+                "column",
+                required=True,
+                dependency_source=True,
+            ),
+            GeneratorFieldSpec("states", "States (comma)", "csv_list", required=True),
+            GeneratorFieldSpec("start_state", "Start state", "scalar"),
+            GeneratorFieldSpec("start_weights", "Start weights object", "json_object"),
+            GeneratorFieldSpec("transitions", "Transitions object", "json_object", required=True),
+            GeneratorFieldSpec("terminal_states", "Terminal states (comma)", "csv_list"),
+            GeneratorFieldSpec("dwell_min", "Dwell min", "int"),
+            GeneratorFieldSpec("dwell_max", "Dwell max", "int"),
+            GeneratorFieldSpec("dwell_by_state", "Dwell-by-state object", "json_object"),
+        ),
+    ),
     "date": GeneratorFormSpec(
         generator_id="date",
         fields=(

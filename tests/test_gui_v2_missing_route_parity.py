@@ -6,9 +6,11 @@ from src.gui_home import App
 from src.gui_route_policy import ORCHESTRATOR_V2_ROUTE
 from src.gui_route_policy import PERFORMANCE_V2_ROUTE
 from src.gui_route_policy import SCHEMA_V2_ROUTE
-from src.gui_v2_execution_orchestrator import ExecutionOrchestratorV2Screen
-from src.gui_v2_performance_workbench import PerformanceWorkbenchV2Screen
-from src.gui_v2_schema_project import SchemaProjectV2Screen
+
+# Coverage handoff (de-duplication):
+# - Removed route registration/type and general navigability tests from this module.
+# - Canonical ownership remains in:
+#   tests/test_invariants.py::test_gui_navigation_contract_v2_only.
 
 
 class TestGuiV2MissingRouteParity(unittest.TestCase):
@@ -24,14 +26,6 @@ class TestGuiV2MissingRouteParity(unittest.TestCase):
     def tearDown(self) -> None:
         if hasattr(self, "root") and self.root.winfo_exists():
             self.root.destroy()
-
-    def test_new_v2_routes_are_registered_with_expected_types(self) -> None:
-        self.assertIn(SCHEMA_V2_ROUTE, self.app.screens)
-        self.assertIn(PERFORMANCE_V2_ROUTE, self.app.screens)
-        self.assertIn(ORCHESTRATOR_V2_ROUTE, self.app.screens)
-        self.assertIsInstance(self.app.screens[SCHEMA_V2_ROUTE], SchemaProjectV2Screen)
-        self.assertIsInstance(self.app.screens[PERFORMANCE_V2_ROUTE], PerformanceWorkbenchV2Screen)
-        self.assertIsInstance(self.app.screens[ORCHESTRATOR_V2_ROUTE], ExecutionOrchestratorV2Screen)
 
     def test_home_v2_includes_new_route_cards(self) -> None:
         home_v2 = self.app.screens["home_v2"]
@@ -52,12 +46,6 @@ class TestGuiV2MissingRouteParity(unittest.TestCase):
         self.assertIn("Schema Project v2", all_text)
         self.assertIn("Performance Workbench v2", all_text)
         self.assertIn("Execution Orchestrator v2", all_text)
-
-    def test_new_v2_routes_are_navigable(self) -> None:
-        for route in (SCHEMA_V2_ROUTE, PERFORMANCE_V2_ROUTE, ORCHESTRATOR_V2_ROUTE):
-            with self.subTest(route=route):
-                self.app.show_screen(route)
-                self.assertEqual(self.app.current_screen_name, route)
 
     def test_new_v2_routes_expose_core_lifecycle_contracts(self) -> None:
         schema_v2 = self.app.screens[SCHEMA_V2_ROUTE]

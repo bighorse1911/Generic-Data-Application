@@ -167,6 +167,109 @@ class TestSchemaProjectRoundtrip(unittest.TestCase):
             except PermissionError:
                 pass
 
+    def test_roundtrip_preserves_correlation_groups(self):
+        project = SchemaProject(
+            name="corr_roundtrip",
+            seed=33,
+            tables=[
+                TableSpec(
+                    table_name="signals",
+                    row_count=5,
+                    columns=[
+                        ColumnSpec("signal_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("a", "decimal", nullable=False),
+                        ColumnSpec("b", "decimal", nullable=False),
+                    ],
+                    correlation_groups=[
+                        {
+                            "group_id": "g1",
+                            "columns": ["a", "b"],
+                            "rank_correlation": [[1.0, 0.8], [0.8, 1.0]],
+                            "strength": 0.9,
+                        }
+                    ],
+                )
+            ],
+            foreign_keys=[],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_roundtrip_preserves_timeline_constraints(self):
+        project = SchemaProject(
+            name="timeline_roundtrip",
+            seed=44,
+            tables=[
+                TableSpec(
+                    table_name="signup",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("signup_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("signup_date", "date", nullable=False, generator="date"),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("signup_id", "int", nullable=False),
+                        ColumnSpec("ordered_date", "date", nullable=False, generator="date"),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec(
+                    child_table="orders",
+                    child_column="signup_id",
+                    parent_table="signup",
+                    parent_column="signup_id",
+                    min_children=1,
+                    max_children=1,
+                )
+            ],
+            timeline_constraints=[
+                {
+                    "rule_id": "signup_to_order",
+                    "child_table": "orders",
+                    "child_column": "ordered_date",
+                    "references": [
+                        {
+                            "parent_table": "signup",
+                            "parent_column": "signup_date",
+                            "via_child_fk": "signup_id",
+                            "direction": "after",
+                            "min_days": 0,
+                            "max_days": 5,
+                        }
+                    ],
+                }
+            ],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

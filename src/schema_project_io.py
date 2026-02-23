@@ -96,6 +96,23 @@ def load_project_from_json(path: str) -> SchemaProject:
 
     _normalize_sample_csv_paths(data)
 
+    raw_timeline_constraints = data.get("timeline_constraints")
+    timeline_constraints: list[dict[str, object]] | None = None
+    if raw_timeline_constraints is not None:
+        if not isinstance(raw_timeline_constraints, list):
+            raise ValueError(
+                "Project: timeline_constraints must be a list when provided. "
+                "Fix: set timeline_constraints to a list of rule objects or omit it."
+            )
+        timeline_constraints = []
+        for idx, raw_rule in enumerate(raw_timeline_constraints):
+            if not isinstance(raw_rule, dict):
+                raise ValueError(
+                    f"Project, timeline_constraints[{idx}]: rule must be an object. "
+                    "Fix: provide each timeline constraint rule as a JSON object."
+                )
+            timeline_constraints.append(dict(raw_rule))
+
     tables = []
     for t in data["tables"]:
         raw_business_key_unique_count = t.get("business_key_unique_count")
@@ -113,6 +130,22 @@ def load_project_from_json(path: str) -> SchemaProject:
                     f"Table '{t.get('table_name', '<unknown>')}': business_key_unique_count must be an integer when provided. "
                     "Fix: set business_key_unique_count to a positive whole number or omit it."
                 ) from exc
+        raw_correlation_groups = t.get("correlation_groups")
+        correlation_groups: list[dict[str, object]] | None = None
+        if raw_correlation_groups is not None:
+            if not isinstance(raw_correlation_groups, list):
+                raise ValueError(
+                    f"Table '{t.get('table_name', '<unknown>')}': correlation_groups must be a list when provided. "
+                    "Fix: set correlation_groups to a list of objects or omit it."
+                )
+            correlation_groups = []
+            for idx, raw_group in enumerate(raw_correlation_groups):
+                if not isinstance(raw_group, dict):
+                    raise ValueError(
+                        f"Table '{t.get('table_name', '<unknown>')}', correlation_groups[{idx}]: group must be an object. "
+                        "Fix: provide each correlation group as a JSON object."
+                    )
+                correlation_groups.append(dict(raw_group))
         cols = [ColumnSpec(**c) for c in t["columns"]]
         tables.append(
             TableSpec(
@@ -127,6 +160,7 @@ def load_project_from_json(path: str) -> SchemaProject:
                 scd_tracked_columns=t.get("scd_tracked_columns"),
                 scd_active_from_column=t.get("scd_active_from_column"),
                 scd_active_to_column=t.get("scd_active_to_column"),
+                correlation_groups=correlation_groups,
             )
         )
 
@@ -137,6 +171,7 @@ def load_project_from_json(path: str) -> SchemaProject:
         seed=int(data.get("seed", 12345)),
         tables=tables,
         foreign_keys=fks,
+        timeline_constraints=timeline_constraints,
     )
     validate_project(project)
     return project

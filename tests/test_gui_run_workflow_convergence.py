@@ -5,6 +5,12 @@ from src.config import AppConfig
 from src.gui_home import App
 from src.gui_tools.run_workflow_view import RunWorkflowSurface
 
+# Coverage handoff (de-duplication):
+# - Removed duplicate run-route passes for performance and orchestrator routes.
+# - Removed run-center shortcut lifecycle duplication; canonical ownership is:
+#   tests/test_gui_p6_route_keyboard_flow.py::
+#   test_route_scoped_shortcut_activation_switches_between_screens.
+
 
 class TestGUIRunWorkflowConvergence(unittest.TestCase):
     def setUp(self):
@@ -23,8 +29,6 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
     def _run_routes(self) -> tuple[str, ...]:
         return (
             "run_center_v2",
-            "performance_workbench_v2",
-            "execution_orchestrator_v2",
             "performance_workbench_v2",
             "execution_orchestrator_v2",
         )
@@ -69,21 +73,6 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
         self.assertIsNotNone(orchestrator.start_fallback_btn)
         self.assertIsNotNone(orchestrator.cancel_run_btn)
 
-        perf_v2 = self.app.screens["performance_workbench_v2"]
-        self.assertIsNotNone(perf_v2.diagnostics_tree)
-        self.assertIsNotNone(perf_v2.chunk_plan_tree)
-        self.assertIsNotNone(perf_v2.run_benchmark_btn)
-        self.assertIsNotNone(perf_v2.run_generate_btn)
-        self.assertIsNotNone(perf_v2.cancel_run_btn)
-
-        orchestrator_v2 = self.app.screens["execution_orchestrator_v2"]
-        self.assertIsNotNone(orchestrator_v2.partition_tree)
-        self.assertIsNotNone(orchestrator_v2.worker_tree)
-        self.assertIsNotNone(orchestrator_v2.failures_tree)
-        self.assertIsNotNone(orchestrator_v2.start_run_btn)
-        self.assertIsNotNone(orchestrator_v2.start_fallback_btn)
-        self.assertIsNotNone(orchestrator_v2.cancel_run_btn)
-
         run_center = self.app.screens["run_center_v2"]
         self.assertIsNotNone(run_center.progress)
         self.assertIsNotNone(run_center.preview_table)
@@ -107,6 +96,26 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
                     continue
                 self.assertTrue(adapter.view._large_data_enabled)
 
+    def test_run_surface_guidance_updates_for_first_run_empty_states(self):
+        run_center = self.app.screens["run_center_v2"]
+        surface = run_center.surface
+
+        self.assertIn("browse or paste a schema json path", surface.next_action_var.get().lower())
+        self.assertIn("diagnostics", surface._empty_hint_label_by_key)
+        self.assertTrue(bool(surface._empty_hint_label_by_key["diagnostics"].place_info()))
+
+        surface.schema_path_var.set("schema_project.json")
+        self.root.update_idletasks()
+        self.root.update()
+        self.assertIn("schema path is set", surface.next_action_var.get().lower())
+
+        surface.set_diagnostics_rows([("orders", "100", "1.0", "1.0", "1.0", "low", "ok")])
+        self.root.update_idletasks()
+        self.root.update()
+        self.assertEqual(len(surface.diagnostics_tree.get_children()), 1)
+        self.assertIn("results ready", surface.next_action_var.get().lower())
+        self.assertFalse(bool(surface._empty_hint_label_by_key["diagnostics"].place_info()))
+
     def test_surface_clear_tree_uses_adapter_clear(self):
         perf = self.app.screens["performance_workbench_v2"]
         perf.surface.set_diagnostics_rows([("t", "1", "1.0", "1.0", "1.0", "low", "ok")])
@@ -117,22 +126,6 @@ class TestGUIRunWorkflowConvergence(unittest.TestCase):
         self.root.update_idletasks()
         self.root.update()
         self.assertEqual(len(perf.diagnostics_tree.get_children()), 0)
-
-    def test_run_center_shortcuts_toggle_with_route_lifecycle(self):
-        run_center = self.app.screens["run_center_v2"]
-        self.assertFalse(run_center.shortcut_manager.is_active)
-
-        self.app.show_screen("run_center_v2")
-        self.assertEqual(self.app.current_screen_name, "run_center_v2")
-        self.assertTrue(run_center.shortcut_manager.is_active)
-
-        self.app.show_screen("home_v2")
-        self.assertEqual(self.app.current_screen_name, "home_v2")
-        self.assertFalse(run_center.shortcut_manager.is_active)
-
-        self.app.show_screen("run_center_v2")
-        self.assertEqual(self.app.current_screen_name, "run_center_v2")
-        self.assertTrue(run_center.shortcut_manager.is_active)
 
 
 if __name__ == "__main__":

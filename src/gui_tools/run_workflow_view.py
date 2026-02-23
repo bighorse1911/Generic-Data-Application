@@ -69,6 +69,9 @@ class RunWorkflowSurface(ttk.Frame):
         self.live_eta_var = tk.StringVar(value="ETA: --")
         self.status_var = tk.StringVar(value="Ready.")
         self.inline_error_var = tk.StringVar(value="")
+        self.next_action_var = tk.StringVar(value="")
+        self._tab_row_counts: dict[str, int] = {}
+        self._empty_hint_label_by_key: dict[str, ttk.Label] = {}
 
         self.columnconfigure(0, weight=1)
 
@@ -76,6 +79,8 @@ class RunWorkflowSurface(ttk.Frame):
         self._build_progress_strip()
         self._build_results_workspace()
         self._build_status_region()
+        self.schema_path_var.trace_add("write", self._on_schema_path_changed)
+        self._refresh_guidance_hints()
 
     def _build_config_card(self) -> None:
         self.config_card = ttk.LabelFrame(self, text="Run Config", padding=10)
@@ -214,6 +219,14 @@ class RunWorkflowSurface(ttk.Frame):
         self.load_btn = ttk.Button(actions, text="Load config")
         self.load_btn.grid(row=0, column=col, sticky="ew", padx=(4, 0))
 
+        self.next_action_label = ttk.Label(
+            self.config_card,
+            textvariable=self.next_action_var,
+            justify="left",
+            wraplength=920,
+        )
+        self.next_action_label.grid(row=8, column=0, columnspan=6, sticky="ew", pady=(8, 0))
+
     def _build_progress_strip(self) -> None:
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100.0, value=0.0)
         self.progress.grid(row=1, column=0, sticky="ew", pady=(0, 4))
@@ -258,6 +271,7 @@ class RunWorkflowSurface(ttk.Frame):
         self.failures_table = None
         self.history_table = None
         self._adapter_by_tree: dict[ttk.Treeview, VirtualTableAdapter] = {}
+        self._tab_key_by_tree: dict[ttk.Treeview, str] = {}
 
         if "diagnostics" in self._tab_by_key:
             self.diagnostics_table = VirtualTableAdapter(
@@ -279,6 +293,9 @@ class RunWorkflowSurface(ttk.Frame):
                 large_data_auto_page_size=200,
             )
             self._adapter_by_tree[self.diagnostics_table.tree] = self.diagnostics_table
+            self._tab_key_by_tree[self.diagnostics_table.tree] = "diagnostics"
+            self._register_empty_hint("diagnostics")
+            self._tab_row_counts["diagnostics"] = 0
 
         if "plan" in self._tab_by_key:
             self.plan_table = VirtualTableAdapter(
@@ -299,6 +316,9 @@ class RunWorkflowSurface(ttk.Frame):
                 large_data_auto_page_size=200,
             )
             self._adapter_by_tree[self.plan_table.tree] = self.plan_table
+            self._tab_key_by_tree[self.plan_table.tree] = "plan"
+            self._register_empty_hint("plan")
+            self._tab_row_counts["plan"] = 0
 
         if "workers" in self._tab_by_key:
             self.worker_table = VirtualTableAdapter(
@@ -320,6 +340,9 @@ class RunWorkflowSurface(ttk.Frame):
                 large_data_auto_page_size=200,
             )
             self._adapter_by_tree[self.worker_table.tree] = self.worker_table
+            self._tab_key_by_tree[self.worker_table.tree] = "workers"
+            self._register_empty_hint("workers")
+            self._tab_row_counts["workers"] = 0
 
         if "failures" in self._tab_by_key:
             self.failures_table = VirtualTableAdapter(
@@ -336,6 +359,9 @@ class RunWorkflowSurface(ttk.Frame):
                 large_data_chunk_size=200,
             )
             self._adapter_by_tree[self.failures_table.tree] = self.failures_table
+            self._tab_key_by_tree[self.failures_table.tree] = "failures"
+            self._register_empty_hint("failures")
+            self._tab_row_counts["failures"] = 0
 
         if "history" in self._tab_by_key:
             self.history_table = VirtualTableAdapter(
@@ -353,6 +379,9 @@ class RunWorkflowSurface(ttk.Frame):
                 large_data_chunk_size=200,
             )
             self._adapter_by_tree[self.history_table.tree] = self.history_table
+            self._tab_key_by_tree[self.history_table.tree] = "history"
+            self._register_empty_hint("history")
+            self._tab_row_counts["history"] = 0
 
         self.diagnostics_tree = self.diagnostics_table.tree if self.diagnostics_table else None
         self.preview_table = self.plan_table.tree if self.plan_table else None
@@ -361,6 +390,7 @@ class RunWorkflowSurface(ttk.Frame):
         self.worker_tree = self.worker_table.tree if self.worker_table else None
         self.failures_tree = self.failures_table.tree if self.failures_table else None
         self.history_tree = self.history_table.tree if self.history_table else None
+        self._refresh_guidance_hints()
 
     def _build_status_region(self) -> None:
         self.inline_error_label = ttk.Label(self, textvariable=self.inline_error_var, foreground="#9b1c1c")
@@ -369,6 +399,82 @@ class RunWorkflowSurface(ttk.Frame):
         if self.capabilities.show_status_label:
             self.status_label = ttk.Label(self, textvariable=self.status_var)
             self.status_label.grid(row=5, column=0, sticky="w")
+
+    def _register_empty_hint(self, key: str) -> None:
+        tab = self._tab_by_key.get(key)
+        if tab is None:
+            return
+        label = ttk.Label(tab, justify="center", anchor="center", wraplength=760)
+        label.place(relx=0.5, rely=0.5, anchor="center")
+        self._empty_hint_label_by_key[key] = label
+
+    @staticmethod
+    def _empty_hint_message(key: str, *, schema_ready: bool) -> str:
+        if key == "diagnostics":
+            if schema_ready:
+                return "No diagnostics yet. Next action: run Estimate or Benchmark."
+            return "No diagnostics yet. Next action: load a schema first."
+        if key == "plan":
+            if schema_ready:
+                return "No plan yet. Next action: run Build plan, Benchmark, or Start."
+            return "No plan yet. Next action: load a schema first."
+        if key == "workers":
+            if schema_ready:
+                return "No worker activity yet. Next action: start a run."
+            return "No worker activity yet. Next action: load a schema first."
+        if key == "failures":
+            if schema_ready:
+                return "No failures logged. Failures appear here only when partitions fail."
+            return "No failures yet. Next action: load a schema first."
+        if key == "history":
+            if schema_ready:
+                return "No run history yet. Completed benchmarks/runs will appear here."
+            return "No run history yet. Next action: load a schema first."
+        return "No rows yet."
+
+    def _set_tab_row_count(self, key: str, count: int) -> None:
+        self._tab_row_counts[key] = max(0, int(count))
+        self._refresh_guidance_hints()
+
+    def _refresh_guidance_hints(self) -> None:
+        schema_ready = self.schema_path_var.get().strip() != ""
+        populated_tabs = [key for key, count in self._tab_row_counts.items() if count > 0]
+        total_rows = sum(self._tab_row_counts.values())
+
+        if not schema_ready:
+            self.next_action_var.set(
+                "Next action: browse or paste a schema JSON path, then click Load."
+            )
+        elif total_rows == 0:
+            self.next_action_var.set(
+                "Schema path is set. Next action: click Load, then run Estimate/Build plan/Start."
+            )
+        else:
+            summary = ", ".join(
+                f"{key}={self._tab_row_counts[key]}"
+                for key in ("diagnostics", "plan", "workers", "failures", "history")
+                if self._tab_row_counts.get(key, 0) > 0
+            )
+            self.next_action_var.set(
+                f"Results ready ({summary}). Next action: review tabs or continue with another run action."
+            )
+
+        for key, label in self._empty_hint_label_by_key.items():
+            row_count = self._tab_row_counts.get(key, 0)
+            if row_count > 0:
+                label.place_forget()
+                continue
+            label.configure(text=self._empty_hint_message(key, schema_ready=schema_ready))
+            if not label.winfo_ismapped():
+                label.place(relx=0.5, rely=0.5, anchor="center")
+
+        for key in populated_tabs:
+            label = self._empty_hint_label_by_key.get(key)
+            if label is not None:
+                label.place_forget()
+
+    def _on_schema_path_changed(self, *_args) -> None:
+        self._refresh_guidance_hints()
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
@@ -421,6 +527,7 @@ class RunWorkflowSurface(ttk.Frame):
         self.ipc_queue_size_var.set(self.model.ipc_queue_size)
         self.retry_limit_var.set(self.model.retry_limit)
         self.profile_name_var.set(self.model.profile_name)
+        self._refresh_guidance_hints()
 
     def clear_tree(self, tree: ttk.Treeview | None) -> None:
         if tree is None:
@@ -428,6 +535,9 @@ class RunWorkflowSurface(ttk.Frame):
         adapter = self._adapter_by_tree.get(tree)
         if adapter is not None:
             adapter.clear()
+            key = self._tab_key_by_tree.get(tree)
+            if key is not None:
+                self._set_tab_row_count(key, 0)
             return
         for item in tree.get_children():
             tree.delete(item)
@@ -435,22 +545,27 @@ class RunWorkflowSurface(ttk.Frame):
     def set_diagnostics_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
         if self.diagnostics_table is not None:
             self.diagnostics_table.set_rows(rows)
+            self._set_tab_row_count("diagnostics", len(rows))
 
     def set_plan_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
         if self.plan_table is not None:
             self.plan_table.set_rows(rows)
+            self._set_tab_row_count("plan", len(rows))
 
     def set_worker_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
         if self.worker_table is not None:
             self.worker_table.set_rows(rows)
+            self._set_tab_row_count("workers", len(rows))
 
     def set_failures_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
         if self.failures_table is not None:
             self.failures_table.set_rows(rows)
+            self._set_tab_row_count("failures", len(rows))
 
     def set_history_rows(self, rows: list[tuple[object, ...]] | list[list[object]]) -> None:
         if self.history_table is not None:
             self.history_table.set_rows(rows)
+            self._set_tab_row_count("history", len(rows))
 
     @property
     def run_action_buttons(self) -> list[object]:

@@ -27,6 +27,18 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Specialist v2 route restoration (completed): `erd_designer_v2` and `location_selector_v2` remain native v2 routes with explicit open-classic tool actions; `home_v2` now uses a scrollable cards region so specialist routes remain accessible as v2 route inventory grows.
 - Schema demo experiment route (completed): additive route `schema_demo_v2` now exists as a strict mockup-style v2 schema workflow (modeled from `demopage.png`) with full model-backed callbacks, constraints advanced sections, and independent preloaded demo state.
 - v2 generator UI migration (completed): `schema_project_v2` now exposes structured inline generator configuration for all registered generators, auto-adds required dependency links from source-column selections, preserves unknown params keys during JSON roundtrips, and retains raw params JSON entry/edit as an advanced fallback.
+- Async schema JSON IO hardening (completed): `schema_project_v2` now routes Save/Load project JSON operations through non-blocking lifecycle jobs with busy/status feedback, duplicate-operation guards, and safe cancel/abort handling for file dialog exits.
+- Incremental validation engine (completed): `schema_project_v2` now uses debounced scope-aware validation for table/column/FK deltas while preserving full-project validation before generate/export actions.
+- Scalable search/filter pipeline (completed): `schema_project_v2` now uses indexed + paged search rendering for columns and relationships instead of full Treeview detach/reattach filtering.
+- Undo/redo schema authoring controls (completed): `schema_project_v2` now provides bounded command-stack undo/redo with keyboard shortcuts for table/column/FK/SCD edit recovery.
+- Persisted workspace state (completed): `schema_project_v2` now persists/restores per-route panel collapse state, selected tab, preview page size, and preview visible-column preferences across app restarts.
+- Command palette + quick navigation (completed): app shell now exposes global `Ctrl/Cmd+K` command palette with route jumps and active-screen high-frequency actions (validate/load/save/generate/plan/benchmark) while preserving route-scoped shortcut behavior.
+- Notification center + reduced modal friction (completed): interactive routes now emit non-blocking notifications with history for informational/success flows; blocking modal dialogs remain reserved for decisions and error/warning paths that require interruption.
+- V2 visual system pass (completed): shared visual tokens now define v2 route-family typography, spacing, color roles, focus-ring states, and button hierarchy and are consumed across native v2 shells/screens.
+- Guided empty states + first-run assistance (completed): schema authoring and run-workflow routes now provide contextual empty-state guidance, inline next-action hints, and starter-schema shortcuts for faster first successful preview.
+- DG01 correlated column groups (completed): table-level correlation groups now support deterministic seeded multi-column rank-correlation control for numeric/categorical realism.
+- DG02 lifecycle state-transition generator (completed): per-entity Markov-style status progression now supports allowed transition maps, explicit terminal states, dwell-time bounds/overrides, deterministic trajectories, and SCD2 tracked-column transition-step mutation support.
+- DG03 cross-table temporal integrity planner (completed): project-level timeline constraints now enforce deterministic bounded temporal ordering across FK-linked rows with preserve-valid/clamp-invalid runtime policy.
 
 ## Architecture
 - Tkinter GUI
@@ -43,7 +55,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `Tabs`: notebook wrapper for sectioned workflows
   - `FormBuilder`: consistent label+input row construction
   - `TableView`: Treeview wrapper with both scrollbars + column sizing + optional pagination controls + chunked non-blocking large-data render path
-  - `ToastCenter`: non-blocking success/warn/error notifications
+  - `ToastCenter` / `NotificationCenter`: non-blocking success/warn/error notifications with history dialog support
   - `SearchEntry`: deterministic debounce search input for list/table filtering
   - `TokenEntry`: chip-style editing for comma-separated column-name fields
   - `JsonEditorDialog`: formatted JSON editor with line/column parse feedback
@@ -57,6 +69,10 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `job_lifecycle`: shared non-run async lifecycle controller for kit long jobs
   - `error_contract`: shared actionable message shape detection/normalization helpers
   - `error_surface`: shared actionable error formatter + dialog/status/inline routing adapter
+  - `undo`: bounded command stack + reversible command protocol for schema authoring recovery
+  - `preferences`: versioned route-keyed workspace UI state persistence store
+  - `command_palette`: global searchable action launcher with action registry + fuzzy dispatch
+  - `theme_tokens`: shared v2 visual design tokens (typography, spacing, color roles, focus, button hierarchy)
   - `table_virtual`: shared table adapter for large-row pagination/clear/reset behavior with large-data mode passthrough
   - `run_models`: shared run workflow view model + output/execution mode coercion
   - `run_commands`: shared adapters delegating to canonical performance/multiprocess runtime modules
@@ -84,6 +100,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Run workflow screens (`run_center_v2`, `performance_workbench`, `execution_orchestrator`) now use a shared section model (config, controls, progress strip, capability-gated results tabs) and shared lifecycle/error/table adapters.
 - Additive native run routes `performance_workbench_v2` and `execution_orchestrator_v2` reuse shared run-workflow/lifecycle primitives while preserving classic routes for rollback safety.
 - Run workflow screens auto-page heavy result grids and use bulk adapter row-refresh APIs to keep UI updates responsive on large datasets.
+- Run workflow screens now include contextual empty-result guidance plus inline next-action hints tied to schema-path and result-tab state.
 - Core interactive routes (`schema_project`, `schema_project_legacy`, `performance_workbench`, `execution_orchestrator`, `run_center_v2`) now use route-scoped shortcut lifecycle (`on_show`/`on_hide`) and explicit focus-anchor traversal patterns.
 - v2 route family (`home_v2`, `schema_studio_v2`, `run_center_v2`, native specialist routes, and hidden `*_v2_bridge` routes) is covered by explicit scenario acceptance checks for transition stability, guarded-navigation outcomes, and cancel/fallback usability behavior.
 - Run workflow screens and schema-kit long jobs use teardown-safe thread->UI dispatch and centralized lifecycle transition helpers to reduce callback noise during Tk teardown.
@@ -95,8 +112,18 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Column editor now includes dtype-aware generator filtering, regex pattern presets, and generator params template fill assistance.
 - Kit-based schema screen now includes debounced table/column/FK search controls, token-style editors for business-key column lists, non-blocking toast feedback, JSON params editor dialog, and a discoverable shortcuts help entry point.
 - Kit-based schema screen now includes preview pagination, preview column visibility/order chooser, inline validation summary jump actions, and dirty-state guarded navigation/save prompts.
+- Kit-based schema screen now performs Save/Load project JSON via non-blocking lifecycle jobs while preserving synchronous dirty-guard save semantics for confirmation dialogs.
+- Kit-based schema screen now performs debounced scope-aware incremental validation for local table/column/FK edits and preserves full-project validation before generate/export actions.
+- Kit-based schema screen now uses indexed + paged filtering for columns/FKs to keep search-response latency low on large schemas.
+- Kit-based schema screen now supports bounded undo/redo command history for table/column/FK/SCD edits with route-scoped keyboard shortcuts (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Y`, `Ctrl/Cmd+Shift+Z`).
+- Kit-based schema screen now persists/restores route workspace preferences (panel collapse state, active tab, preview page size, preview column visibility/order) through a versioned preferences store.
+- Kit-based schema screen now includes first-run quick-start shortcuts (create starter schema, load starter fixture, generate-tab jump) and contextual empty-state hints across project/tables/relationships/generate regions.
+- App shell now provides global command palette launch (`Ctrl/Cmd+K`) with route-jump actions and active-route high-frequency workflow actions.
+- Interactive routes now include discoverable notification-history affordances and avoid blocking info/success dialogs during routine workflow completion.
+- V2 route family now consumes shared visual tokens (type scale, spacing, color roles, focus ring, button hierarchy) instead of route-local hardcoded visual values.
 - Legacy fallback schema screen now includes low-risk Phase C adoption of Phase B UX primitives: opt-in preview pagination, preview column chooser, inline validation quick-jumps, and dirty-state guarded back/load prompts.
 - Table editor now supports optional `business_key_unique_count` authoring so unique business-key count can be configured independently from table row count.
+- Table editor now supports optional `correlation_groups` JSON authoring with editor dialog support for deterministic rank-correlation group configuration.
 - GUI design changes must be recorded in `GUI_WIREFRAME_SCHEMA.md` and `docs/decisions/`.
 
 ## Data Generation
@@ -125,9 +152,12 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - Hierarchical categories (phase 3 `hierarchical_category` with parent->children mapping)
   - Realistic distributions (uniform, normal, lognormal, weighted categorical) with validator/runtime guardrails and GUI authoring exposure
   - Ordered choices (`ordered_choice`) with named order paths and weighted movement progression
+  - Lifecycle state transitions (`state_transition`) with per-entity transition maps, explicit terminal states, and dwell-time controls
+  - Cross-table temporal integrity (`timeline_constraints`) with FK-linked parent references and bounded date/datetime enforcement windows
   - Dates, timestamps, semantic numeric generators (lat/lon/money/percent)
   - Extensible data type support: `bytes` (generated as binary payload, exported to CSV as base64 text, stored in SQLite as BLOB)
   - Correlated columns via `depends_on`
+  - DG01 correlation groups (`TableSpec.correlation_groups`) with target rank-correlation matrices and deterministic seeded rank-reordering for numeric/categorical columns
 - Priority 1 phased rollout status: phases 1-5 are completed.
 - FK integrity enforced in-memory
 

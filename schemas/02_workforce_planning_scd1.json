@@ -1,0 +1,272 @@
+{
+  "name": "workforce_planning_scd1",
+  "seed": 20260301,
+  "tables": [
+    {
+      "table_name": "employee_dim",
+      "row_count": 50,
+      "columns": [
+        {
+          "name": "employee_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "employee_code",
+          "dtype": "text",
+          "nullable": false
+        },
+        {
+          "name": "dept",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "choice_weighted",
+          "params": {
+            "choices": [
+              "engineering",
+              "finance",
+              "hr",
+              "sales",
+              "contractor"
+            ],
+            "weights": [
+              0.34,
+              0.18,
+              0.14,
+              0.24,
+              0.1
+            ]
+          }
+        },
+        {
+          "name": "title_progression",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "ordered_choice",
+          "params": {
+            "orders": {
+              "ic_path": [
+                "analyst",
+                "specialist",
+                "senior_specialist",
+                "principal"
+              ],
+              "manager_path": [
+                "analyst",
+                "lead",
+                "manager",
+                "director"
+              ]
+            },
+            "order_weights": {
+              "ic_path": 0.7,
+              "manager_path": 0.3
+            },
+            "move_weights": [
+              0.2,
+              0.65,
+              0.15
+            ],
+            "start_index": 0
+          }
+        },
+        {
+          "name": "age",
+          "dtype": "int",
+          "nullable": false,
+          "generator": "uniform_int",
+          "params": {
+            "min": 21,
+            "max": 65
+          }
+        },
+        {
+          "name": "compensation",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "lognormal",
+          "params": {
+            "median": 95000.0,
+            "sigma": 0.4,
+            "decimals": 2,
+            "min": 32000.0,
+            "max": 450000.0
+          }
+        },
+        {
+          "name": "bonus_rate",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "percent",
+          "params": {
+            "min": 0.0,
+            "max": 25.0,
+            "decimals": 2
+          }
+        },
+        {
+          "name": "started_on",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "date",
+          "params": {
+            "start": "2016-01-01",
+            "end": "2025-12-31"
+          }
+        },
+        {
+          "name": "review_due",
+          "dtype": "date",
+          "nullable": false,
+          "generator": "time_offset",
+          "params": {
+            "base_column": "started_on",
+            "direction": "after",
+            "min_days": 180,
+            "max_days": 540
+          },
+          "depends_on": [
+            "started_on"
+          ]
+        },
+        {
+          "name": "office_city",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 0
+          }
+        },
+        {
+          "name": "office_country",
+          "dtype": "text",
+          "nullable": false,
+          "generator": "sample_csv",
+          "params": {
+            "path": "tests/fixtures/city_country_pool.csv",
+            "column_index": 1,
+            "match_column": "office_city",
+            "match_column_index": 0
+          },
+          "depends_on": [
+            "office_city"
+          ]
+        },
+        {
+          "name": "is_full_time",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "dept",
+            "operator": "!=",
+            "value": "contractor",
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "dept"
+          ]
+        }
+      ],
+      "business_key": [
+        "employee_code"
+      ],
+      "business_key_unique_count": 50,
+      "business_key_static_columns": [
+        "dept",
+        "office_country"
+      ],
+      "business_key_changing_columns": [
+        "title_progression",
+        "compensation",
+        "bonus_rate"
+      ],
+      "scd_mode": "scd1",
+      "scd_tracked_columns": [
+        "title_progression",
+        "compensation",
+        "bonus_rate"
+      ]
+    },
+    {
+      "table_name": "training_events",
+      "columns": [
+        {
+          "name": "event_sk",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "employee_sk",
+          "dtype": "int",
+          "nullable": false
+        },
+        {
+          "name": "session_ts",
+          "dtype": "datetime",
+          "nullable": false,
+          "generator": "timestamp_utc",
+          "params": {
+            "start": "2022-01-01T00:00:00Z",
+            "end": "2026-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "duration_hours",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "uniform_float",
+          "params": {
+            "min": 1.0,
+            "max": 8.0,
+            "decimals": 1
+          }
+        },
+        {
+          "name": "score",
+          "dtype": "decimal",
+          "nullable": false,
+          "generator": "normal",
+          "params": {
+            "mean": 82.0,
+            "stdev": 8.0,
+            "decimals": 1,
+            "clamp_min": 0.0,
+            "clamp_max": 100.0
+          }
+        },
+        {
+          "name": "passed",
+          "dtype": "bool",
+          "nullable": false,
+          "generator": "if_then",
+          "params": {
+            "if_column": "score",
+            "operator": "!=",
+            "value": 0,
+            "then_value": true,
+            "else_value": false
+          },
+          "depends_on": [
+            "score"
+          ]
+        }
+      ]
+    }
+  ],
+  "foreign_keys": [
+    {
+      "child_table": "training_events",
+      "child_column": "employee_sk",
+      "parent_table": "employee_dim",
+      "parent_column": "employee_sk",
+      "min_children": 1,
+      "max_children": 8
+    }
+  ]
+}

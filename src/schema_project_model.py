@@ -60,6 +60,8 @@ class TableSpec:
     # optional SCD active period columns (required for scd2)
     scd_active_from_column: str | None = None
     scd_active_to_column: str | None = None
+    # optional deterministic correlation groups applied post-column generation
+    correlation_groups: list[dict[str, object]] | None = None
 
 
 @dataclass(frozen=True)
@@ -83,10 +85,360 @@ class SchemaProject:
     seed: int = 12345
     tables: list[TableSpec] = field(default_factory=list)
     foreign_keys: list[ForeignKeySpec] = field(default_factory=list)
+    timeline_constraints: list[dict[str, object]] | None = None
 
 
 def _validation_error(location: str, issue: str, hint: str) -> str:
     return f"{location}: {issue}. Fix: {hint}."
+
+
+def _is_scalar_json_value(value: object) -> bool:
+    return not isinstance(value, (dict, list))
+
+
+def _scalar_identity(value: object) -> tuple[str, str]:
+    return (type(value).__name__, repr(value))
+
+
+def correlation_cholesky_lower(matrix: list[list[float]]) -> list[list[float]]:
+    """Return a lower-triangular factor for a positive semi-definite matrix."""
+    size = len(matrix)
+    lower: list[list[float]] = [[0.0 for _ in range(size)] for _ in range(size)]
+    for row_idx in range(size):
+        for col_idx in range(row_idx + 1):
+            accum = 0.0
+            for k in range(col_idx):
+                accum += lower[row_idx][k] * lower[col_idx][k]
+            if row_idx == col_idx:
+                diagonal = matrix[row_idx][row_idx] - accum
+                if diagonal < -1e-9:
+                    raise ValueError("matrix is not positive semi-definite")
+                lower[row_idx][col_idx] = (diagonal if diagonal > 0.0 else 0.0) ** 0.5
+            else:
+                pivot = lower[col_idx][col_idx]
+                if abs(pivot) <= 1e-12:
+                    lower[row_idx][col_idx] = 0.0
+                else:
+                    lower[row_idx][col_idx] = (matrix[row_idx][col_idx] - accum) / pivot
+    return lower
+
+
+def _validate_correlation_groups_for_table(
+    table: TableSpec,
+    *,
+    col_map: dict[str, ColumnSpec],
+    incoming_fk_cols: set[str],
+) -> None:
+    groups = table.correlation_groups
+    if groups is None:
+        return
+    if not isinstance(groups, list):
+        raise ValueError(
+            _validation_error(
+                f"Table '{table.table_name}'",
+                "correlation_groups must be a list when provided",
+                "set correlation_groups to a list of group objects or omit correlation_groups",
+            )
+        )
+    if len(groups) == 0:
+        raise ValueError(
+            _validation_error(
+                f"Table '{table.table_name}'",
+                "correlation_groups cannot be empty when provided",
+                "add one or more correlation groups or omit correlation_groups",
+            )
+        )
+
+    seen_group_ids: set[str] = set()
+    claimed_columns: dict[str, str] = {}
+    business_key_cols = set(table.business_key or [])
+    depends_on_by_column = {column.name: set(column.depends_on or []) for column in table.columns}
+
+    for group_index, group in enumerate(groups):
+        location = f"Table '{table.table_name}', correlation_groups[{group_index}]"
+        if not isinstance(group, dict):
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "group must be a JSON object",
+                    "configure this correlation group as an object with group_id, columns, and rank_correlation",
+                )
+            )
+
+        group_id_raw = group.get("group_id")
+        if not isinstance(group_id_raw, str) or group_id_raw.strip() == "":
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "group_id is required",
+                    "set group_id to a non-empty string",
+                )
+            )
+        group_id = group_id_raw.strip()
+        if group_id in seen_group_ids:
+            raise ValueError(
+                _validation_error(
+                    f"Table '{table.table_name}'",
+                    f"duplicate correlation group_id '{group_id}'",
+                    "use unique group_id values in correlation_groups",
+                )
+            )
+        seen_group_ids.add(group_id)
+
+        columns_raw = group.get("columns")
+        if not isinstance(columns_raw, list) or len(columns_raw) < 2:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "columns must be a list with at least two column names",
+                    "set columns to two or more existing non-key columns",
+                )
+            )
+        columns: list[str] = []
+        for column_raw in columns_raw:
+            if not isinstance(column_raw, str) or column_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "columns contains an empty or non-string value",
+                        "use non-empty column-name strings in columns",
+                    )
+                )
+            columns.append(column_raw.strip())
+        if len(set(columns)) != len(columns):
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "columns contains duplicate names",
+                    "list each correlation column only once",
+                )
+            )
+
+        for column_name in columns:
+            existing_group = claimed_columns.get(column_name)
+            if existing_group is not None:
+                raise ValueError(
+                    _validation_error(
+                        f"Table '{table.table_name}', column '{column_name}'",
+                        f"is already assigned to correlation group '{existing_group}'",
+                        "assign each column to at most one correlation group",
+                    )
+                )
+            if column_name not in col_map:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"column '{column_name}' was not found",
+                        "use existing column names in correlation_groups.columns",
+                    )
+                )
+            column = col_map[column_name]
+            if column.primary_key:
+                raise ValueError(
+                    _validation_error(
+                        f"Table '{table.table_name}', column '{column_name}'",
+                        "primary key columns cannot be in correlation groups",
+                        "choose non-primary-key columns for correlation",
+                    )
+                )
+            if column_name in incoming_fk_cols:
+                raise ValueError(
+                    _validation_error(
+                        f"Table '{table.table_name}', column '{column_name}'",
+                        "child foreign-key columns cannot be in correlation groups",
+                        "choose non-FK columns for correlation",
+                    )
+                )
+            if column_name in business_key_cols:
+                raise ValueError(
+                    _validation_error(
+                        f"Table '{table.table_name}', column '{column_name}'",
+                        "business_key columns cannot be in correlation groups",
+                        "choose non-business-key columns for correlation",
+                    )
+                )
+            if column.dtype == "bytes":
+                raise ValueError(
+                    _validation_error(
+                        f"Table '{table.table_name}', column '{column_name}'",
+                        "dtype 'bytes' is not supported in correlation groups",
+                        "use numeric, text, bool, date, or datetime columns for correlation",
+                    )
+                )
+            if len(column.depends_on or []) > 0:
+                raise ValueError(
+                    _validation_error(
+                        f"Table '{table.table_name}', column '{column_name}'",
+                        "columns with depends_on cannot be in correlation groups",
+                        "remove depends_on from this column or exclude it from correlation_groups",
+                    )
+                )
+            claimed_columns[column_name] = group_id
+
+        for target_column, depends_on in depends_on_by_column.items():
+            overlap = sorted(set(columns) & depends_on)
+            if overlap:
+                overlap_display = ", ".join(overlap)
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"columns ({overlap_display}) are referenced by depends_on in column '{target_column}'",
+                        "remove depends_on relationships involving correlation-group columns",
+                    )
+                )
+
+        rank_raw = group.get("rank_correlation")
+        expected_size = len(columns)
+        if not isinstance(rank_raw, list) or len(rank_raw) != expected_size:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"rank_correlation must be a {expected_size}x{expected_size} matrix",
+                    "set rank_correlation rows/columns to match the columns list length",
+                )
+            )
+        rank_matrix: list[list[float]] = []
+        for row_index, row_raw in enumerate(rank_raw):
+            if not isinstance(row_raw, list) or len(row_raw) != expected_size:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"rank_correlation row {row_index} must contain {expected_size} entries",
+                        "set each rank_correlation row length to match the columns list length",
+                    )
+                )
+            parsed_row: list[float] = []
+            for col_index, value_raw in enumerate(row_raw):
+                try:
+                    value = float(value_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"rank_correlation[{row_index}][{col_index}] must be numeric",
+                            "use numeric correlation coefficients between -1 and 1",
+                        )
+                    ) from exc
+                if value < -1.0 or value > 1.0:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"rank_correlation[{row_index}][{col_index}]={value} is outside [-1, 1]",
+                            "keep all correlation coefficients within -1 and 1",
+                        )
+                    )
+                parsed_row.append(value)
+            rank_matrix.append(parsed_row)
+
+        for diag_index in range(expected_size):
+            diagonal = rank_matrix[diag_index][diag_index]
+            if abs(diagonal - 1.0) > 1e-6:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"rank_correlation diagonal at [{diag_index}][{diag_index}] must be 1.0",
+                        "set all diagonal entries to 1.0",
+                    )
+                )
+        for row_index in range(expected_size):
+            for col_index in range(row_index + 1, expected_size):
+                left = rank_matrix[row_index][col_index]
+                right = rank_matrix[col_index][row_index]
+                if abs(left - right) > 1e-6:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"rank_correlation must be symmetric but [{row_index}][{col_index}]={left} and [{col_index}][{row_index}]={right}",
+                            "set rank_correlation to a symmetric matrix",
+                        )
+                    )
+        try:
+            correlation_cholesky_lower(rank_matrix)
+        except ValueError as exc:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "rank_correlation must be positive semi-definite",
+                    "adjust coefficients to a valid correlation matrix",
+                )
+            ) from exc
+
+        strength_raw = group.get("strength", 1.0)
+        try:
+            strength = float(strength_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "strength must be numeric when provided",
+                    "set strength to a numeric value between 0 and 1",
+                )
+            ) from exc
+        if strength < 0.0 or strength > 1.0:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"strength {strength} is outside [0, 1]",
+                    "set strength to a value between 0 and 1",
+                )
+            )
+
+        categorical_orders_raw = group.get("categorical_orders")
+        if categorical_orders_raw is not None:
+            if not isinstance(categorical_orders_raw, dict):
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "categorical_orders must be an object when provided",
+                        "set categorical_orders to an object mapping column names to ordered scalar lists",
+                    )
+                )
+            for order_column_raw, order_values_raw in categorical_orders_raw.items():
+                if not isinstance(order_column_raw, str) or order_column_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "categorical_orders contains an empty or non-string column key",
+                            "use non-empty column names as categorical_orders keys",
+                        )
+                    )
+                order_column = order_column_raw.strip()
+                if order_column not in columns:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"categorical_orders key '{order_column}' must also be listed in columns",
+                            "add the column to this group's columns list or remove the categorical_orders key",
+                        )
+                    )
+                if not isinstance(order_values_raw, list) or len(order_values_raw) == 0:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"categorical_orders['{order_column}'] must be a non-empty list",
+                            "provide one or more ordered scalar values for this column",
+                        )
+                    )
+                seen_values: set[tuple[str, str]] = set()
+                for value in order_values_raw:
+                    if not _is_scalar_json_value(value):
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                f"categorical_orders['{order_column}'] values must be scalar",
+                                "use scalar values (string/number/bool/null) in categorical_orders",
+                            )
+                        )
+                    marker = _scalar_identity(value)
+                    if marker in seen_values:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                f"categorical_orders['{order_column}'] contains duplicate values",
+                                "list each ordered categorical value only once",
+                            )
+                        )
+                    seen_values.add(marker)
 
 
 def validate_project(project: SchemaProject) -> None:
@@ -186,6 +538,41 @@ def validate_project(project: SchemaProject) -> None:
                 f"{location}: params.{key} must be an integer. "
                 f"Fix: {hint}."
             ) from exc
+
+    def _parse_non_negative_int(
+        value: object,
+        *,
+        location: str,
+        field_name: str,
+        hint: str,
+    ) -> int:
+        if isinstance(value, bool):
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be an integer",
+                    hint,
+                )
+            )
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be an integer",
+                    hint,
+                )
+            ) from exc
+        if parsed < 0:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} cannot be negative",
+                    hint,
+                )
+            )
+        return parsed
 
     # Per-table validations
     for t in project.tables:
@@ -691,6 +1078,353 @@ def validate_project(project: SchemaProject) -> None:
                             f"{location}: params.start_index={start_index} is outside order '{order_name}' length {len(order_values)}. "
                             "Fix: set params.start_index within every configured order length."
                         )
+            if c.generator == "state_transition":
+                if c.dtype not in {"text", "int"}:
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'state_transition' requires dtype text or int. "
+                        "Fix: change dtype to text/int or choose a generator compatible with this dtype."
+                    )
+                params = c.params or {}
+                location = f"Table '{t.table_name}', column '{c.name}': generator 'state_transition'"
+
+                entity_col_raw = params.get("entity_column")
+                if not isinstance(entity_col_raw, str) or entity_col_raw.strip() == "":
+                    raise ValueError(
+                        f"{location}: params.entity_column is required. "
+                        "Fix: set params.entity_column to an existing source column name."
+                    )
+                entity_col = entity_col_raw.strip()
+                if entity_col == c.name:
+                    raise ValueError(
+                        f"{location}: params.entity_column cannot reference the target column itself. "
+                        "Fix: choose a different source column for entity identity."
+                    )
+                if entity_col not in col_map:
+                    raise ValueError(
+                        f"{location}: params.entity_column '{entity_col}' was not found. "
+                        "Fix: use an existing source column name."
+                    )
+                depends_on = c.depends_on or []
+                if entity_col not in depends_on:
+                    raise ValueError(
+                        f"{location}: requires depends_on to include '{entity_col}'. "
+                        "Fix: add the entity source column to depends_on so it generates first."
+                    )
+
+                states_raw = params.get("states")
+                if not isinstance(states_raw, list) or len(states_raw) == 0:
+                    raise ValueError(
+                        f"{location}: params.states must be a non-empty list. "
+                        "Fix: provide one or more allowed state values."
+                    )
+
+                states: list[object] = []
+                state_identities: set[tuple[str, str]] = set()
+                for idx, raw_state in enumerate(states_raw):
+                    if isinstance(raw_state, (dict, list)) or isinstance(raw_state, bool):
+                        raise ValueError(
+                            f"{location}: params.states[{idx}] must be a scalar text/int value. "
+                            "Fix: use only string or integer states."
+                        )
+                    if c.dtype == "text":
+                        if not isinstance(raw_state, str) or raw_state.strip() == "":
+                            raise ValueError(
+                                f"{location}: params.states[{idx}] must be a non-empty string for dtype text. "
+                                "Fix: use non-empty string states when dtype='text'."
+                            )
+                        normalized_state: object = raw_state
+                    else:
+                        if not isinstance(raw_state, int):
+                            raise ValueError(
+                                f"{location}: params.states[{idx}] must be an integer for dtype int. "
+                                "Fix: use integer states when dtype='int'."
+                            )
+                        normalized_state = int(raw_state)
+                    identity = _scalar_identity(normalized_state)
+                    if identity in state_identities:
+                        raise ValueError(
+                            f"{location}: params.states contains duplicate values. "
+                            "Fix: list each state only once."
+                        )
+                    state_identities.add(identity)
+                    states.append(normalized_state)
+
+                state_set = set(states)
+
+                def _coerce_state_ref(
+                    raw_value: object,
+                    *,
+                    field_name: str,
+                    allow_int_string: bool,
+                ) -> object:
+                    if c.dtype == "text":
+                        if not isinstance(raw_value, str):
+                            raise ValueError(
+                                f"{location}: {field_name} must reference text states. "
+                                "Fix: use string state values declared in params.states."
+                            )
+                        normalized = raw_value
+                    else:
+                        if isinstance(raw_value, bool):
+                            raise ValueError(
+                                f"{location}: {field_name} must reference integer states. "
+                                "Fix: use integer state values declared in params.states."
+                            )
+                        if isinstance(raw_value, int):
+                            normalized = int(raw_value)
+                        elif allow_int_string and isinstance(raw_value, str) and raw_value.strip() != "":
+                            try:
+                                normalized = int(raw_value.strip())
+                            except (TypeError, ValueError) as exc:
+                                raise ValueError(
+                                    f"{location}: {field_name} value '{raw_value}' is not a valid integer state. "
+                                    "Fix: use integer state values declared in params.states."
+                                ) from exc
+                        else:
+                            raise ValueError(
+                                f"{location}: {field_name} must reference integer states. "
+                                "Fix: use integer state values declared in params.states."
+                            )
+                    if normalized not in state_set:
+                        raise ValueError(
+                            f"{location}: {field_name} value '{normalized}' is not in params.states. "
+                            "Fix: reference only states declared in params.states."
+                        )
+                    return normalized
+
+                start_state_raw = params.get("start_state")
+                start_weights_raw = params.get("start_weights")
+                if start_state_raw is not None and start_weights_raw is not None:
+                    raise ValueError(
+                        f"{location}: params.start_state and params.start_weights cannot both be set. "
+                        "Fix: configure either a fixed start_state or weighted start_weights."
+                    )
+                if start_state_raw is not None:
+                    _coerce_state_ref(
+                        start_state_raw,
+                        field_name="params.start_state",
+                        allow_int_string=False,
+                    )
+                if start_weights_raw is not None:
+                    if not isinstance(start_weights_raw, dict) or len(start_weights_raw) == 0:
+                        raise ValueError(
+                            f"{location}: params.start_weights must be a non-empty object when provided. "
+                            "Fix: map each declared state to a numeric weight."
+                        )
+                    normalized_start_weights: dict[object, float] = {}
+                    for raw_key, raw_weight in start_weights_raw.items():
+                        state_key = _coerce_state_ref(
+                            raw_key,
+                            field_name="params.start_weights key",
+                            allow_int_string=True,
+                        )
+                        if state_key in normalized_start_weights:
+                            raise ValueError(
+                                f"{location}: params.start_weights has duplicate keys after normalization. "
+                                "Fix: include one unique key per state."
+                            )
+                        try:
+                            weight = float(raw_weight)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                f"{location}: params.start_weights['{raw_key}'] must be numeric. "
+                                "Fix: provide numeric non-negative start weights."
+                            ) from exc
+                        if weight < 0:
+                            raise ValueError(
+                                f"{location}: params.start_weights['{raw_key}'] cannot be negative. "
+                                "Fix: use non-negative start weights."
+                            )
+                        normalized_start_weights[state_key] = weight
+                    if set(normalized_start_weights.keys()) != state_set:
+                        raise ValueError(
+                            f"{location}: params.start_weights keys must exactly match params.states. "
+                            "Fix: provide one start weight for each state and remove extras."
+                        )
+                    if not any(weight > 0 for weight in normalized_start_weights.values()):
+                        raise ValueError(
+                            f"{location}: params.start_weights must include at least one value > 0. "
+                            "Fix: set one or more start weights above zero."
+                        )
+
+                terminal_states_raw = params.get("terminal_states", [])
+                if not isinstance(terminal_states_raw, list):
+                    raise ValueError(
+                        f"{location}: params.terminal_states must be a list when provided. "
+                        "Fix: set params.terminal_states to a list of declared states or omit it."
+                    )
+                terminal_states: set[object] = set()
+                for idx, raw_terminal in enumerate(terminal_states_raw):
+                    terminal_state = _coerce_state_ref(
+                        raw_terminal,
+                        field_name=f"params.terminal_states[{idx}]",
+                        allow_int_string=False,
+                    )
+                    if terminal_state in terminal_states:
+                        raise ValueError(
+                            f"{location}: params.terminal_states contains duplicate values. "
+                            "Fix: list each terminal state only once."
+                        )
+                    terminal_states.add(terminal_state)
+
+                dwell_min_raw = params.get("dwell_min", 1)
+                dwell_max_raw = params.get("dwell_max", dwell_min_raw)
+                try:
+                    dwell_min = int(dwell_min_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"{location}: params.dwell_min must be an integer. "
+                        "Fix: set params.dwell_min to 1 or greater."
+                    ) from exc
+                try:
+                    dwell_max = int(dwell_max_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"{location}: params.dwell_max must be an integer. "
+                        "Fix: set params.dwell_max to an integer >= params.dwell_min."
+                    ) from exc
+                if dwell_min < 1:
+                    raise ValueError(
+                        f"{location}: params.dwell_min must be >= 1. "
+                        "Fix: set params.dwell_min to 1 or greater."
+                    )
+                if dwell_max < dwell_min:
+                    raise ValueError(
+                        f"{location}: params.dwell_max cannot be less than params.dwell_min. "
+                        "Fix: set params.dwell_max >= params.dwell_min."
+                    )
+
+                dwell_by_state_raw = params.get("dwell_by_state")
+                if dwell_by_state_raw is not None:
+                    if not isinstance(dwell_by_state_raw, dict):
+                        raise ValueError(
+                            f"{location}: params.dwell_by_state must be an object when provided. "
+                            "Fix: set params.dwell_by_state to a state->min/max object map."
+                        )
+                    seen_dwell_states: set[object] = set()
+                    for raw_key, raw_bounds in dwell_by_state_raw.items():
+                        dwell_state = _coerce_state_ref(
+                            raw_key,
+                            field_name="params.dwell_by_state key",
+                            allow_int_string=True,
+                        )
+                        if dwell_state in seen_dwell_states:
+                            raise ValueError(
+                                f"{location}: params.dwell_by_state has duplicate keys after normalization. "
+                                "Fix: include one per-state dwell override entry."
+                            )
+                        seen_dwell_states.add(dwell_state)
+                        if not isinstance(raw_bounds, dict):
+                            raise ValueError(
+                                f"{location}: params.dwell_by_state['{raw_key}'] must be an object. "
+                                "Fix: configure per-state min/max integer bounds."
+                            )
+                        min_raw = raw_bounds.get("min", dwell_min)
+                        max_raw = raw_bounds.get("max", min_raw)
+                        try:
+                            min_bound = int(min_raw)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                f"{location}: params.dwell_by_state['{raw_key}'].min must be an integer. "
+                                "Fix: set per-state min dwell to 1 or greater."
+                            ) from exc
+                        try:
+                            max_bound = int(max_raw)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                f"{location}: params.dwell_by_state['{raw_key}'].max must be an integer. "
+                                "Fix: set per-state max dwell to an integer >= min."
+                            ) from exc
+                        if min_bound < 1:
+                            raise ValueError(
+                                f"{location}: params.dwell_by_state['{raw_key}'].min must be >= 1. "
+                                "Fix: set per-state min dwell to 1 or greater."
+                            )
+                        if max_bound < min_bound:
+                            raise ValueError(
+                                f"{location}: params.dwell_by_state['{raw_key}'].max cannot be less than min. "
+                                "Fix: set per-state max dwell >= min."
+                            )
+
+                transitions_raw = params.get("transitions")
+                if not isinstance(transitions_raw, dict) or len(transitions_raw) == 0:
+                    raise ValueError(
+                        f"{location}: params.transitions must be a non-empty object. "
+                        "Fix: set params.transitions like {'new': {'active': 1.0}}."
+                    )
+                normalized_transitions: dict[object, dict[object, float]] = {}
+                for raw_from, raw_targets in transitions_raw.items():
+                    from_state = _coerce_state_ref(
+                        raw_from,
+                        field_name="params.transitions key",
+                        allow_int_string=True,
+                    )
+                    if from_state in normalized_transitions:
+                        raise ValueError(
+                            f"{location}: params.transitions has duplicate from-state keys after normalization. "
+                            "Fix: include one unique from-state entry per declared state."
+                        )
+                    if not isinstance(raw_targets, dict) or len(raw_targets) == 0:
+                        raise ValueError(
+                            f"{location}: params.transitions['{raw_from}'] must be a non-empty object. "
+                            "Fix: configure one or more outbound transition weights."
+                        )
+                    normalized_targets: dict[object, float] = {}
+                    has_positive_weight = False
+                    for raw_to, raw_weight in raw_targets.items():
+                        to_state = _coerce_state_ref(
+                            raw_to,
+                            field_name=f"params.transitions['{raw_from}'] key",
+                            allow_int_string=True,
+                        )
+                        if to_state == from_state:
+                            raise ValueError(
+                                f"{location}: params.transitions['{raw_from}'] cannot include self-transition '{raw_to}'. "
+                                "Fix: remove self-transition edges and use dwell controls for state hold behavior."
+                            )
+                        if to_state in normalized_targets:
+                            raise ValueError(
+                                f"{location}: params.transitions['{raw_from}'] has duplicate targets after normalization. "
+                                "Fix: include each target state only once."
+                            )
+                        try:
+                            weight = float(raw_weight)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                f"{location}: params.transitions['{raw_from}']['{raw_to}'] must be numeric. "
+                                "Fix: use numeric non-negative transition weights."
+                            ) from exc
+                        if weight < 0:
+                            raise ValueError(
+                                f"{location}: params.transitions['{raw_from}']['{raw_to}'] cannot be negative. "
+                                "Fix: use non-negative transition weights."
+                            )
+                        if weight > 0:
+                            has_positive_weight = True
+                        normalized_targets[to_state] = weight
+                    if not has_positive_weight:
+                        raise ValueError(
+                            f"{location}: params.transitions['{raw_from}'] must include at least one value > 0. "
+                            "Fix: set one or more outbound transition weights above zero."
+                        )
+                    normalized_transitions[from_state] = normalized_targets
+
+                for terminal_state in terminal_states:
+                    outbound = normalized_transitions.get(terminal_state)
+                    if outbound:
+                        raise ValueError(
+                            f"{location}: terminal state '{terminal_state}' cannot define outbound transitions. "
+                            "Fix: remove transition entries for terminal states."
+                        )
+
+                for state in states:
+                    if state in terminal_states:
+                        continue
+                    if state not in normalized_transitions:
+                        raise ValueError(
+                            f"{location}: non-terminal state '{state}' is missing transition weights. "
+                            "Fix: add one or more outbound transition targets for every non-terminal state."
+                        )
             if c.generator == "sample_csv":
                 params = c.params or {}
                 path_value = params.get("path")
@@ -987,6 +1721,11 @@ def validate_project(project: SchemaProject) -> None:
                         )
         incoming = [fk for fk in project.foreign_keys if fk.child_table == t.table_name]
         incoming_fk_cols = {fk.child_column for fk in incoming}
+        _validate_correlation_groups_for_table(
+            t,
+            col_map=col_map,
+            incoming_fk_cols=incoming_fk_cols,
+        )
 
         business_key = t.business_key
         business_key_unique_count = t.business_key_unique_count
@@ -1255,4 +1994,334 @@ def validate_project(project: SchemaProject) -> None:
                 f"Foreign key on table '{fk.child_table}': min_children cannot exceed max_children. "
                 "Fix: set min_children <= max_children."
             )
+
+    timeline_constraints = project.timeline_constraints
+    if timeline_constraints is not None:
+        if not isinstance(timeline_constraints, list):
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "timeline_constraints must be a list when provided",
+                    "set timeline_constraints to a list of rule objects or omit timeline_constraints",
+                )
+            )
+        if len(timeline_constraints) == 0:
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "timeline_constraints cannot be empty when provided",
+                    "add one or more timeline constraint rules or omit timeline_constraints",
+                )
+            )
+
+        seen_rule_ids: set[str] = set()
+        seen_targets: set[tuple[str, str]] = set()
+
+        for rule_index, raw_rule in enumerate(timeline_constraints):
+            location = f"Project timeline_constraints[{rule_index}]"
+            if not isinstance(raw_rule, dict):
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "rule must be a JSON object",
+                        "configure this timeline rule as an object with rule_id, child_table, child_column, and references",
+                    )
+                )
+
+            rule_id_raw = raw_rule.get("rule_id")
+            if not isinstance(rule_id_raw, str) or rule_id_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "rule_id is required",
+                        "set rule_id to a non-empty string",
+                    )
+                )
+            rule_id = rule_id_raw.strip()
+            if rule_id in seen_rule_ids:
+                raise ValueError(
+                    _validation_error(
+                        "Project",
+                        f"duplicate timeline rule_id '{rule_id}'",
+                        "use unique rule_id values in timeline_constraints",
+                    )
+                )
+            seen_rule_ids.add(rule_id)
+
+            mode_raw = raw_rule.get("mode", "enforce")
+            if not isinstance(mode_raw, str) or mode_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "mode must be a string when provided",
+                        "set mode to 'enforce' or omit mode",
+                    )
+                )
+            mode = mode_raw.strip().lower()
+            if mode != "enforce":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"unsupported mode '{mode_raw}'",
+                        "set mode to 'enforce' for this release",
+                    )
+                )
+
+            child_table_raw = raw_rule.get("child_table")
+            if not isinstance(child_table_raw, str) or child_table_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "child_table is required",
+                        "set child_table to an existing table name",
+                    )
+                )
+            child_table_name = child_table_raw.strip()
+            child_table = table_map.get(child_table_name)
+            if child_table is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"child_table '{child_table_name}' was not found",
+                        "use an existing table name for child_table",
+                    )
+                )
+
+            child_column_raw = raw_rule.get("child_column")
+            if not isinstance(child_column_raw, str) or child_column_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "child_column is required",
+                        "set child_column to an existing date/datetime column in child_table",
+                    )
+                )
+            child_column_name = child_column_raw.strip()
+            child_cols = {column.name: column for column in child_table.columns}
+            child_column = child_cols.get(child_column_name)
+            if child_column is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"child_column '{child_column_name}' was not found on table '{child_table_name}'",
+                        "use an existing child table column name",
+                    )
+                )
+            if child_column.dtype not in {"date", "datetime"}:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"child_column '{child_column_name}' must be dtype date or datetime",
+                        "choose a date/datetime child column for timeline constraints",
+                    )
+                )
+
+            target = (child_table_name, child_column_name)
+            if target in seen_targets:
+                raise ValueError(
+                    _validation_error(
+                        "Project",
+                        f"multiple timeline rules target '{child_table_name}.{child_column_name}'",
+                        "define at most one timeline rule per child_table + child_column",
+                    )
+                )
+            seen_targets.add(target)
+
+            references_raw = raw_rule.get("references")
+            if not isinstance(references_raw, list) or len(references_raw) == 0:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "references must be a non-empty list",
+                        "configure one or more parent reference objects",
+                    )
+                )
+
+            child_dtype = child_column.dtype
+            for reference_index, raw_reference in enumerate(references_raw):
+                ref_location = f"{location}, references[{reference_index}]"
+                if not isinstance(raw_reference, dict):
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            "reference must be a JSON object",
+                            "configure parent_table, parent_column, via_child_fk, direction, and offset bounds",
+                        )
+                    )
+
+                parent_table_raw = raw_reference.get("parent_table")
+                if not isinstance(parent_table_raw, str) or parent_table_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            "parent_table is required",
+                            "set parent_table to an existing parent table name",
+                        )
+                    )
+                parent_table_name = parent_table_raw.strip()
+                parent_table = table_map.get(parent_table_name)
+                if parent_table is None:
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            f"parent_table '{parent_table_name}' was not found",
+                            "use an existing table name for parent_table",
+                        )
+                    )
+
+                parent_column_raw = raw_reference.get("parent_column")
+                if not isinstance(parent_column_raw, str) or parent_column_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            "parent_column is required",
+                            "set parent_column to an existing date/datetime column in parent_table",
+                        )
+                    )
+                parent_column_name = parent_column_raw.strip()
+                parent_cols = {column.name: column for column in parent_table.columns}
+                parent_column = parent_cols.get(parent_column_name)
+                if parent_column is None:
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            f"parent_column '{parent_column_name}' was not found on table '{parent_table_name}'",
+                            "use an existing parent table column name",
+                        )
+                    )
+                if parent_column.dtype not in {"date", "datetime"}:
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            f"parent_column '{parent_column_name}' must be dtype date or datetime",
+                            "choose a date/datetime parent column for timeline constraints",
+                        )
+                    )
+                if parent_column.dtype != child_dtype:
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            f"parent_column '{parent_table_name}.{parent_column_name}' dtype must match child_column '{child_table_name}.{child_column_name}'",
+                            "use date->date or datetime->datetime references",
+                        )
+                    )
+
+                via_child_fk_raw = raw_reference.get("via_child_fk")
+                if not isinstance(via_child_fk_raw, str) or via_child_fk_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            "via_child_fk is required",
+                            "set via_child_fk to the child FK column used to resolve the parent row",
+                        )
+                    )
+                via_child_fk = via_child_fk_raw.strip()
+                if via_child_fk not in child_cols:
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            f"via_child_fk '{via_child_fk}' was not found on table '{child_table_name}'",
+                            "use an existing child FK column name",
+                        )
+                    )
+
+                direct_fk = next(
+                    (
+                        fk
+                        for fk in project.foreign_keys
+                        if fk.child_table == child_table_name
+                        and fk.child_column == via_child_fk
+                        and fk.parent_table == parent_table_name
+                    ),
+                    None,
+                )
+                if direct_fk is None:
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            (
+                                f"via_child_fk '{child_table_name}.{via_child_fk}' does not directly reference "
+                                f"parent_table '{parent_table_name}'"
+                            ),
+                            "define a direct FK from child_table.via_child_fk to parent_table before using this reference",
+                        )
+                    )
+
+                direction_raw = raw_reference.get("direction")
+                if not isinstance(direction_raw, str) or direction_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            "direction is required",
+                            "set direction to 'after' or 'before'",
+                        )
+                    )
+                direction = direction_raw.strip().lower()
+                if direction not in {"after", "before"}:
+                    raise ValueError(
+                        _validation_error(
+                            ref_location,
+                            f"unsupported direction '{direction_raw}'",
+                            "set direction to 'after' or 'before'",
+                        )
+                    )
+
+                if child_dtype == "date":
+                    min_days = _parse_non_negative_int(
+                        raw_reference.get("min_days", 0),
+                        location=ref_location,
+                        field_name="min_days",
+                        hint="set min_days to an integer >= 0",
+                    )
+                    max_days = _parse_non_negative_int(
+                        raw_reference.get("max_days", min_days),
+                        location=ref_location,
+                        field_name="max_days",
+                        hint="set max_days to an integer >= min_days",
+                    )
+                    if max_days < min_days:
+                        raise ValueError(
+                            _validation_error(
+                                ref_location,
+                                "max_days cannot be less than min_days",
+                                "set max_days >= min_days",
+                            )
+                        )
+                    if "min_seconds" in raw_reference or "max_seconds" in raw_reference:
+                        raise ValueError(
+                            _validation_error(
+                                ref_location,
+                                "date references cannot use min_seconds/max_seconds",
+                                "use min_days/max_days for date child/parent columns",
+                            )
+                        )
+                else:
+                    min_seconds = _parse_non_negative_int(
+                        raw_reference.get("min_seconds", 0),
+                        location=ref_location,
+                        field_name="min_seconds",
+                        hint="set min_seconds to an integer >= 0",
+                    )
+                    max_seconds = _parse_non_negative_int(
+                        raw_reference.get("max_seconds", min_seconds),
+                        location=ref_location,
+                        field_name="max_seconds",
+                        hint="set max_seconds to an integer >= min_seconds",
+                    )
+                    if max_seconds < min_seconds:
+                        raise ValueError(
+                            _validation_error(
+                                ref_location,
+                                "max_seconds cannot be less than min_seconds",
+                                "set max_seconds >= min_seconds",
+                            )
+                        )
+                    if "min_days" in raw_reference or "max_days" in raw_reference:
+                        raise ValueError(
+                            _validation_error(
+                                ref_location,
+                                "datetime references cannot use min_days/max_days",
+                                "use min_seconds/max_seconds for datetime child/parent columns",
+                            )
+                        )
 

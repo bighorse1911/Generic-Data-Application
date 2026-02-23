@@ -363,6 +363,72 @@ class TestSCDGeneration(unittest.TestCase):
                 "Fix: advance ordered_choice tracked columns by configured order movement instead of generic numeric mutation.",
             )
 
+    def test_state_transition_changing_column_uses_valid_transition_for_scd2_versions(self):
+        project = SchemaProject(
+            name="scd2_state_transition_progression",
+            seed=778,
+            tables=[
+                TableSpec(
+                    table_name="customer_dim",
+                    row_count=4,
+                    columns=[
+                        ColumnSpec("customer_sk", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_code", "text", nullable=False),
+                        ColumnSpec(
+                            "lifecycle_stage",
+                            "int",
+                            nullable=False,
+                            generator="state_transition",
+                            params={
+                                "entity_column": "customer_code",
+                                "states": [10, 20, 30],
+                                "start_weights": {"10": 1.0, "20": 0.0, "30": 0.0},
+                                "transitions": {"10": {"20": 1.0}, "20": {"30": 1.0}},
+                                "terminal_states": [30],
+                                "dwell_min": 1,
+                                "dwell_max": 1,
+                            },
+                            depends_on=["customer_code"],
+                        ),
+                        ColumnSpec("valid_from", "date", nullable=False),
+                        ColumnSpec("valid_to", "date", nullable=False),
+                    ],
+                    business_key=["customer_code"],
+                    business_key_changing_columns=["lifecycle_stage"],
+                    scd_mode="scd2",
+                    scd_active_from_column="valid_from",
+                    scd_active_to_column="valid_to",
+                )
+            ],
+            foreign_keys=[],
+        )
+        validate_project(project)
+
+        rows = generate_project_rows(project)["customer_dim"]
+        by_key: dict[str, list[dict[str, object]]] = {}
+        for row in rows:
+            key = str(row["customer_code"])
+            by_key.setdefault(key, []).append(row)
+
+        multi_version_keys = [key for key, key_rows in by_key.items() if len(key_rows) > 1]
+        self.assertTrue(
+            multi_version_keys,
+            "Expected at least one business key to have multiple SCD2 versions for state_transition progression checks. "
+            "Fix: ensure SCD2 emits historical versions in this scenario.",
+        )
+
+        next_stage = {10: 20, 20: 30, 30: 30}
+        for key in multi_version_keys:
+            key_rows = sorted(by_key[key], key=lambda r: str(r["valid_from"]))
+            first = int(key_rows[0]["lifecycle_stage"])
+            second = int(key_rows[1]["lifecycle_stage"])
+            self.assertEqual(
+                second,
+                next_stage[first],
+                f"Business key '{key}' did not follow state_transition progression between SCD2 versions. "
+                "Fix: apply one valid transition step for state_transition tracked columns during SCD2 mutation.",
+            )
+
     def test_business_key_static_and_changing_columns_cannot_overlap(self):
         bad = SchemaProject(
             name="bad_business_key_overlap",

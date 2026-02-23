@@ -45,6 +45,22 @@ class TestGuiV2GeneratorForms(unittest.TestCase):
         )
         self.assertEqual(parse_field_text(float_list_spec, "0.2, 0.8"), [0.2, 0.8])
 
+    def test_state_transition_form_fields_include_dependency_and_json_objects(self):
+        fields = visible_fields_for("state_transition", dtype="text")
+        field_ids = {field.field_id for field in fields}
+        self.assertIn("entity_column", field_ids)
+        self.assertIn("states", field_ids)
+        self.assertIn("transitions", field_ids)
+        self.assertIn("dwell_by_state", field_ids)
+
+        transitions_spec = next(
+            field
+            for field in fields
+            if field.field_id == "transitions"
+        )
+        parsed = parse_field_text(transitions_spec, "{\"new\": {\"active\": 1.0}}")
+        self.assertEqual(parsed, {"new": {"active": 1.0}})
+
 
 if __name__ == "__main__":
     unittest.main()
