@@ -130,6 +130,9 @@ def new_erd_schema_project(
         tables=[],
         foreign_keys=[],
         timeline_constraints=None,
+        data_quality_profiles=None,
+        sample_profile_fits=None,
+        locale_identity_bundles=None,
     )
 
 
@@ -165,6 +168,9 @@ def add_table_to_erd_project(
         tables=[*current.tables, new_table],
         foreign_keys=list(current.foreign_keys),
         timeline_constraints=current.timeline_constraints,
+        data_quality_profiles=current.data_quality_profiles,
+        sample_profile_fits=current.sample_profile_fits,
+        locale_identity_bundles=current.locale_identity_bundles,
     )
 
 
@@ -273,6 +279,9 @@ def add_column_to_erd_project(
         tables=next_tables,
         foreign_keys=list(current.foreign_keys),
         timeline_constraints=current.timeline_constraints,
+        data_quality_profiles=current.data_quality_profiles,
+        sample_profile_fits=current.sample_profile_fits,
+        locale_identity_bundles=current.locale_identity_bundles,
     )
 
 
@@ -425,6 +434,9 @@ def add_relationship_to_erd_project(
         tables=list(current.tables),
         foreign_keys=[*current.foreign_keys, next_fk],
         timeline_constraints=current.timeline_constraints,
+        data_quality_profiles=current.data_quality_profiles,
+        sample_profile_fits=current.sample_profile_fits,
+        locale_identity_bundles=current.locale_identity_bundles,
     )
 
 
@@ -520,6 +532,8 @@ def update_table_in_erd_project(
                 parent_column=fk.parent_column,
                 min_children=fk.min_children,
                 max_children=fk.max_children,
+                parent_selection=fk.parent_selection,
+                child_count_distribution=fk.child_count_distribution,
             )
         )
 
@@ -529,6 +543,9 @@ def update_table_in_erd_project(
         tables=next_tables,
         foreign_keys=next_foreign_keys,
         timeline_constraints=current.timeline_constraints,
+        data_quality_profiles=current.data_quality_profiles,
+        sample_profile_fits=current.sample_profile_fits,
+        locale_identity_bundles=current.locale_identity_bundles,
     )
 
 
@@ -766,6 +783,8 @@ def update_column_in_erd_project(
                 ),
                 min_children=fk.min_children,
                 max_children=fk.max_children,
+                parent_selection=fk.parent_selection,
+                child_count_distribution=fk.child_count_distribution,
             )
         )
 
@@ -775,6 +794,9 @@ def update_column_in_erd_project(
         tables=next_tables,
         foreign_keys=next_foreign_keys,
         timeline_constraints=current.timeline_constraints,
+        data_quality_profiles=current.data_quality_profiles,
+        sample_profile_fits=current.sample_profile_fits,
+        locale_identity_bundles=current.locale_identity_bundles,
     )
 
 

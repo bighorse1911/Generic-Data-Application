@@ -13,7 +13,7 @@ project. It is authoritative for:
 If behavior is unclear, this document overrides assumptions.
 If you make updates to any DATA_SEMANTICS in the project, update this file too.
 
-## Implementation status (2026-02-23)
+## Implementation status (2026-02-25)
 
 Direction 3 (float -> decimal) is completed.
 
@@ -59,6 +59,11 @@ Direction 3 (float -> decimal) is completed.
 - Data-generation update (2026-02-22): DG01 correlated column groups implemented via table-level `correlation_groups` with target rank-correlation matrices, deterministic seeded sampling, and GUI authoring exposure.
 - Data-generation update (2026-02-23): DG02 `state_transition` implemented for deterministic per-entity lifecycle trajectories with allowed transition maps, explicit terminal states, dwell-time controls, GUI authoring exposure, and SCD2 tracked-column transition-step mutation support.
 - Data-generation update (2026-02-23): DG03 cross-table temporal integrity planner implemented via project-level `timeline_constraints` with FK-linked interval intersection enforcement and preserve-valid/clamp-invalid runtime policy.
+- Data-generation update (2026-02-24): DG04 `derived_expr` implemented as a safe constrained expression DSL (`no eval`) for same-row derived columns with strict dependency declaration (`depends_on`), deterministic evaluation, and actionable validation/runtime errors.
+- Data-generation update (2026-02-24): DG05 attribute-aware FK selection implemented via optional `ForeignKeySpec.parent_selection` weighted parent cohort profiles while preserving min/max FK child cardinality constraints.
+- Data-generation update (2026-02-24): DG06 missingness + data-quality profile modeling implemented via optional project-level `data_quality_profiles` with deterministic MCAR/MAR/MNAR missingness and controlled quality-issue mutation (`format_error`, `stale_value`, `drift`).
+- Data-generation update (2026-02-24): DG07 sample-driven profile fitting implemented via optional project-level `sample_profile_fits` with CSV-driven inference (`sample_source`) and deterministic frozen profile overrides (`fixed_profile`).
+- Data-generation update (2026-02-25): DG08 child-cardinality distribution modeling implemented via optional FK-level `child_count_distribution` (`uniform`, `poisson`, `zipf`) with deterministic distribution-driven child-count shaping that preserves FK min/max bounds.
 
 ## Core design principle
 
@@ -347,6 +352,171 @@ Rules:
 - Multi-reference rules intersect allowed intervals; empty intersections are runtime errors.
 - Validation/runtime errors must include location + issue + fix hint.
 
+### 2.7 Safe derived-expression generator (`derived_expr`) (DG04 implemented)
+
+Definition:
+- Deterministic same-row derived-column formulas evaluated by a constrained expression DSL.
+- No `eval` or dynamic code execution is permitted.
+- Expressions compile through an AST allowlist with fail-fast validation and runtime checks.
+
+Column contract:
+- `generator="derived_expr"` and `params.expression` (required non-empty string).
+- Target dtype support: `int`, `decimal`, legacy `float`, `text`, `bool`, `date`, `datetime`.
+- `bytes` target dtype is not supported.
+
+DSL v1 scope:
+- Operands: scalar literals, same-row column references, parentheses.
+- Operators: `+ - * / // %`, unary `+ -`, `and`, `or`, `not`, comparisons `== != < <= > >=`, conditional expression (`a if cond else b`).
+- Functions: `if_else`, `coalesce`, `abs`, `round`, `min`, `max`, `concat`, `is_null`, `to_int`, `to_decimal`, `to_text`, `to_bool`, `col`.
+- `col("name")` is required when referencing non-identifier column names.
+- Date/datetime arithmetic helpers are intentionally out of scope for v1.
+
+Rules:
+- Every referenced source column must exist in the same table.
+- Expression cannot reference the target column itself.
+- `depends_on` must include every referenced source column.
+- Unsafe AST nodes are rejected (for example attributes, subscripts, comprehensions, import/call targets outside allowlist).
+- Runtime is strict fail-fast for null/type/cast/runtime errors (for example divide-by-zero, invalid cast).
+- No silent coercion beyond explicit cast helper functions.
+- Validation/runtime errors must include location + issue + fix hint.
+
+### 2.8 Attribute-aware FK selection (`ForeignKeySpec.parent_selection`) (DG05 implemented)
+
+Definition:
+- Optional weighted FK parent-row selection profile that biases extra child-row assignment toward specific parent attribute cohorts.
+- Works per foreign key while preserving deterministic generation and FK cardinality constraints.
+
+Foreign key contract:
+- `ForeignKeySpec.parent_selection` is optional.
+- When provided, it must be an object with:
+  - `parent_attribute` (required): existing parent-table column name used to determine cohort values.
+  - `weights` (required): non-empty object mapping cohort values to non-negative numeric weights.
+  - `default_weight` (optional): non-negative numeric fallback when no explicit weight key matches a parent value (default `1.0`).
+
+Rules:
+- FK child assignment still enforces `min_children <= per-parent child count <= max_children`.
+- `parent_attribute` may reference any non-`bytes` parent column.
+- Weight keys are matched against string forms of parent attribute values (with null aliases supported by runtime for `__NULL__`/`null`).
+- `weights` and `default_weight` values must be finite and >= 0.
+- At least one positive selection weight must exist (`weights` or `default_weight`).
+- When weighted selection is used, extra child rows are allocated using deterministic seeded weighted sampling over eligible parent rows.
+- Validation/runtime errors must include location + issue + fix hint.
+
+### 2.9 Missingness + data-quality profiles (`data_quality_profiles`) (DG06 implemented)
+
+Definition:
+- Optional project-level profiles that inject realistic null patterns and controlled quality defects after table row generation.
+- Supports deterministic MCAR/MAR/MNAR missingness plus controlled `format_error`, `stale_value`, and `drift` mutations.
+
+Project contract:
+- `SchemaProject.data_quality_profiles` is optional.
+- When provided, it must be a non-empty list of profile objects.
+
+Common profile fields:
+- `profile_id` (required): unique non-empty string.
+- `table` / `column` (required): existing target table + non-primary-key column.
+- `kind` (required): `missingness` or `quality_issue`.
+- `where` (optional): object mapping same-table columns to scalar value or non-empty scalar-value list; profile applies only when all predicates match.
+
+Missingness profile (`kind="missingness"`):
+- `mechanism` (required): `mcar`, `mar`, or `mnar`.
+- `base_rate` (required): numeric in `[0, 1]`.
+- `driver_column` (required for `mar`): existing same-table source column (must differ from target column).
+- `value_weights` (optional): object mapping source values to non-negative finite multipliers.
+- `default_weight` (optional): non-negative finite fallback multiplier (default `1.0`).
+
+Missingness rules:
+- `mcar` applies `base_rate` directly.
+- `mar` applies `base_rate * weight(driver_column value)`.
+- `mnar` applies `base_rate * weight(target-column value before null mutation)`.
+- Effective missingness probability is clamped to `[0, 1]`.
+- For `mar`/`mnar`, at least one positive effective weight must exist (`value_weights` or `default_weight`).
+
+Quality-issue profile (`kind="quality_issue"`):
+- `issue_type` (required): `format_error`, `stale_value`, or `drift`.
+- `rate` (required): numeric in `[0, 1]`.
+
+Quality-issue rules:
+- `format_error`:
+  - optional `replacement` non-empty string token.
+  - unsupported for `bytes` target columns.
+- `stale_value`:
+  - optional `lag_rows` integer >= 1 (default `1`).
+  - when triggered, row value is replaced by lagged baseline value from earlier row index.
+- `drift`:
+  - supports target dtypes `int`, `float|decimal`, `date`, `datetime`.
+  - `step` required and non-zero (`int` for `date|datetime`, numeric for numeric dtypes).
+  - optional `start_index` integer >= 1 (default `1`).
+  - applies deterministic cumulative step shift by row index progression.
+
+Runtime order:
+- DG06 profiles are enforced after table generation, correlation-group reordering, SCD transforms, and DG03 timeline enforcement.
+- Validation/runtime errors must include location + issue + fix hint.
+
+### 2.10 Sample-driven profile fitting (`sample_profile_fits`) (DG07 implemented)
+
+Definition:
+- Optional project-level profile-fit rules that bootstrap target column generator settings from sample CSV values or apply deterministic fixed profiles.
+
+Project contract:
+- `SchemaProject.sample_profile_fits` is optional.
+- When provided, it must be a non-empty list of fit objects.
+- Each fit targets exactly one non-primary-key `(table, column)` and uses a unique `fit_id`.
+
+Common fit fields:
+- `fit_id` (required): unique non-empty string.
+- `table` / `column` (required): existing target table + non-primary-key column.
+- `strategy` (optional): currently locked to `auto`.
+- At least one of `sample_source` or `fixed_profile` is required.
+
+`sample_source` mode:
+- `sample_source.path` (required): existing CSV path (repo-relative preferred).
+- `sample_source.has_header` (optional, default `true`).
+- exactly one of:
+  - `sample_source.column_index` (integer >= 0), or
+  - `sample_source.column_name` (non-empty string; requires `has_header=true`).
+- `sample_source.skip_empty` (optional, default `true`).
+
+`fixed_profile` mode:
+- `fixed_profile.generator` (required): registered generator id.
+- `fixed_profile.params` (optional): JSON object of generator params.
+- `fixed_profile.depends_on` (optional): explicit source dependencies for the fitted target column.
+
+Inference/output rules:
+- Supported inference target dtypes: `int`, `float|decimal`, `text`, `date`, `datetime`.
+- `bool` and `bytes` targets require `fixed_profile` (no CSV inference in v1).
+- Inference maps to deterministic generator profiles:
+  - `int` -> `uniform_int` (`min`, `max`),
+  - `float|decimal` -> `uniform_float` (`min=max` constant samples) or bounded `normal` (`mean`, `stdev`, `min`, `max`),
+  - `text` -> `choice_weighted` (`choices`, `weights`),
+  - `date` -> `date` (`start`, `end`),
+  - `datetime` -> `timestamp_utc` (`start`, `end`, UTC normalized).
+- DG07 profile overrides are resolved before row generation and then validated through existing generator contracts.
+- Validation/runtime errors must include location + issue + fix hint.
+
+### 2.11 Child-cardinality distribution modeling (`ForeignKeySpec.child_count_distribution`) (DG08 implemented)
+
+Definition:
+- Optional FK-level child-count shape profile that extends cardinality behavior beyond plain min/max bounds.
+- Produces deterministic distribution-driven per-parent child counts while preserving FK integrity constraints.
+
+Foreign key contract:
+- `ForeignKeySpec.child_count_distribution` is optional.
+- When provided, it must be an object with required `type` and type-specific fields:
+  - `{"type": "uniform"}`: bounded uniform-style child-count shaping.
+  - `{"type": "poisson", "lambda": number}`: bounded Poisson-like child-count shaping (`lambda > 0`).
+  - `{"type": "zipf", "s": number}`: bounded Zipf-like child-count shaping (`s > 0`).
+
+Rules:
+- DG08 is additive and does not replace FK min/max constraints; it shapes counts within `min_children..max_children`.
+- Validation requires known `type` and valid numeric parameters (`lambda` for `poisson`, `s` for `zipf`).
+- Runtime remains deterministic for fixed schema + seed.
+- FK assignment invariants still hold:
+  - no orphan FK values,
+  - per-parent child counts remain within configured `min_children` / `max_children`.
+- DG08 can be combined with DG05 parent-selection weighting; both constraints apply together.
+- Validation/runtime errors must include location + issue + fix hint.
+
 ---
 
 # 3. Identity Concepts
@@ -457,6 +627,7 @@ Rules:
 
 Cardinality:
 - `min_children`, `max_children` control child count per parent
+- optional `child_count_distribution` controls deterministic distribution shape within `min_children..max_children` (`uniform`, `poisson`, `zipf`)
 - `min_children=0` means optional relationship (future-ready policy)
 
 Invariants:
@@ -600,6 +771,11 @@ Example shape:
 9. When SCD2 is enabled, no overlapping active periods for the same business key and exactly one current version per business key.
 10. Correlation groups preserve deterministic output and enforce valid rank-correlation matrix constraints.
 11. `state_transition` trajectories are deterministic per entity and never emit forbidden/self transitions.
+12. `derived_expr` evaluation is deterministic, uses only allowed DSL syntax, and declares all source dependencies explicitly in `depends_on`.
+13. DG05 FK weighted selection remains deterministic and never violates configured per-parent `min_children`/`max_children` bounds.
+14. DG06 profile application is deterministic for fixed seed/schema/profile order and applies configured missingness/quality mutations only to declared target columns.
+15. DG07 profile fitting is deterministic for fixed seed/schema/sample inputs and fixed profiles always override with stable generator params.
+16. DG08 child-cardinality distribution profiles are deterministic and never violate FK per-parent `min_children`/`max_children` bounds.
 
 These invariants require unit tests.
 

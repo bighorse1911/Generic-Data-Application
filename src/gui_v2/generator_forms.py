@@ -131,6 +131,13 @@ GENERATOR_FORM_SPECS: dict[str, GeneratorFormSpec] = {
             GeneratorFieldSpec("else_value", "Else value", "scalar", required=True),
         ),
     ),
+    "derived_expr": GeneratorFormSpec(
+        generator_id="derived_expr",
+        description="Safe derived expression from same-row source columns.",
+        fields=(
+            GeneratorFieldSpec("expression", "Expression", "text", required=True),
+        ),
+    ),
     "time_offset": GeneratorFormSpec(
         generator_id="time_offset",
         description="Date/datetime offset from a base column.",

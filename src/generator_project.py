@@ -1,9 +1,16 @@
+import csv
 import hashlib
 import logging
+import math
 import random
 import re
 from datetime import date, datetime, timedelta, timezone
+from typing import Callable
 from src.generators import GenContext, get_generator, reset_runtime_generator_state
+from src.locale_identity import LOCALE_IDENTITY_PACKS
+from src.locale_identity import SUPPORTED_LOCALE_IDENTITY_SLOTS
+from src.project_paths import resolve_repo_path
+from src.project_paths import to_repo_relative_path
 from src.schema_project_model import (
     SchemaProject,
     TableSpec,
@@ -88,6 +95,491 @@ def _fk_lookup_identity(value: object) -> tuple[str, object]:
                 return ("str", value)
         return ("str", value)
     return (type(value).__name__, repr(value))
+
+
+def _fk_selection_key_candidates(value: object) -> list[str]:
+    keys: list[str] = []
+    if value is None:
+        keys.extend(["__NULL__", "null", "None"])
+        return keys
+    if isinstance(value, bool):
+        keys.extend(["true" if value else "false", "True" if value else "False", "1" if value else "0"])
+        return keys
+    if isinstance(value, str):
+        keys.append(value)
+        stripped = value.strip()
+        if stripped != value:
+            keys.append(stripped)
+        return keys
+    if isinstance(value, float) and value.is_integer():
+        keys.append(str(int(value)))
+    keys.append(str(value))
+    return keys
+
+
+def _resolve_fk_parent_weight(
+    value: object,
+    *,
+    weights: dict[str, float],
+    default_weight: float,
+) -> float:
+    for key in _fk_selection_key_candidates(value):
+        if key in weights:
+            return weights[key]
+    return default_weight
+
+
+def _build_fk_parent_weights(
+    fk: ForeignKeySpec,
+    *,
+    parent_rows: list[dict[str, object]],
+    child_table: str,
+) -> list[float] | None:
+    raw_profile = fk.parent_selection
+    if raw_profile is None:
+        return None
+    if not isinstance(raw_profile, dict):
+        raise ValueError(
+            _runtime_error(
+                f"Table '{child_table}', FK column '{fk.child_column}'",
+                "parent_selection must be an object when provided",
+                "set parent_selection to an object with parent_attribute, weights, and optional default_weight",
+            )
+        )
+
+    parent_attribute_raw = raw_profile.get("parent_attribute")
+    if not isinstance(parent_attribute_raw, str) or parent_attribute_raw.strip() == "":
+        raise ValueError(
+            _runtime_error(
+                f"Table '{child_table}', FK column '{fk.child_column}'",
+                "parent_selection.parent_attribute is required",
+                "set parent_selection.parent_attribute to an existing parent column name",
+            )
+        )
+    parent_attribute = parent_attribute_raw.strip()
+
+    weights_raw = raw_profile.get("weights")
+    if not isinstance(weights_raw, dict) or len(weights_raw) == 0:
+        raise ValueError(
+            _runtime_error(
+                f"Table '{child_table}', FK column '{fk.child_column}'",
+                "parent_selection.weights must be a non-empty object",
+                "set weights to a mapping of parent attribute values to non-negative numeric weights",
+            )
+        )
+
+    normalized_weights: dict[str, float] = {}
+    for raw_key, raw_weight in weights_raw.items():
+        if not isinstance(raw_key, str) or raw_key.strip() == "":
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{child_table}', FK column '{fk.child_column}'",
+                    "parent_selection.weights contains an empty or non-string key",
+                    "use non-empty string keys in parent_selection.weights",
+                )
+            )
+        key = raw_key.strip()
+        try:
+            weight = float(raw_weight)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{child_table}', FK column '{fk.child_column}'",
+                    f"parent_selection.weights['{raw_key}'] must be numeric",
+                    "use non-negative numeric values for parent_selection.weights",
+                )
+            ) from exc
+        if (not math.isfinite(weight)) or weight < 0:
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{child_table}', FK column '{fk.child_column}'",
+                    f"parent_selection.weights['{raw_key}'] must be a finite value >= 0",
+                    "use non-negative finite numeric weights",
+                )
+            )
+        normalized_weights[key] = weight
+
+    default_weight_raw = raw_profile.get("default_weight", 1.0)
+    try:
+        default_weight = float(default_weight_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            _runtime_error(
+                f"Table '{child_table}', FK column '{fk.child_column}'",
+                "parent_selection.default_weight must be numeric when provided",
+                "set default_weight to a non-negative numeric value",
+            )
+        ) from exc
+    if (not math.isfinite(default_weight)) or default_weight < 0:
+        raise ValueError(
+            _runtime_error(
+                f"Table '{child_table}', FK column '{fk.child_column}'",
+                "parent_selection.default_weight must be a finite value >= 0",
+                "set default_weight to a non-negative finite numeric value",
+            )
+        )
+
+    out: list[float] = []
+    for parent_row in parent_rows:
+        weight = _resolve_fk_parent_weight(
+            parent_row.get(parent_attribute),
+            weights=normalized_weights,
+            default_weight=default_weight,
+        )
+        out.append(weight)
+    return out
+
+
+def _normalize_fk_child_count_distribution(
+    fk: ForeignKeySpec,
+    *,
+    child_table: str,
+) -> dict[str, object] | None:
+    raw_profile = fk.child_count_distribution
+    if raw_profile is None:
+        return None
+    location = f"Table '{child_table}', FK column '{fk.child_column}'"
+    if not isinstance(raw_profile, dict):
+        raise ValueError(
+            _runtime_error(
+                location,
+                "child_count_distribution must be an object when provided",
+                "set child_count_distribution to an object with type and optional shape parameters",
+            )
+        )
+
+    dist_type_raw = raw_profile.get("type")
+    if not isinstance(dist_type_raw, str) or dist_type_raw.strip() == "":
+        raise ValueError(
+            _runtime_error(
+                location,
+                "child_count_distribution.type is required",
+                "set type to one of: uniform, poisson, zipf",
+            )
+        )
+    dist_type = dist_type_raw.strip().lower()
+    if dist_type not in {"uniform", "poisson", "zipf"}:
+        raise ValueError(
+            _runtime_error(
+                location,
+                f"unsupported child_count_distribution.type '{dist_type_raw}'",
+                "set type to one of: uniform, poisson, zipf",
+            )
+        )
+
+    normalized: dict[str, object] = {"type": dist_type}
+    if dist_type == "poisson":
+        lam_raw = raw_profile.get("lambda")
+        if lam_raw is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.lambda is required for type='poisson'",
+                    "set lambda to a positive numeric value",
+                )
+            )
+        if isinstance(lam_raw, bool):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.lambda must be numeric",
+                    "set lambda to a positive numeric value",
+                )
+            )
+        try:
+            lam = float(lam_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.lambda must be numeric",
+                    "set lambda to a positive numeric value",
+                )
+            ) from exc
+        if (not math.isfinite(lam)) or lam <= 0.0:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.lambda must be a finite value > 0",
+                    "set lambda to a positive numeric value",
+                )
+            )
+        normalized["lambda"] = lam
+    elif dist_type == "zipf":
+        s_raw = raw_profile.get("s")
+        if s_raw is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.s is required for type='zipf'",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            )
+        if isinstance(s_raw, bool):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.s must be numeric",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            )
+        try:
+            s_value = float(s_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.s must be numeric",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            ) from exc
+        if (not math.isfinite(s_value)) or s_value <= 0.0:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "child_count_distribution.s must be a finite value > 0",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            )
+        normalized["s"] = s_value
+    return normalized
+
+
+def _compile_fk_distribution_weights(
+    distribution: dict[str, object] | None,
+    *,
+    extra_capacity: int,
+    location: str,
+) -> tuple[list[float] | None, list[float] | None]:
+    if distribution is None or extra_capacity <= 0:
+        return None, None
+
+    dist_type = str(distribution.get("type"))
+    extra_weights: list[float] = []
+    if dist_type == "uniform":
+        extra_weights = [1.0 for _ in range(extra_capacity + 1)]
+    elif dist_type == "poisson":
+        lam = float(distribution["lambda"])
+        extra_weights = [1.0]
+        for extra in range(1, extra_capacity + 1):
+            extra_weights.append(extra_weights[-1] * lam / float(extra))
+    elif dist_type == "zipf":
+        s_value = float(distribution["s"])
+        extra_weights = [1.0 / ((extra + 1) ** s_value) for extra in range(extra_capacity + 1)]
+    else:
+        raise ValueError(
+            _runtime_error(
+                location,
+                f"unsupported child_count_distribution.type '{dist_type}'",
+                "set type to one of: uniform, poisson, zipf",
+            )
+        )
+
+    if not any((math.isfinite(weight) and weight > 0.0) for weight in extra_weights):
+        raise ValueError(
+            _runtime_error(
+                location,
+                "child_count_distribution produced no positive probability mass",
+                "adjust distribution parameters so at least one child-count outcome has positive probability",
+            )
+        )
+
+    tail_weights: list[float] = []
+    running_tail = 0.0
+    for extra in range(extra_capacity, 0, -1):
+        running_tail += extra_weights[extra]
+        tail_weights.append(running_tail)
+    tail_weights.reverse()
+    return extra_weights, tail_weights
+
+
+def _sample_requested_fk_extras(
+    rng: random.Random,
+    *,
+    parent_count: int,
+    extra_capacity: int,
+    extra_weights: list[float] | None,
+) -> int:
+    if parent_count <= 0 or extra_capacity <= 0:
+        return 0
+    if extra_weights is None:
+        return sum(rng.randint(0, extra_capacity) for _ in range(parent_count))
+    choices = list(range(extra_capacity + 1))
+    total = 0
+    for _ in range(parent_count):
+        total += int(rng.choices(choices, weights=extra_weights, k=1)[0])
+    return total
+
+
+def _fk_parent_rows_and_ids(
+    fk: ForeignKeySpec,
+    *,
+    results: dict[str, list[dict[str, object]]],
+    child_table: str,
+) -> tuple[list[dict[str, object]], list[int]]:
+    parent_rows = results.get(fk.parent_table)
+    if parent_rows is None:
+        raise ValueError(
+            _runtime_error(
+                f"Table '{child_table}', FK column '{fk.child_column}'",
+                f"parent table '{fk.parent_table}' rows are unavailable",
+                "ensure parent tables are generated before child tables",
+            )
+        )
+    parent_ids: list[int] = []
+    for parent_index, parent_row in enumerate(parent_rows, start=1):
+        parent_id_raw = parent_row.get(fk.parent_column)
+        if isinstance(parent_id_raw, bool):
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{child_table}', FK column '{fk.child_column}'",
+                    (
+                        f"parent key '{fk.parent_table}.{fk.parent_column}' at row {parent_index} "
+                        "is boolean and cannot be used as an int FK id"
+                    ),
+                    "ensure parent PK values are integer-like",
+                )
+            )
+        try:
+            parent_id = int(parent_id_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{child_table}', FK column '{fk.child_column}'",
+                    (
+                        f"parent key '{fk.parent_table}.{fk.parent_column}' at row {parent_index} "
+                        f"is not integer-like (value={parent_id_raw!r})"
+                    ),
+                    "ensure parent PK values are generated and integer-like before FK assignment",
+                )
+            ) from exc
+        parent_ids.append(parent_id)
+    return parent_rows, parent_ids
+
+
+def _allocate_fk_child_counts(
+    rng: random.Random,
+    *,
+    parent_ids: list[int],
+    min_children: int,
+    max_children: int,
+    total_children: int,
+    location: str,
+    parent_weights: list[float] | None = None,
+    extra_level_weights: list[float] | None = None,
+) -> list[int]:
+    parent_n = len(parent_ids)
+    if parent_n == 0:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "cannot allocate FK children because parent table has zero rows",
+                "generate one or more parent rows before assigning child foreign keys",
+            )
+        )
+
+    min_total = parent_n * min_children
+    max_total = parent_n * max_children
+
+    if total_children < min_total:
+        raise ValueError(
+            _runtime_error(
+                location,
+                f"not enough rows to satisfy min_children (need >= {min_total}, have {total_children})",
+                "increase child rows or lower min_children",
+            )
+        )
+    if total_children > max_total:
+        raise ValueError(
+            _runtime_error(
+                location,
+                f"too many rows to satisfy max_children (need <= {max_total}, have {total_children})",
+                "decrease child rows or raise max_children",
+            )
+        )
+    if parent_weights is not None and len(parent_weights) != parent_n:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "parent selection weight count does not match parent row count",
+                "ensure parent_selection is defined against the current parent table rows",
+            )
+        )
+    extra_capacity = max_children - min_children
+    if extra_level_weights is not None and len(extra_level_weights) != extra_capacity:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "child_count_distribution level-weight count does not match FK extra-capacity range",
+                "set distribution shape parameters compatible with min_children/max_children bounds",
+            )
+        )
+
+    counts = [min_children] * parent_n
+    caps = [extra_capacity] * parent_n
+    remaining = total_children - min_total
+
+    while remaining > 0:
+        eligible = [idx for idx, cap in enumerate(caps) if cap > 0]
+        if not eligible:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "cannot allocate remaining FK children within configured max_children bounds",
+                    "increase max_children, reduce child rows, or adjust FK weighting",
+                )
+            )
+
+        if parent_weights is None and extra_level_weights is None:
+            chosen_idx = eligible[rng.randrange(len(eligible))]
+        else:
+            eligible_weights: list[float] = []
+            has_positive_parent_weight = False
+            for idx in eligible:
+                base_weight = 1.0
+                if parent_weights is not None:
+                    base_weight = max(0.0, float(parent_weights[idx]))
+                if base_weight > 0.0:
+                    has_positive_parent_weight = True
+
+                level_weight = 1.0
+                if extra_level_weights is not None:
+                    next_extra_level = (counts[idx] - min_children) + 1
+                    level_weight = max(0.0, float(extra_level_weights[next_extra_level - 1]))
+
+                eligible_weights.append(base_weight * level_weight)
+
+            if not any(weight > 0.0 for weight in eligible_weights):
+                if parent_weights is not None and not has_positive_parent_weight:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "parent_selection resolved to zero weight for all eligible parent rows",
+                            "set positive weights/default_weight for cohorts that should receive additional child rows",
+                        )
+                    )
+                if extra_level_weights is not None:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "child_count_distribution resolved to zero weight for all eligible parent rows at the current extra-child level",
+                            "adjust distribution parameters or widen max_children so additional children remain allocatable",
+                        )
+                    )
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        "cannot allocate remaining FK children because all eligible parent rows have zero combined allocation weight",
+                        "increase positive parent-selection weights or relax FK cardinality settings",
+                    )
+                )
+            chosen_idx = rng.choices(eligible, weights=eligible_weights, k=1)[0]
+
+        counts[chosen_idx] += 1
+        caps[chosen_idx] -= 1
+        remaining -= 1
+
+    return counts
 
 
 def _compile_timeline_constraints(project: SchemaProject) -> dict[str, list[dict[str, object]]]:
@@ -375,6 +867,1668 @@ def _enforce_table_timeline_constraints(
             else:
                 row[child_column] = _iso_datetime(replacement)
 
+
+def _profile_rate_triggered(rng: random.Random, rate: float) -> bool:
+    if rate <= 0.0:
+        return False
+    if rate >= 1.0:
+        return True
+    return rng.random() < rate
+
+
+def _profile_clamp_probability(value: float) -> float:
+    if value <= 0.0:
+        return 0.0
+    if value >= 1.0:
+        return 1.0
+    return value
+
+
+def _profile_scalar_identity(value: object) -> tuple[str, str]:
+    return (type(value).__name__, repr(value))
+
+
+def _profile_matches_where(
+    row: dict[str, object],
+    where_predicates: list[tuple[str, set[tuple[str, str]]]],
+) -> bool:
+    for column_name, allowed_values in where_predicates:
+        marker = _profile_scalar_identity(row.get(column_name))
+        if marker not in allowed_values:
+            return False
+    return True
+
+
+def _default_format_error_value(
+    *,
+    dtype: str,
+    profile_id: str,
+) -> str:
+    if dtype == "date":
+        return f"INVALID_DATE_{profile_id}"
+    if dtype == "datetime":
+        return f"INVALID_DATETIME_{profile_id}"
+    if dtype in {"int", "float", "decimal"}:
+        return f"INVALID_NUMERIC_{profile_id}"
+    if dtype == "bool":
+        return f"INVALID_BOOL_{profile_id}"
+    return f"INVALID_FORMAT_{profile_id}"
+
+
+def _compile_data_quality_profiles(project: SchemaProject) -> dict[str, list[dict[str, object]]]:
+    raw_profiles = project.data_quality_profiles
+    if not raw_profiles:
+        return {}
+
+    table_map = {table.table_name: table for table in project.tables}
+
+    def _parse_probability(
+        value: object,
+        *,
+        location: str,
+        field_name: str,
+        hint: str,
+    ) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"{field_name} must be numeric",
+                    hint,
+                )
+            ) from exc
+        if (not math.isfinite(parsed)) or parsed < 0.0 or parsed > 1.0:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"{field_name} must be between 0 and 1",
+                    hint,
+                )
+            )
+        return parsed
+
+    def _parse_non_negative_float(
+        value: object,
+        *,
+        location: str,
+        field_name: str,
+        hint: str,
+    ) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"{field_name} must be numeric",
+                    hint,
+                )
+            ) from exc
+        if (not math.isfinite(parsed)) or parsed < 0.0:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"{field_name} must be a finite value >= 0",
+                    hint,
+                )
+            )
+        return parsed
+
+    def _parse_int(
+        value: object,
+        *,
+        location: str,
+        field_name: str,
+        hint: str,
+    ) -> int:
+        if isinstance(value, bool):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"{field_name} must be an integer",
+                    hint,
+                )
+            )
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"{field_name} must be an integer",
+                    hint,
+                )
+            ) from exc
+
+    compiled: dict[str, list[dict[str, object]]] = {}
+    for profile_index, raw_profile in enumerate(raw_profiles):
+        location = f"Project data_quality_profiles[{profile_index}]"
+        if not isinstance(raw_profile, dict):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "profile must be an object",
+                    "set each data_quality_profiles item to a JSON object",
+                )
+            )
+
+        profile_id_raw = raw_profile.get("profile_id")
+        if isinstance(profile_id_raw, str) and profile_id_raw.strip() != "":
+            profile_id = profile_id_raw.strip()
+        else:
+            profile_id = f"profile_{profile_index + 1}"
+
+        table_name = str(raw_profile.get("table", "")).strip()
+        if table_name == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "table is required",
+                    "set table to an existing table name",
+                )
+            )
+        table = table_map.get(table_name)
+        if table is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"table '{table_name}' was not found",
+                    "use an existing table name for this DG06 profile",
+                )
+            )
+        table_cols = {column.name: column for column in table.columns}
+
+        column_name = str(raw_profile.get("column", "")).strip()
+        if column_name == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "column is required",
+                    "set column to an existing target column name",
+                )
+            )
+        column = table_cols.get(column_name)
+        if column is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"column '{column_name}' was not found on table '{table_name}'",
+                    "use an existing table column for this DG06 profile",
+                )
+            )
+
+        where_predicates: list[tuple[str, set[tuple[str, str]]]] = []
+        where_raw = raw_profile.get("where")
+        if where_raw is not None:
+            if not isinstance(where_raw, dict):
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        "where must be an object when provided",
+                        "set where to an object mapping columns to scalar value(s) or remove where",
+                    )
+                )
+            for where_key_raw, where_values_raw in where_raw.items():
+                if not isinstance(where_key_raw, str) or where_key_raw.strip() == "":
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "where contains an empty or non-string column key",
+                            "use non-empty table column names as where keys",
+                        )
+                    )
+                where_column = where_key_raw.strip()
+                if where_column not in table_cols:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            f"where column '{where_column}' was not found on table '{table_name}'",
+                            "use existing table columns in where predicates",
+                        )
+                    )
+                if isinstance(where_values_raw, list):
+                    if len(where_values_raw) == 0:
+                        raise ValueError(
+                            _runtime_error(
+                                location,
+                                f"where['{where_key_raw}'] cannot be an empty list",
+                                "provide one or more scalar values in each where list",
+                            )
+                        )
+                    match_values = where_values_raw
+                else:
+                    match_values = [where_values_raw]
+                allowed = {_profile_scalar_identity(value) for value in match_values}
+                where_predicates.append((where_column, allowed))
+
+        kind = str(raw_profile.get("kind", "")).strip().lower()
+        if kind == "missingness":
+            mechanism = str(raw_profile.get("mechanism", "")).strip().lower()
+            base_rate = _parse_probability(
+                raw_profile.get("base_rate"),
+                location=location,
+                field_name="base_rate",
+                hint="set base_rate to a numeric value between 0 and 1",
+            )
+
+            driver_column: str | None = None
+            if mechanism == "mcar":
+                driver_column = None
+            elif mechanism == "mar":
+                driver_column = str(raw_profile.get("driver_column", "")).strip()
+                if driver_column == "":
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "driver_column is required for mechanism 'mar'",
+                            "set driver_column to an existing source column name",
+                        )
+                    )
+                if driver_column not in table_cols:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            f"driver_column '{driver_column}' was not found on table '{table_name}'",
+                            "use an existing table column for driver_column",
+                        )
+                    )
+            elif mechanism == "mnar":
+                driver_column = column_name
+            else:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"unsupported missingness mechanism '{mechanism}'",
+                        "set mechanism to 'mcar', 'mar', or 'mnar'",
+                    )
+                )
+
+            weights_raw = raw_profile.get("value_weights", {})
+            if not isinstance(weights_raw, dict):
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        "value_weights must be an object when provided",
+                        "set value_weights to a mapping of source values to non-negative weights",
+                    )
+                )
+            normalized_weights: dict[str, float] = {}
+            for raw_key, raw_weight in weights_raw.items():
+                if not isinstance(raw_key, str) or raw_key.strip() == "":
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "value_weights contains an empty or non-string key",
+                            "use non-empty string keys in value_weights",
+                        )
+                    )
+                key = raw_key.strip()
+                normalized_weights[key] = _parse_non_negative_float(
+                    raw_weight,
+                    location=location,
+                    field_name=f"value_weights['{raw_key}']",
+                    hint="use non-negative finite numeric weights",
+                )
+            default_weight = _parse_non_negative_float(
+                raw_profile.get("default_weight", 1.0),
+                location=location,
+                field_name="default_weight",
+                hint="set default_weight to a non-negative finite numeric value",
+            )
+
+            compiled_profile = {
+                "profile_index": profile_index,
+                "profile_id": profile_id,
+                "table": table_name,
+                "column": column_name,
+                "dtype": column.dtype,
+                "kind": "missingness",
+                "where": where_predicates,
+                "mechanism": mechanism,
+                "base_rate": base_rate,
+                "driver_column": driver_column,
+                "value_weights": normalized_weights,
+                "default_weight": default_weight,
+            }
+        elif kind == "quality_issue":
+            issue_type = str(raw_profile.get("issue_type", "")).strip().lower()
+            if issue_type not in {"format_error", "stale_value", "drift"}:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"unsupported issue_type '{issue_type}'",
+                        "set issue_type to 'format_error', 'stale_value', or 'drift'",
+                    )
+                )
+            rate = _parse_probability(
+                raw_profile.get("rate"),
+                location=location,
+                field_name="rate",
+                hint="set rate to a numeric value between 0 and 1",
+            )
+            compiled_profile = {
+                "profile_index": profile_index,
+                "profile_id": profile_id,
+                "table": table_name,
+                "column": column_name,
+                "dtype": column.dtype,
+                "kind": "quality_issue",
+                "where": where_predicates,
+                "issue_type": issue_type,
+                "rate": rate,
+            }
+            if issue_type == "format_error":
+                replacement_raw = raw_profile.get("replacement")
+                replacement: str | None = None
+                if isinstance(replacement_raw, str) and replacement_raw.strip() != "":
+                    replacement = replacement_raw
+                compiled_profile["replacement"] = replacement
+            elif issue_type == "stale_value":
+                lag_rows = _parse_int(
+                    raw_profile.get("lag_rows", 1),
+                    location=location,
+                    field_name="lag_rows",
+                    hint="set lag_rows to an integer >= 1",
+                )
+                if lag_rows < 1:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "lag_rows must be >= 1",
+                            "set lag_rows to 1 or greater",
+                        )
+                    )
+                compiled_profile["lag_rows"] = lag_rows
+            else:
+                if column.dtype not in {"int", "float", "decimal", "date", "datetime"}:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            f"drift does not support dtype '{column.dtype}'",
+                            "target drift profiles to int/float/decimal/date/datetime columns",
+                        )
+                    )
+                step_raw = raw_profile.get("step")
+                if step_raw is None:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "drift.step is required",
+                            "set step to a non-zero numeric value (or integer days/seconds for date/datetime)",
+                        )
+                    )
+                if column.dtype in {"date", "datetime"}:
+                    step = _parse_int(
+                        step_raw,
+                        location=location,
+                        field_name="drift.step",
+                        hint="set drift.step to a non-zero integer number of days/seconds",
+                    )
+                    if step == 0:
+                        raise ValueError(
+                            _runtime_error(
+                                location,
+                                "drift.step cannot be zero",
+                                "set drift.step to a non-zero integer number of days/seconds",
+                            )
+                        )
+                else:
+                    try:
+                        step = float(step_raw)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            _runtime_error(
+                                location,
+                                "drift.step must be numeric",
+                                "set drift.step to a non-zero numeric drift increment",
+                            )
+                        ) from exc
+                    if (not math.isfinite(step)) or step == 0.0:
+                        raise ValueError(
+                            _runtime_error(
+                                location,
+                                "drift.step must be a non-zero finite numeric value",
+                                "set drift.step to a non-zero numeric drift increment",
+                            )
+                        )
+                start_index = _parse_int(
+                    raw_profile.get("start_index", 1),
+                    location=location,
+                    field_name="start_index",
+                    hint="set start_index to an integer >= 1",
+                )
+                if start_index < 1:
+                    raise ValueError(
+                        _runtime_error(
+                            location,
+                            "start_index must be >= 1",
+                            "set start_index to 1 or greater",
+                        )
+                    )
+                compiled_profile["step"] = step
+                compiled_profile["start_index"] = start_index
+        else:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"unsupported kind '{kind}'",
+                    "set kind to 'missingness' or 'quality_issue'",
+                )
+            )
+
+        compiled.setdefault(table_name, []).append(compiled_profile)
+
+    return compiled
+
+
+def _apply_table_data_quality_profiles(
+    table: TableSpec,
+    rows: list[dict[str, object]],
+    *,
+    project_seed: int,
+    compiled_profiles: dict[str, list[dict[str, object]]],
+) -> None:
+    if not rows:
+        return
+    profiles = compiled_profiles.get(table.table_name, [])
+    if not profiles:
+        return
+
+    for profile in profiles:
+        profile_id = str(profile.get("profile_id", "profile"))
+        profile_index = int(profile.get("profile_index", 0))
+        column_name = str(profile.get("column", ""))
+        dtype = str(profile.get("dtype", ""))
+        where_predicates = profile.get("where")
+        if not isinstance(where_predicates, list):
+            where_predicates = []
+        profile_rng = random.Random(
+            _stable_subseed(project_seed, f"dg06:{table.table_name}:{profile_id}:{profile_index}")
+        )
+
+        kind = str(profile.get("kind", ""))
+        if kind == "missingness":
+            mechanism = str(profile.get("mechanism", ""))
+            base_rate = float(profile.get("base_rate", 0.0))
+            driver_column_raw = profile.get("driver_column")
+            driver_column = str(driver_column_raw) if driver_column_raw is not None else None
+            value_weights = profile.get("value_weights")
+            if not isinstance(value_weights, dict):
+                value_weights = {}
+            normalized_weights = {
+                str(key): float(value)
+                for key, value in value_weights.items()
+            }
+            default_weight = float(profile.get("default_weight", 1.0))
+
+            for row in rows:
+                if where_predicates and not _profile_matches_where(row, where_predicates):
+                    continue
+                if row.get(column_name) is None:
+                    continue
+
+                effective_rate = base_rate
+                if mechanism in {"mar", "mnar"}:
+                    source_column = driver_column if mechanism == "mar" else column_name
+                    source_value = row.get(source_column) if source_column else row.get(column_name)
+                    weight = _resolve_fk_parent_weight(
+                        source_value,
+                        weights=normalized_weights,
+                        default_weight=default_weight,
+                    )
+                    effective_rate = _profile_clamp_probability(base_rate * weight)
+                if _profile_rate_triggered(profile_rng, effective_rate):
+                    row[column_name] = None
+
+        elif kind == "quality_issue":
+            issue_type = str(profile.get("issue_type", ""))
+            rate = float(profile.get("rate", 0.0))
+            if issue_type == "format_error":
+                replacement_raw = profile.get("replacement")
+                replacement = (
+                    str(replacement_raw)
+                    if isinstance(replacement_raw, str) and replacement_raw.strip() != ""
+                    else _default_format_error_value(dtype=dtype, profile_id=profile_id)
+                )
+                for row in rows:
+                    if where_predicates and not _profile_matches_where(row, where_predicates):
+                        continue
+                    if row.get(column_name) is None:
+                        continue
+                    if _profile_rate_triggered(profile_rng, rate):
+                        row[column_name] = replacement
+
+            elif issue_type == "stale_value":
+                lag_rows = int(profile.get("lag_rows", 1))
+                if lag_rows < 1:
+                    continue
+                baseline_values = [row.get(column_name) for row in rows]
+                for row_index, row in enumerate(rows):
+                    if row_index < lag_rows:
+                        continue
+                    if where_predicates and not _profile_matches_where(row, where_predicates):
+                        continue
+                    if not _profile_rate_triggered(profile_rng, rate):
+                        continue
+                    stale_value = baseline_values[row_index - lag_rows]
+                    if stale_value is None:
+                        continue
+                    row[column_name] = stale_value
+
+            elif issue_type == "drift":
+                step = profile.get("step")
+                start_index = int(profile.get("start_index", 1))
+                for row_index, row in enumerate(rows, start=1):
+                    if row_index < start_index:
+                        continue
+                    if where_predicates and not _profile_matches_where(row, where_predicates):
+                        continue
+                    if not _profile_rate_triggered(profile_rng, rate):
+                        continue
+                    current_value = row.get(column_name)
+                    if current_value is None:
+                        continue
+                    progress = row_index - start_index + 1
+                    row_location = f"Table '{table.table_name}', row {row_index}, column '{column_name}'"
+
+                    if dtype == "int":
+                        try:
+                            base_value = int(current_value)
+                            delta = float(step) * float(progress)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                _runtime_error(
+                                    row_location,
+                                    f"DG06 drift expected integer-like value but found {current_value!r}",
+                                    "ensure drift targets generated int values before DG06 mutation",
+                                )
+                            ) from exc
+                        row[column_name] = int(round(base_value + delta))
+                    elif dtype in {"float", "decimal"}:
+                        try:
+                            base_value = float(current_value)
+                            delta = float(step) * float(progress)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                _runtime_error(
+                                    row_location,
+                                    f"DG06 drift expected numeric value but found {current_value!r}",
+                                    "ensure drift targets generated numeric values before DG06 mutation",
+                                )
+                            ) from exc
+                        row[column_name] = float(base_value + delta)
+                    elif dtype == "date":
+                        try:
+                            base_value = _parse_iso_date_value(current_value)
+                            delta_days = int(step) * progress
+                        except Exception as exc:
+                            raise ValueError(
+                                _runtime_error(
+                                    row_location,
+                                    f"DG06 drift expected ISO date value but found {current_value!r}",
+                                    "ensure drift targets parseable ISO date values before DG06 mutation",
+                                )
+                            ) from exc
+                        row[column_name] = _iso_date(base_value + timedelta(days=delta_days))
+                    elif dtype == "datetime":
+                        try:
+                            base_value = _parse_iso_datetime_value(current_value)
+                            delta_seconds = int(step) * progress
+                        except Exception as exc:
+                            raise ValueError(
+                                _runtime_error(
+                                    row_location,
+                                    f"DG06 drift expected ISO datetime value but found {current_value!r}",
+                                    "ensure drift targets parseable ISO datetime values before DG06 mutation",
+                                )
+                            ) from exc
+                        row[column_name] = _iso_datetime(base_value + timedelta(seconds=delta_seconds))
+                    else:
+                        raise ValueError(
+                            _runtime_error(
+                                row_location,
+                                f"DG06 drift does not support dtype '{dtype}'",
+                                "target drift profiles to int/float/decimal/date/datetime columns",
+                            )
+                        )
+
+
+def _normalize_locale_identity_columns(
+    raw_columns: object,
+    *,
+    location: str,
+    table_name: str,
+    table_columns: dict[str, ColumnSpec],
+) -> dict[str, str]:
+    if not isinstance(raw_columns, dict) or len(raw_columns) == 0:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "columns must be a non-empty object",
+                "set columns to a mapping of DG09 slots to existing table columns",
+            )
+        )
+
+    allowed_slots = set(SUPPORTED_LOCALE_IDENTITY_SLOTS)
+    normalized: dict[str, str] = {}
+    for raw_slot, raw_column in raw_columns.items():
+        if not isinstance(raw_slot, str) or raw_slot.strip() == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "columns contains an empty or non-string slot key",
+                    f"use one or more supported slots: {', '.join(sorted(allowed_slots))}",
+                )
+            )
+        slot = raw_slot.strip()
+        if slot not in allowed_slots:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"unsupported columns slot '{raw_slot}'",
+                    f"use one of: {', '.join(sorted(allowed_slots))}",
+                )
+            )
+        if slot in normalized:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"columns has duplicate slot '{slot}' after normalization",
+                    "list each DG09 slot once",
+                )
+            )
+        if not isinstance(raw_column, str) or raw_column.strip() == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"columns['{raw_slot}'] must be a non-empty string column name",
+                    "map each slot to an existing table column",
+                )
+            )
+        column_name = raw_column.strip()
+        column = table_columns.get(column_name)
+        if column is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"columns['{raw_slot}'] column '{column_name}' was not found on table '{table_name}'",
+                    "map each slot to an existing column on the configured table",
+                )
+            )
+        if column.primary_key:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"columns['{raw_slot}'] cannot target primary key column '{column_name}'",
+                    "target non-primary-key columns for DG09 locale identity fields",
+                )
+            )
+        normalized[slot] = column_name
+    return normalized
+
+
+def _compile_locale_selector(
+    raw_bundle: dict[str, object],
+    *,
+    location: str,
+) -> tuple[list[str], list[float]]:
+    locale_raw = raw_bundle.get("locale")
+    locale_weights_raw = raw_bundle.get("locale_weights")
+    supported_locales = set(LOCALE_IDENTITY_PACKS.keys())
+
+    if locale_raw is not None and locale_weights_raw is not None:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "locale and locale_weights cannot both be set",
+                "set exactly one of locale or locale_weights, or omit both to use default locale",
+            )
+        )
+    if locale_raw is not None:
+        if not isinstance(locale_raw, str) or locale_raw.strip() == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "locale must be a non-empty string when provided",
+                    f"use one of: {', '.join(sorted(supported_locales))}",
+                )
+            )
+        locale_name = locale_raw.strip()
+        if locale_name not in supported_locales:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"unsupported locale '{locale_raw}'",
+                    f"use one of: {', '.join(sorted(supported_locales))}",
+                )
+            )
+        return [locale_name], [1.0]
+
+    if locale_weights_raw is None:
+        return ["en-US"], [1.0]
+
+    if not isinstance(locale_weights_raw, dict) or len(locale_weights_raw) == 0:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "locale_weights must be a non-empty object when provided",
+                "set locale_weights to a mapping of locale ids to non-negative numeric weights",
+            )
+        )
+
+    locales: list[str] = []
+    weights: list[float] = []
+    has_positive_weight = False
+    for raw_locale, raw_weight in locale_weights_raw.items():
+        if not isinstance(raw_locale, str) or raw_locale.strip() == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "locale_weights contains an empty or non-string locale key",
+                    f"use supported locale ids as keys: {', '.join(sorted(supported_locales))}",
+                )
+            )
+        locale_name = raw_locale.strip()
+        if locale_name not in supported_locales:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"unsupported locale_weights key '{raw_locale}'",
+                    f"use one of: {', '.join(sorted(supported_locales))}",
+                )
+            )
+        try:
+            weight = float(raw_weight)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"locale_weights['{raw_locale}'] must be numeric",
+                    "use non-negative finite numeric weights",
+                )
+            ) from exc
+        if (not math.isfinite(weight)) or weight < 0.0:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"locale_weights['{raw_locale}'] must be a finite value >= 0",
+                    "use non-negative finite numeric weights",
+                )
+            )
+        if weight > 0.0:
+            has_positive_weight = True
+        locales.append(locale_name)
+        weights.append(weight)
+
+    if not has_positive_weight:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "locale_weights provides no positive weight",
+                "set at least one locale weight > 0",
+            )
+        )
+    return locales, weights
+
+
+def _compile_locale_identity_bundles(project: SchemaProject) -> dict[str, dict[str, list[dict[str, object]]]]:
+    raw_bundles = project.locale_identity_bundles
+    if not raw_bundles:
+        return {"base_by_table": {}, "related_by_table": {}}
+
+    table_map = {table.table_name: table for table in project.tables}
+    base_by_table: dict[str, list[dict[str, object]]] = {}
+    related_by_table: dict[str, list[dict[str, object]]] = {}
+
+    for bundle_index, raw_bundle in enumerate(raw_bundles):
+        location = f"Project locale_identity_bundles[{bundle_index}]"
+        if not isinstance(raw_bundle, dict):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "bundle must be an object",
+                    "set each locale_identity_bundles item to a JSON object",
+                )
+            )
+
+        bundle_id_raw = raw_bundle.get("bundle_id")
+        if not isinstance(bundle_id_raw, str) or bundle_id_raw.strip() == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "bundle_id is required",
+                    "set bundle_id to a non-empty string",
+                )
+            )
+        bundle_id = bundle_id_raw.strip()
+
+        base_table_raw = raw_bundle.get("base_table")
+        if not isinstance(base_table_raw, str) or base_table_raw.strip() == "":
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "base_table is required",
+                    "set base_table to an existing table name",
+                )
+            )
+        base_table_name = base_table_raw.strip()
+        base_table = table_map.get(base_table_name)
+        if base_table is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"base_table '{base_table_name}' was not found",
+                    "use an existing table name for base_table",
+                )
+            )
+        base_columns = {column.name: column for column in base_table.columns}
+        base_column_map = _normalize_locale_identity_columns(
+            raw_bundle.get("columns"),
+            location=location,
+            table_name=base_table_name,
+            table_columns=base_columns,
+        )
+        locale_ids, locale_weights = _compile_locale_selector(raw_bundle, location=location)
+
+        base_by_table.setdefault(base_table_name, []).append(
+            {
+                "bundle_id": bundle_id,
+                "bundle_index": bundle_index,
+                "table": base_table_name,
+                "pk_column": _table_pk_col_name(base_table),
+                "columns": base_column_map,
+                "locale_ids": locale_ids,
+                "locale_weights": locale_weights,
+            }
+        )
+
+        related_tables_raw = raw_bundle.get("related_tables")
+        if related_tables_raw is None:
+            continue
+        if not isinstance(related_tables_raw, list):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "related_tables must be a list when provided",
+                    "set related_tables to a list of objects with table, via_fk, and columns",
+                )
+            )
+        for related_index, raw_related in enumerate(related_tables_raw):
+            related_location = f"{location}, related_tables[{related_index}]"
+            if not isinstance(raw_related, dict):
+                raise ValueError(
+                    _runtime_error(
+                        related_location,
+                        "related table entry must be an object",
+                        "configure table, via_fk, and columns for each related table object",
+                    )
+                )
+            related_table_raw = raw_related.get("table")
+            if not isinstance(related_table_raw, str) or related_table_raw.strip() == "":
+                raise ValueError(
+                    _runtime_error(
+                        related_location,
+                        "table is required",
+                        "set table to an existing related table name",
+                    )
+                )
+            related_table_name = related_table_raw.strip()
+            related_table = table_map.get(related_table_name)
+            if related_table is None:
+                raise ValueError(
+                    _runtime_error(
+                        related_location,
+                        f"table '{related_table_name}' was not found",
+                        "use an existing related table name",
+                    )
+                )
+            related_columns = {column.name: column for column in related_table.columns}
+
+            via_fk_raw = raw_related.get("via_fk")
+            if not isinstance(via_fk_raw, str) or via_fk_raw.strip() == "":
+                raise ValueError(
+                    _runtime_error(
+                        related_location,
+                        "via_fk is required",
+                        "set via_fk to the related-table FK child column that references base_table",
+                    )
+                )
+            via_fk = via_fk_raw.strip()
+            if via_fk not in related_columns:
+                raise ValueError(
+                    _runtime_error(
+                        related_location,
+                        f"via_fk '{via_fk}' was not found on table '{related_table_name}'",
+                        "use an existing related-table column for via_fk",
+                    )
+                )
+
+            direct_fk = next(
+                (
+                    fk
+                    for fk in project.foreign_keys
+                    if fk.child_table == related_table_name
+                    and fk.child_column == via_fk
+                    and fk.parent_table == base_table_name
+                ),
+                None,
+            )
+            if direct_fk is None:
+                raise ValueError(
+                    _runtime_error(
+                        related_location,
+                        (
+                            f"via_fk '{related_table_name}.{via_fk}' does not directly reference "
+                            f"base_table '{base_table_name}'"
+                        ),
+                        "define a direct FK from related table via_fk to base_table before using this DG09 mapping",
+                    )
+                )
+
+            related_column_map = _normalize_locale_identity_columns(
+                raw_related.get("columns"),
+                location=related_location,
+                table_name=related_table_name,
+                table_columns=related_columns,
+            )
+            related_by_table.setdefault(related_table_name, []).append(
+                {
+                    "bundle_id": bundle_id,
+                    "bundle_index": bundle_index,
+                    "related_index": related_index,
+                    "base_table": base_table_name,
+                    "table": related_table_name,
+                    "via_fk": via_fk,
+                    "columns": related_column_map,
+                }
+            )
+
+    return {"base_by_table": base_by_table, "related_by_table": related_by_table}
+
+
+def _format_locale_phone(
+    *,
+    locale_id: str,
+    city_profile: dict[str, object],
+    rng: random.Random,
+) -> tuple[str, str]:
+    raw_area_codes = city_profile.get("area_codes")
+    area_codes = (
+        [str(value).strip() for value in raw_area_codes if str(value).strip() != ""]
+        if isinstance(raw_area_codes, list)
+        else []
+    )
+
+    if locale_id == "en-US":
+        area = rng.choice(area_codes) if area_codes else str(rng.randint(201, 989))
+        prefix = rng.randint(200, 999)
+        line = rng.randint(1000, 9999)
+        national = f"({area}) {prefix:03d}-{line:04d}"
+        e164 = f"+1{area}{prefix:03d}{line:04d}"
+        return national, e164
+
+    if locale_id == "en-GB":
+        area = rng.choice(area_codes) if area_codes else "20"
+        part_a = rng.randint(1000, 9999)
+        part_b = rng.randint(1000, 9999)
+        national = f"0{area} {part_a:04d} {part_b:04d}"
+        e164 = f"+44{area}{part_a:04d}{part_b:04d}"
+        return national, e164
+
+    if locale_id == "fr-FR":
+        area = rng.choice(area_codes) if area_codes else "1"
+        groups = [rng.randint(0, 99) for _ in range(4)]
+        tail = "".join(f"{group:02d}" for group in groups)
+        national = f"0{area} " + " ".join(f"{group:02d}" for group in groups)
+        e164 = f"+33{area}{tail}"
+        return national, e164
+
+    area = rng.choice(area_codes) if area_codes else "30"
+    part_a = rng.randint(100, 999)
+    part_b = rng.randint(1000, 9999)
+    national = f"0{area} {part_a:03d} {part_b:04d}"
+    e164 = f"+49{area}{part_a:03d}{part_b:04d}"
+    return national, e164
+
+
+def _build_locale_identity_payload(
+    *,
+    locale_id: str,
+    rng: random.Random,
+) -> dict[str, object]:
+    pack = LOCALE_IDENTITY_PACKS.get(locale_id)
+    if pack is None:
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"unsupported locale '{locale_id}'",
+                f"use one of: {', '.join(sorted(LOCALE_IDENTITY_PACKS.keys()))}",
+            )
+        )
+
+    first_names_raw = pack.get("first_names")
+    last_names_raw = pack.get("last_names")
+    streets_raw = pack.get("streets")
+    cities_raw = pack.get("cities")
+    if not isinstance(first_names_raw, list) or not first_names_raw:
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' has no first_names",
+                "provide one or more first_names in the locale pack",
+            )
+        )
+    if not isinstance(last_names_raw, list) or not last_names_raw:
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' has no last_names",
+                "provide one or more last_names in the locale pack",
+            )
+        )
+    if not isinstance(streets_raw, list) or not streets_raw:
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' has no streets",
+                "provide one or more streets in the locale pack",
+            )
+        )
+    if not isinstance(cities_raw, list) or not cities_raw:
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' has no cities",
+                "provide one or more city profiles in the locale pack",
+            )
+        )
+
+    first_name = str(rng.choice(first_names_raw))
+    last_name = str(rng.choice(last_names_raw))
+    street = str(rng.choice(streets_raw))
+    city_profile_raw = rng.choice(cities_raw)
+    if not isinstance(city_profile_raw, dict):
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' city profile must be an object",
+                "fix locale pack city entries so each value is an object",
+            )
+        )
+    city_profile = city_profile_raw
+
+    city_name = str(city_profile.get("city", "")).strip()
+    region = str(city_profile.get("region", "")).strip()
+    if city_name == "" or region == "":
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' city profile requires city and region",
+                "set city and region for each locale city profile",
+            )
+        )
+
+    postcodes_raw = city_profile.get("postcodes")
+    if not isinstance(postcodes_raw, list) or not postcodes_raw:
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' city profile has no postcodes",
+                "set one or more postcode values in each city profile",
+            )
+        )
+    postcode = str(rng.choice(postcodes_raw)).strip()
+    if postcode == "":
+        raise ValueError(
+            _runtime_error(
+                "DG09 locale payload builder",
+                f"locale pack '{locale_id}' produced an empty postcode value",
+                "use non-empty postcode values in locale packs",
+            )
+        )
+
+    national_phone, phone_e164 = _format_locale_phone(locale_id=locale_id, city_profile=city_profile, rng=rng)
+    house_number = rng.randint(1, 9999)
+    full_name = f"{first_name} {last_name}"
+    return {
+        "locale": locale_id,
+        "country_code": str(pack.get("country_code", "")).strip(),
+        "currency_code": str(pack.get("currency_code", "")).strip(),
+        "currency_symbol": str(pack.get("currency_symbol", "")).strip(),
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": full_name,
+        "address_line1": f"{house_number} {street}",
+        "city": city_name,
+        "region": region,
+        "postcode": postcode,
+        "phone_e164": phone_e164,
+        "phone_national": national_phone,
+    }
+
+
+def _apply_table_locale_identity_bundles(
+    table: TableSpec,
+    rows: list[dict[str, object]],
+    *,
+    project_seed: int,
+    compiled_bundles: dict[str, dict[str, list[dict[str, object]]]],
+    bundle_state: dict[str, dict[tuple[str, object], dict[str, object]]],
+) -> None:
+    if not rows:
+        return
+    base_by_table = compiled_bundles.get("base_by_table")
+    related_by_table = compiled_bundles.get("related_by_table")
+    if not isinstance(base_by_table, dict) or not isinstance(related_by_table, dict):
+        return
+
+    base_specs = base_by_table.get(table.table_name, [])
+    for spec in base_specs:
+        bundle_id = str(spec.get("bundle_id", "")).strip()
+        bundle_index = int(spec.get("bundle_index", 0))
+        pk_column = str(spec.get("pk_column", "")).strip()
+        column_map = spec.get("columns")
+        locale_ids_raw = spec.get("locale_ids")
+        locale_weights_raw = spec.get("locale_weights")
+        if bundle_id == "" or pk_column == "":
+            continue
+        if not isinstance(column_map, dict):
+            continue
+        if not isinstance(locale_ids_raw, list) or not locale_ids_raw:
+            continue
+        if not isinstance(locale_weights_raw, list) or len(locale_weights_raw) != len(locale_ids_raw):
+            continue
+        locale_ids = [str(locale).strip() for locale in locale_ids_raw if str(locale).strip() != ""]
+        if not locale_ids:
+            continue
+        locale_weights = [float(weight) for weight in locale_weights_raw]
+
+        bundle_rng = random.Random(
+            _stable_subseed(project_seed, f"dg09:{table.table_name}:{bundle_id}:{bundle_index}")
+        )
+        values_by_key = bundle_state.setdefault(bundle_id, {})
+
+        for row_index, row in enumerate(rows, start=1):
+            key = _fk_lookup_identity(row.get(pk_column))
+            if key[0] == "none":
+                raise ValueError(
+                    _runtime_error(
+                        f"Table '{table.table_name}', row {row_index}, column '{pk_column}'",
+                        "DG09 base key resolved to null",
+                        "ensure the base table primary key column is populated before locale bundle application",
+                    )
+                )
+
+            payload = values_by_key.get(key)
+            if payload is None:
+                locale_id = str(bundle_rng.choices(locale_ids, weights=locale_weights, k=1)[0])
+                payload = _build_locale_identity_payload(locale_id=locale_id, rng=bundle_rng)
+                values_by_key[key] = payload
+
+            for slot, column_name_raw in column_map.items():
+                column_name = str(column_name_raw).strip()
+                if column_name == "":
+                    continue
+                row[column_name] = payload.get(slot)
+
+    related_specs = related_by_table.get(table.table_name, [])
+    for spec in related_specs:
+        bundle_id = str(spec.get("bundle_id", "")).strip()
+        via_fk = str(spec.get("via_fk", "")).strip()
+        column_map = spec.get("columns")
+        if bundle_id == "" or via_fk == "":
+            continue
+        if not isinstance(column_map, dict):
+            continue
+        values_by_key = bundle_state.get(bundle_id)
+        if not values_by_key:
+            raise ValueError(
+                _runtime_error(
+                    f"Table '{table.table_name}'",
+                    f"DG09 bundle '{bundle_id}' has no resolved base-table payloads",
+                    "generate base table rows before related-table DG09 projections",
+                )
+            )
+        for row_index, row in enumerate(rows, start=1):
+            key = _fk_lookup_identity(row.get(via_fk))
+            if key[0] == "none":
+                continue
+            payload = values_by_key.get(key)
+            if payload is None:
+                raise ValueError(
+                    _runtime_error(
+                        f"Table '{table.table_name}', row {row_index}, FK column '{via_fk}'",
+                        f"DG09 could not find a base bundle payload for value {row.get(via_fk)!r}",
+                        "ensure via_fk references an existing base-table key populated by the DG09 bundle",
+                    )
+                )
+            for slot, column_name_raw in column_map.items():
+                column_name = str(column_name_raw).strip()
+                if column_name == "":
+                    continue
+                row[column_name] = payload.get(slot)
+
+
+def _read_csv_profile_source(
+    *,
+    location: str,
+    source: dict[str, object],
+) -> tuple[str, int, list[str]]:
+    path_raw = source.get("path")
+    if not isinstance(path_raw, str) or path_raw.strip() == "":
+        raise ValueError(
+            _runtime_error(
+                location,
+                "sample_source.path is required",
+                "set sample_source.path to an existing CSV file path",
+            )
+        )
+    raw_path = path_raw.strip()
+    resolved_path = resolve_repo_path(raw_path)
+    if not resolved_path.exists():
+        raise ValueError(
+            _runtime_error(
+                location,
+                f"sample_source.path '{raw_path}' does not exist",
+                "provide an existing CSV file path",
+            )
+        )
+
+    has_header_raw = source.get("has_header", True)
+    if not isinstance(has_header_raw, bool):
+        raise ValueError(
+            _runtime_error(
+                location,
+                "sample_source.has_header must be boolean when provided",
+                "set sample_source.has_header to true or false",
+            )
+        )
+    has_header = bool(has_header_raw)
+
+    has_index = "column_index" in source
+    has_name = "column_name" in source
+    if has_index == has_name:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "sample_source requires exactly one of column_index or column_name",
+                "set either sample_source.column_index or sample_source.column_name",
+            )
+        )
+
+    skip_empty_raw = source.get("skip_empty", True)
+    if not isinstance(skip_empty_raw, bool):
+        raise ValueError(
+            _runtime_error(
+                location,
+                "sample_source.skip_empty must be boolean when provided",
+                "set sample_source.skip_empty to true or false",
+            )
+        )
+    skip_empty = bool(skip_empty_raw)
+
+    rows: list[list[str]] = []
+    with resolved_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            rows.append(list(row))
+    if not rows:
+        raise ValueError(
+            _runtime_error(
+                location,
+                f"sample CSV '{raw_path}' has no rows",
+                "provide a CSV file with header/data rows for DG07 fitting",
+            )
+        )
+
+    data_rows = rows
+    resolved_index: int
+    if has_header:
+        header = rows[0]
+        data_rows = rows[1:]
+        if has_name:
+            column_name_raw = source.get("column_name")
+            column_name = str(column_name_raw).strip()
+            if column_name not in header:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"sample_source.column_name '{column_name}' was not found in CSV header",
+                        "use an existing CSV header name or switch to column_index",
+                    )
+                )
+            resolved_index = header.index(column_name)
+        else:
+            try:
+                resolved_index = int(source.get("column_index"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        "sample_source.column_index must be an integer",
+                        "set sample_source.column_index to 0 or greater",
+                    )
+                ) from exc
+    else:
+        if has_name:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "sample_source.column_name requires sample_source.has_header=true",
+                    "set has_header=true when using column_name or use column_index",
+                )
+            )
+        try:
+            resolved_index = int(source.get("column_index"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "sample_source.column_index must be an integer",
+                    "set sample_source.column_index to 0 or greater",
+                )
+            ) from exc
+
+    if resolved_index < 0:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "sample_source.column_index cannot be negative",
+                "set sample_source.column_index to 0 or greater",
+            )
+        )
+
+    values: list[str] = []
+    for row in data_rows:
+        if resolved_index >= len(row):
+            continue
+        cell = row[resolved_index]
+        if skip_empty and cell.strip() == "":
+            continue
+        values.append(cell)
+    if not values:
+        raise ValueError(
+            _runtime_error(
+                location,
+                "sample_source produced zero eligible values",
+                "point to a populated CSV column or disable skip_empty",
+            )
+        )
+
+    normalized_path = to_repo_relative_path(raw_path)
+    return normalized_path, resolved_index, values
+
+
+def _infer_profile_from_values(
+    *,
+    location: str,
+    dtype: str,
+    source_path: str,
+    source_column_index: int,
+    values: list[str],
+) -> tuple[str, dict[str, object]]:
+    if dtype == "int":
+        parsed: list[int] = []
+        for raw_value in values:
+            text = raw_value.strip()
+            try:
+                parsed.append(int(text))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"sample value '{raw_value}' is not integer-like",
+                        "clean sample values or use fixed_profile for non-integer source data",
+                    )
+                ) from exc
+        return "uniform_int", {"min": min(parsed), "max": max(parsed)}
+
+    if dtype in {"float", "decimal"}:
+        parsed_numeric: list[float] = []
+        for raw_value in values:
+            text = raw_value.strip()
+            try:
+                parsed_numeric.append(float(text))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"sample value '{raw_value}' is not numeric",
+                        "clean sample values or use fixed_profile for non-numeric source data",
+                    )
+                ) from exc
+        min_value = min(parsed_numeric)
+        max_value = max(parsed_numeric)
+        if min_value == max_value:
+            return "uniform_float", {"min": min_value, "max": max_value}
+        mean_value = sum(parsed_numeric) / len(parsed_numeric)
+        variance = sum((value - mean_value) ** 2 for value in parsed_numeric) / len(parsed_numeric)
+        stdev = variance ** 0.5
+        if stdev <= 0.0:
+            stdev = (max_value - min_value) / 6.0
+        if stdev <= 0.0:
+            stdev = 1.0
+        return "normal", {"mean": mean_value, "stdev": stdev, "min": min_value, "max": max_value}
+
+    if dtype == "text":
+        counts: dict[str, int] = {}
+        order: list[str] = []
+        for value in values:
+            if value not in counts:
+                counts[value] = 0
+                order.append(value)
+            counts[value] += 1
+        choices = order
+        weights = [float(counts[value]) for value in choices]
+        return "choice_weighted", {"choices": choices, "weights": weights}
+
+    if dtype == "date":
+        parsed_dates: list[date] = []
+        for raw_value in values:
+            text = raw_value.strip()
+            try:
+                parsed_dates.append(date.fromisoformat(text))
+            except Exception as exc:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"sample value '{raw_value}' is not a valid ISO date",
+                        "clean sample values to 'YYYY-MM-DD' or use fixed_profile",
+                    )
+                ) from exc
+        return "date", {"start": min(parsed_dates).isoformat(), "end": max(parsed_dates).isoformat()}
+
+    if dtype == "datetime":
+        parsed_datetimes: list[datetime] = []
+        for raw_value in values:
+            text = raw_value.strip()
+            try:
+                dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except Exception as exc:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"sample value '{raw_value}' is not a valid ISO datetime",
+                        "clean sample values to ISO datetime text or use fixed_profile",
+                    )
+                ) from exc
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            parsed_datetimes.append(dt)
+        return "timestamp_utc", {
+            "start": _iso_datetime(min(parsed_datetimes)),
+            "end": _iso_datetime(max(parsed_datetimes)),
+        }
+
+    raise ValueError(
+        _runtime_error(
+            location,
+            f"sample_source inference does not support dtype '{dtype}'",
+            "use fixed_profile for this target dtype",
+        )
+    )
+
+
+def _resolve_sample_profile_fits(project: SchemaProject) -> SchemaProject:
+    fit_specs = project.sample_profile_fits
+    if not fit_specs:
+        return project
+
+    table_map = {table.table_name: table for table in project.tables}
+    overrides: dict[tuple[str, str], tuple[str, dict[str, object], list[str] | None]] = {}
+
+    for fit_index, raw_fit in enumerate(fit_specs):
+        location = f"Project sample_profile_fits[{fit_index}]"
+        if not isinstance(raw_fit, dict):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "fit must be an object",
+                    "set each sample_profile_fits item to a JSON object",
+                )
+            )
+
+        table_name = str(raw_fit.get("table", "")).strip()
+        column_name = str(raw_fit.get("column", "")).strip()
+        table = table_map.get(table_name)
+        if table is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"table '{table_name}' was not found",
+                    "use an existing table name for DG07 profile fits",
+                )
+            )
+        column = next((candidate for candidate in table.columns if candidate.name == column_name), None)
+        if column is None:
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    f"column '{column_name}' was not found on table '{table_name}'",
+                    "use an existing target column for DG07 profile fits",
+                )
+            )
+
+        fixed_profile_raw = raw_fit.get("fixed_profile")
+        if isinstance(fixed_profile_raw, dict):
+            generator_raw = fixed_profile_raw.get("generator")
+            if not isinstance(generator_raw, str) or generator_raw.strip() == "":
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        "fixed_profile.generator is required",
+                        "set fixed_profile.generator to a registered generator id",
+                    )
+                )
+            generator = generator_raw.strip()
+            try:
+                get_generator(generator)
+            except KeyError as exc:
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        f"fixed_profile.generator '{generator}' is not registered",
+                        "set fixed_profile.generator to a registered generator id",
+                    )
+                ) from exc
+            params_raw = fixed_profile_raw.get("params", {})
+            if not isinstance(params_raw, dict):
+                raise ValueError(
+                    _runtime_error(
+                        location,
+                        "fixed_profile.params must be an object when provided",
+                        "set fixed_profile.params to a JSON object",
+                    )
+                )
+            depends_on_raw = fixed_profile_raw.get("depends_on")
+            depends_on: list[str] | None = None
+            if isinstance(depends_on_raw, list):
+                depends_on = [str(name).strip() for name in depends_on_raw if str(name).strip() != ""]
+            overrides[(table_name, column_name)] = (generator, dict(params_raw), depends_on)
+            continue
+
+        sample_source_raw = raw_fit.get("sample_source")
+        if not isinstance(sample_source_raw, dict):
+            raise ValueError(
+                _runtime_error(
+                    location,
+                    "requires fixed_profile or sample_source",
+                    "set fixed_profile for frozen deterministic profiles or sample_source for CSV-driven inference",
+                )
+            )
+        source_path, source_column_index, values = _read_csv_profile_source(
+            location=location,
+            source=sample_source_raw,
+        )
+        generator, params = _infer_profile_from_values(
+            location=location,
+            dtype=column.dtype,
+            source_path=source_path,
+            source_column_index=source_column_index,
+            values=values,
+        )
+        if generator == "sample_csv":
+            params["path"] = source_path
+            params["column_index"] = source_column_index
+        overrides[(table_name, column_name)] = (generator, params, None)
+
+    new_tables: list[TableSpec] = []
+    for table in project.tables:
+        new_columns: list[ColumnSpec] = []
+        for column in table.columns:
+            key = (table.table_name, column.name)
+            override = overrides.get(key)
+            if override is None:
+                new_columns.append(column)
+                continue
+            generator, params, depends_on = override
+            updated = ColumnSpec(
+                name=column.name,
+                dtype=column.dtype,
+                nullable=column.nullable,
+                primary_key=column.primary_key,
+                unique=column.unique,
+                min_value=column.min_value,
+                max_value=column.max_value,
+                choices=column.choices,
+                pattern=column.pattern,
+                generator=generator,
+                params=params,
+                depends_on=(depends_on if depends_on is not None else column.depends_on),
+            )
+            new_columns.append(updated)
+        new_tables.append(
+            TableSpec(
+                table_name=table.table_name,
+                columns=new_columns,
+                row_count=table.row_count,
+                business_key=table.business_key,
+                business_key_unique_count=table.business_key_unique_count,
+                business_key_static_columns=table.business_key_static_columns,
+                business_key_changing_columns=table.business_key_changing_columns,
+                scd_mode=table.scd_mode,
+                scd_tracked_columns=table.scd_tracked_columns,
+                scd_active_from_column=table.scd_active_from_column,
+                scd_active_to_column=table.scd_active_to_column,
+                correlation_groups=table.correlation_groups,
+            )
+        )
+
+    return SchemaProject(
+        name=project.name,
+        seed=project.seed,
+        tables=new_tables,
+        foreign_keys=project.foreign_keys,
+        timeline_constraints=project.timeline_constraints,
+        data_quality_profiles=project.data_quality_profiles,
+        sample_profile_fits=project.sample_profile_fits,
+        locale_identity_bundles=project.locale_identity_bundles,
+    )
+
 def _maybe_null(col, ctx: GenContext) -> bool:
     # PKs cannot be null
     if getattr(col, "primary_key", False):
@@ -575,7 +2729,14 @@ def _apply_table_correlation_groups(
 
 
 def _gen_value(col: ColumnSpec, rng: random.Random, row_index: int, table_name: str, row: dict[str, object]) -> object:
-    ctx = GenContext(row_index=row_index, table=table_name, row=row, rng=rng, column=col.name)
+    ctx = GenContext(
+        row_index=row_index,
+        table=table_name,
+        row=row,
+        rng=rng,
+        column=col.name,
+        dtype=col.dtype,
+    )
 
     # Nulls (probabilistic)
     if _maybe_null(col, ctx):
@@ -1323,29 +3484,107 @@ def _apply_business_key_and_scd(
     return rows
 
 
-def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, object]]]:
-    """
-    Generates rows for all tables with valid PK/FK according to the project's foreign key rules.
+def _compile_parent_cache_columns(
+    project: SchemaProject,
+    *,
+    compiled_timeline_constraints: dict[str, list[dict[str, object]]],
+) -> dict[str, set[str]]:
+    required_by_table: dict[str, set[str]] = {}
+    for fk in project.foreign_keys:
+        cols = required_by_table.setdefault(fk.parent_table, set())
+        cols.add(fk.parent_column)
+        raw_profile = fk.parent_selection
+        if isinstance(raw_profile, dict):
+            attr_raw = raw_profile.get("parent_attribute")
+            if isinstance(attr_raw, str) and attr_raw.strip() != "":
+                cols.add(attr_raw.strip())
 
-    Returns: dict of table_name -> list of row dicts
-    """
+    for rules in compiled_timeline_constraints.values():
+        for rule in rules:
+            references = rule.get("references")
+            if not isinstance(references, list):
+                continue
+            for raw_reference in references:
+                if not isinstance(raw_reference, dict):
+                    continue
+                parent_table = str(raw_reference.get("parent_table", "")).strip()
+                parent_column = str(raw_reference.get("parent_column", "")).strip()
+                parent_pk_column = str(raw_reference.get("parent_pk_column", "")).strip()
+                if parent_table == "":
+                    continue
+                cols = required_by_table.setdefault(parent_table, set())
+                if parent_column != "":
+                    cols.add(parent_column)
+                if parent_pk_column != "":
+                    cols.add(parent_pk_column)
+    return required_by_table
+
+
+def _cache_parent_rows(
+    rows: list[dict[str, object]],
+    *,
+    required_columns: set[str],
+) -> list[dict[str, object]]:
+    if not required_columns:
+        return rows
+    cached_rows: list[dict[str, object]] = []
+    for row in rows:
+        cached_row: dict[str, object] = {}
+        for column_name in required_columns:
+            cached_row[column_name] = row.get(column_name)
+        cached_rows.append(cached_row)
+    return cached_rows
+
+
+def _generate_project_rows_internal(
+    project: SchemaProject,
+    *,
+    retain_rows: bool,
+    on_table_rows: Callable[[str, list[dict[str, object]]], None] | None = None,
+) -> dict[str, list[dict[str, object]]]:
     reset_runtime_generator_state()
     validate_project(project)
-    compiled_timeline_constraints = _compile_timeline_constraints(project)
+    effective_project = _resolve_sample_profile_fits(project)
+    validate_project(effective_project)
+    compiled_timeline_constraints = _compile_timeline_constraints(effective_project)
+    compiled_data_quality_profiles = _compile_data_quality_profiles(effective_project)
+    compiled_locale_identity_bundles = _compile_locale_identity_bundles(effective_project)
+    locale_bundle_state: dict[str, dict[tuple[str, object], dict[str, object]]] = {}
 
-    table_map: dict[str, TableSpec] = {t.table_name: t for t in project.tables}
-    
-    # CHANGE: allow multiple FKs per child table
+    table_map: dict[str, TableSpec] = {t.table_name: t for t in effective_project.tables}
+
     fks_by_child: dict[str, list[ForeignKeySpec]] = {}
-    for fk in project.foreign_keys:
+    for fk in effective_project.foreign_keys:
         fks_by_child.setdefault(fk.child_table, []).append(fk)
 
-    order = _dependency_order(project)
+    parent_cache_columns = _compile_parent_cache_columns(
+        effective_project,
+        compiled_timeline_constraints=compiled_timeline_constraints,
+    )
+    remaining_parent_consumers: dict[str, int] = {table.table_name: 0 for table in effective_project.tables}
+    for fk in effective_project.foreign_keys:
+        remaining_parent_consumers[fk.parent_table] = remaining_parent_consumers.get(fk.parent_table, 0) + 1
 
-    results: dict[str, list[dict[str, object]]] = {}
-    pk_values: dict[str, list[int]] = {}  # table -> list of PK values
+    related_by_table = compiled_locale_identity_bundles.get("related_by_table")
+    remaining_related_bundle_consumers: dict[str, int] = {}
+    if isinstance(related_by_table, dict):
+        for specs in related_by_table.values():
+            if not isinstance(specs, list):
+                continue
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    continue
+                bundle_id = str(spec.get("bundle_id", "")).strip()
+                if bundle_id == "":
+                    continue
+                remaining_related_bundle_consumers[bundle_id] = (
+                    remaining_related_bundle_consumers.get(bundle_id, 0) + 1
+                )
 
-    # Helper: assign a FK column across rows while enforcing per-parent min/max constraints
+    order = _dependency_order(effective_project)
+    parent_rows_by_table: dict[str, list[dict[str, object]]] = {}
+    retained_rows_by_table: dict[str, list[dict[str, object]]] = {}
+
     def _assign_fk_column(
         rng: random.Random,
         rows: list[dict[str, object]],
@@ -1356,6 +3595,8 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         *,
         child_table: str,
         parent_table: str,
+        parent_weights: list[float] | None = None,
+        extra_level_weights: list[float] | None = None,
     ) -> None:
         """
         Assign rows[*][child_fk_col] such that each parent_id appears between min_children and max_children times.
@@ -1363,44 +3604,17 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         This requires:
             len(parent_ids) * min_children <= len(rows) <= len(parent_ids) * max_children
         """
-        parent_n = len(parent_ids)
-        total = len(rows)
-
-        min_total = parent_n * min_children
-        max_total = parent_n * max_children
-
-        if total < min_total:
-            raise ValueError(
-                _runtime_error(
-                    f"Table '{child_table}', FK column '{child_fk_col}'",
-                    f"not enough rows to satisfy FK to parent table '{parent_table}' (need >= {min_total}, have {total})",
-                    "increase child row_count or lower min_children",
-                )
-            )
-        if total > max_total:
-            raise ValueError(
-                _runtime_error(
-                    f"Table '{child_table}', FK column '{child_fk_col}'",
-                    f"too many rows to satisfy FK to parent table '{parent_table}' (need <= {max_total}, have {total})",
-                    "decrease child row_count or raise max_children",
-                )
-            )
-
-        # Choose a count for each parent (within bounds), then adjust totals to match exactly
-        counts = [min_children] * parent_n
-        remaining = total - min_total
-
-        # How many extra slots are available beyond mins?
-        caps = [max_children - min_children] * parent_n
-
-        # Distribute remaining across parents
-        # (simple random allocation within caps)
-        while remaining > 0:
-            i = rng.randrange(parent_n)
-            if caps[i] > 0:
-                counts[i] += 1
-                caps[i] -= 1
-                remaining -= 1
+        location = f"Table '{child_table}', FK column '{child_fk_col}'"
+        counts = _allocate_fk_child_counts(
+            rng,
+            parent_ids=parent_ids,
+            min_children=min_children,
+            max_children=max_children,
+            total_children=len(rows),
+            location=location,
+            parent_weights=parent_weights,
+            extra_level_weights=extra_level_weights,
+        )
 
         # Build the pool
         pool: list[int] = []
@@ -1413,9 +3627,55 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         for r, pid in zip(rows, pool, strict=True):
             r[child_fk_col] = pid
 
+    def _record_table_rows(
+        table_name: str,
+        rows: list[dict[str, object]],
+    ) -> None:
+        if retain_rows:
+            retained_rows_by_table[table_name] = rows
+        if on_table_rows is not None:
+            on_table_rows(table_name, rows)
+
+        if remaining_parent_consumers.get(table_name, 0) <= 0:
+            parent_rows_by_table.pop(table_name, None)
+            return
+
+        required_columns = set(parent_cache_columns.get(table_name, set()))
+        if not required_columns:
+            parent_rows_by_table[table_name] = rows
+            return
+        parent_rows_by_table[table_name] = _cache_parent_rows(rows, required_columns=required_columns)
+
+    def _release_parent_rows_for_consumed_fks(
+        incoming_fks: list[ForeignKeySpec],
+    ) -> None:
+        for fk in incoming_fks:
+            parent_name = fk.parent_table
+            remaining = remaining_parent_consumers.get(parent_name, 0) - 1
+            remaining_parent_consumers[parent_name] = max(0, remaining)
+            if remaining_parent_consumers[parent_name] == 0:
+                parent_rows_by_table.pop(parent_name, None)
+
+    def _release_bundle_state_after_related_table(table_name: str) -> None:
+        if not isinstance(related_by_table, dict):
+            return
+        related_specs = related_by_table.get(table_name, [])
+        if isinstance(related_specs, list):
+            for spec in related_specs:
+                if not isinstance(spec, dict):
+                    continue
+                bundle_id = str(spec.get("bundle_id", "")).strip()
+                if bundle_id == "":
+                    continue
+                remaining = remaining_related_bundle_consumers.get(bundle_id, 0) - 1
+                remaining_related_bundle_consumers[bundle_id] = max(0, remaining)
+        for bundle_id in list(locale_bundle_state.keys()):
+            if remaining_related_bundle_consumers.get(bundle_id, 0) <= 0:
+                locale_bundle_state.pop(bundle_id, None)
+
     for table_name in order:
         t = table_map[table_name]
-        rng = random.Random(_stable_subseed(project.seed, f"table:{table_name}"))
+        rng = random.Random(_stable_subseed(effective_project.seed, f"table:{table_name}"))
 
         pk_col = _table_pk_col_name(t)
         incoming_fks = fks_by_child.get(table_name, [])
@@ -1435,13 +3695,26 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
 
                 rows.append(row)
 
-            _apply_table_correlation_groups(t, rows, project_seed=project.seed)
+            _apply_table_correlation_groups(t, rows, project_seed=effective_project.seed)
             rows = _apply_business_key_and_scd(t, rows, rng, incoming_fks=incoming_fks)
             _enforce_table_timeline_constraints(
                 t,
                 rows,
-                results=results,
+                results=parent_rows_by_table,
                 compiled_constraints=compiled_timeline_constraints,
+            )
+            _apply_table_locale_identity_bundles(
+                t,
+                rows,
+                project_seed=effective_project.seed,
+                compiled_bundles=compiled_locale_identity_bundles,
+                bundle_state=locale_bundle_state,
+            )
+            _apply_table_data_quality_profiles(
+                t,
+                rows,
+                project_seed=effective_project.seed,
+                compiled_profiles=compiled_data_quality_profiles,
             )
 
             # Defensive: ensure PK exists
@@ -1460,45 +3733,131 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 if r.get(pk_col) is None:
                     r[pk_col] = i
 
-            results[table_name] = rows
-            pk_values[table_name] = [int(r.get(pk_col)) for r in rows]
+            _record_table_rows(table_name, rows)
+            _release_bundle_state_after_related_table(table_name)
             logger.info("Generated root table '%s' rows=%d", table_name, len(rows))
             continue
 
         # -----------------------------------------
         # CHILD TABLE with exactly ONE incoming FK
-        # (keep your existing logic unchanged)
         # -----------------------------------------
         if len(incoming_fks) == 1:
             fk = incoming_fks[0]
             parent_table_name = fk.parent_table
-            parent_ids = pk_values[parent_table_name]
+            parent_rows, parent_ids = _fk_parent_rows_and_ids(
+                fk,
+                results=parent_rows_by_table,
+                child_table=table_name,
+            )
+            parent_weights = _build_fk_parent_weights(
+                fk,
+                parent_rows=parent_rows,
+                child_table=table_name,
+            )
+            distribution = _normalize_fk_child_count_distribution(
+                fk,
+                child_table=table_name,
+            )
+            fk_location = f"Table '{table_name}', FK column '{fk.child_column}'"
+            extra_capacity = fk.max_children - fk.min_children
+            extra_weights, extra_level_weights = _compile_fk_distribution_weights(
+                distribution,
+                extra_capacity=extra_capacity,
+                location=fk_location,
+            )
 
             rows: list[dict[str, object]] = []
             next_pk = 1
 
-            for pid in parent_ids:
-                k = rng.randint(fk.min_children, fk.max_children)
-                for _ in range(k):
-                    row: dict[str, object] = {}
-                    for col in ordered_cols:
-                        if col.name == fk.child_column:
-                            row[col.name] = pid
+            if parent_weights is None:
+                if distribution is None:
+                    for pid in parent_ids:
+                        k = rng.randint(fk.min_children, fk.max_children)
+                        for _ in range(k):
+                            row: dict[str, object] = {}
+                            for col in ordered_cols:
+                                if col.name == fk.child_column:
+                                    row[col.name] = pid
+                                else:
+                                    row[col.name] = _gen_value(col, rng, next_pk, table_name, row)
+                            rows.append(row)
+                            next_pk += 1
+                else:
+                    extra_choices = list(range(extra_capacity + 1))
+                    for pid in parent_ids:
+                        if extra_capacity > 0 and extra_weights is not None:
+                            extra = int(rng.choices(extra_choices, weights=extra_weights, k=1)[0])
                         else:
-                            row[col.name] = _gen_value(col, rng, next_pk, table_name, row)
-                    rows.append(row)
-                    next_pk += 1
+                            extra = 0
+                        k = fk.min_children + extra
+                        for _ in range(k):
+                            row: dict[str, object] = {}
+                            for col in ordered_cols:
+                                if col.name == fk.child_column:
+                                    row[col.name] = pid
+                                else:
+                                    row[col.name] = _gen_value(col, rng, next_pk, table_name, row)
+                            rows.append(row)
+                            next_pk += 1
+            else:
+                requested_extras = _sample_requested_fk_extras(
+                    rng,
+                    parent_count=len(parent_ids),
+                    extra_capacity=extra_capacity,
+                    extra_weights=extra_weights,
+                )
+                positive_extra_capacity = sum(
+                    extra_capacity
+                    for weight in parent_weights
+                    if weight > 0
+                )
+                min_total = len(parent_ids) * fk.min_children
+                total_children = min_total + min(requested_extras, positive_extra_capacity)
+                counts = _allocate_fk_child_counts(
+                    rng,
+                    parent_ids=parent_ids,
+                    min_children=fk.min_children,
+                    max_children=fk.max_children,
+                    total_children=total_children,
+                    location=fk_location,
+                    parent_weights=parent_weights,
+                    extra_level_weights=extra_level_weights,
+                )
+                for pid, k in zip(parent_ids, counts, strict=True):
+                    for _ in range(k):
+                        row = {}
+                        for col in ordered_cols:
+                            if col.name == fk.child_column:
+                                row[col.name] = pid
+                            else:
+                                row[col.name] = _gen_value(col, rng, next_pk, table_name, row)
+                        rows.append(row)
+                        next_pk += 1
 
-            _apply_table_correlation_groups(t, rows, project_seed=project.seed)
+            _apply_table_correlation_groups(t, rows, project_seed=effective_project.seed)
             rows = _apply_business_key_and_scd(t, rows, rng, incoming_fks=incoming_fks)
             _enforce_table_timeline_constraints(
                 t,
                 rows,
-                results=results,
+                results=parent_rows_by_table,
                 compiled_constraints=compiled_timeline_constraints,
             )
-            results[table_name] = rows
-            pk_values[table_name] = [int(r[pk_col]) for r in rows]
+            _apply_table_locale_identity_bundles(
+                t,
+                rows,
+                project_seed=effective_project.seed,
+                compiled_bundles=compiled_locale_identity_bundles,
+                bundle_state=locale_bundle_state,
+            )
+            _apply_table_data_quality_profiles(
+                t,
+                rows,
+                project_seed=effective_project.seed,
+                compiled_profiles=compiled_data_quality_profiles,
+            )
+            _record_table_rows(table_name, rows)
+            _release_parent_rows_for_consumed_fks(incoming_fks)
+            _release_bundle_state_after_related_table(table_name)
             logger.info(
                 "Generated child table '%s' rows=%d (parent=%s rows=%d, per-parent=%d..%d)",
                 table_name, len(rows), parent_table_name, len(parent_ids), fk.min_children, fk.max_children
@@ -1510,10 +3869,16 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
         # Strategy: generate total rows = t.row_count, then assign each FK column.
         # -----------------------------------------
         # Compute allowed range intersection across all incoming FKs
+        fk_parent_specs: list[tuple[ForeignKeySpec, list[dict[str, object]], list[int]]] = []
         mins = []
         maxs = []
         for fk in incoming_fks:
-            parent_ids = pk_values[fk.parent_table]
+            parent_rows, parent_ids = _fk_parent_rows_and_ids(
+                fk,
+                results=parent_rows_by_table,
+                child_table=table_name,
+            )
+            fk_parent_specs.append((fk, parent_rows, parent_ids))
             mins.append(len(parent_ids) * fk.min_children)
             maxs.append(len(parent_ids) * fk.max_children)
 
@@ -1569,10 +3934,28 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 )
 
         # Assign each FK column independently, enforcing its min/max rules
-        for fk in incoming_fks:
-            parent_ids = pk_values[fk.parent_table]
+        for fk, parent_rows, parent_ids in fk_parent_specs:
+            parent_weights = _build_fk_parent_weights(
+                fk,
+                parent_rows=parent_rows,
+                child_table=table_name,
+            )
+            distribution = _normalize_fk_child_count_distribution(
+                fk,
+                child_table=table_name,
+            )
+            _, extra_level_weights = _compile_fk_distribution_weights(
+                distribution,
+                extra_capacity=(fk.max_children - fk.min_children),
+                location=f"Table '{table_name}', FK column '{fk.child_column}'",
+            )
             # Use a stable subseed per FK so results are repeatable
-            fk_rng = random.Random(_stable_subseed(project.seed, f"fk:{table_name}:{fk.child_column}:{fk.parent_table}"))
+            fk_rng = random.Random(
+                _stable_subseed(
+                    effective_project.seed,
+                    f"fk:{table_name}:{fk.child_column}:{fk.parent_table}",
+                )
+            )
 
             _assign_fk_column(
                 fk_rng,
@@ -1583,25 +3966,66 @@ def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, ob
                 fk.max_children,
                 child_table=table_name,
                 parent_table=fk.parent_table,
+                parent_weights=parent_weights,
+                extra_level_weights=extra_level_weights,
             )
 
-        _apply_table_correlation_groups(t, rows, project_seed=project.seed)
+        _apply_table_correlation_groups(t, rows, project_seed=effective_project.seed)
         rows = _apply_business_key_and_scd(t, rows, rng, incoming_fks=incoming_fks)
         _enforce_table_timeline_constraints(
             t,
             rows,
-            results=results,
+            results=parent_rows_by_table,
             compiled_constraints=compiled_timeline_constraints,
         )
-        results[table_name] = rows
-        pk_values[table_name] = [int(r[pk_col]) for r in rows]
+        _apply_table_locale_identity_bundles(
+            t,
+            rows,
+            project_seed=effective_project.seed,
+            compiled_bundles=compiled_locale_identity_bundles,
+            bundle_state=locale_bundle_state,
+        )
+        _apply_table_data_quality_profiles(
+            t,
+            rows,
+            project_seed=effective_project.seed,
+            compiled_profiles=compiled_data_quality_profiles,
+        )
+        _record_table_rows(table_name, rows)
+        _release_parent_rows_for_consumed_fks(incoming_fks)
+        _release_bundle_state_after_related_table(table_name)
 
         logger.info(
             "Generated multi-FK child table '%s' rows=%d (incoming_fks=%d)",
             table_name, len(rows), len(incoming_fks)
         )
 
-    return results
+    return retained_rows_by_table
+
+
+def generate_project_rows(project: SchemaProject) -> dict[str, list[dict[str, object]]]:
+    """
+    Generates rows for all tables with valid PK/FK according to the project's foreign key rules.
+
+    Returns: dict of table_name -> list of row dicts
+    """
+    return _generate_project_rows_internal(project, retain_rows=True)
+
+
+def generate_project_rows_streaming(
+    project: SchemaProject,
+    *,
+    on_table_rows: Callable[[str, list[dict[str, object]]], None],
+) -> None:
+    """
+    Generate rows in deterministic table order and emit each table's rows via callback.
+    Rows are not retained globally, enabling bounded-memory export flows.
+    """
+    _generate_project_rows_internal(
+        project,
+        retain_rows=False,
+        on_table_rows=on_table_rows,
+    )
 
 def _order_columns_by_dependencies(cols: list[ColumnSpec]) -> list[ColumnSpec]:
     """
@@ -1635,61 +4059,3 @@ def _order_columns_by_dependencies(cols: list[ColumnSpec]) -> list[ColumnSpec]:
                 )
             )
     return ordered
-
-
-
-def _assign_fk_column(
-    rng: random.Random,
-    rows: list[dict[str, object]],
-    child_fk_col: str,
-    parent_ids: list[int],
-    min_children: int,
-    max_children: int,
-) -> None:
-    """
-    Assign values to rows[*][child_fk_col] such that each parent_id appears
-    between min_children and max_children times (if possible).
-    """
-
-    parent_n = len(parent_ids)
-    total = len(rows)
-
-    min_total = parent_n * min_children
-    max_total = parent_n * max_children
-
-    if total < min_total:
-        raise ValueError(
-            _runtime_error(
-                f"FK column '{child_fk_col}'",
-                f"not enough rows to satisfy min_children (need >= {min_total}, have {total})",
-                "increase child rows or lower min_children",
-            )
-        )
-    if total > max_total:
-        raise ValueError(
-            _runtime_error(
-                f"FK column '{child_fk_col}'",
-                f"too many rows to satisfy max_children (need <= {max_total}, have {total})",
-                "decrease child rows or raise max_children",
-            )
-        )
-
-    # Build a pool with each parent repeated random(min..max) times
-    pool: list[int] = []
-    for pid in parent_ids:
-        k = rng.randint(min_children, max_children)
-        pool.extend([pid] * k)
-
-    rng.shuffle(pool)
-
-    # Adjust pool length to exactly total rows
-    if len(pool) > total:
-        pool = pool[:total]
-    elif len(pool) < total:
-        # Top up by sampling parents randomly
-        pool.extend(rng.choices(parent_ids, k=(total - len(pool))))
-        rng.shuffle(pool)
-
-    # Assign one-to-one to rows
-    for r, pid in zip(rows, pool, strict=True):
-        r[child_fk_col] = pid

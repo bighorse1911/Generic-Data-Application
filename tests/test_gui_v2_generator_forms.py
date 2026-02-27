@@ -61,6 +61,13 @@ class TestGuiV2GeneratorForms(unittest.TestCase):
         parsed = parse_field_text(transitions_spec, "{\"new\": {\"active\": 1.0}}")
         self.assertEqual(parsed, {"new": {"active": 1.0}})
 
+    def test_derived_expr_form_requires_expression_field(self):
+        fields = visible_fields_for("derived_expr", dtype="decimal")
+        expression = next(field for field in fields if field.field_id == "expression")
+        self.assertEqual(expression.field_id, "expression")
+        self.assertTrue(expression.required)
+        self.assertEqual(expression.control_kind, "text")
+
 
 if __name__ == "__main__":
     unittest.main()

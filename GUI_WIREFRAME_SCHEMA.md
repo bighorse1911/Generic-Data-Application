@@ -14,7 +14,7 @@ this project. It is authoritative for:
 If GUI behavior is unclear, this document and `PROJECT_CANON.md` override
 ad-hoc assumptions.
 
-## Implementation Status (2026-02-23)
+## Implementation Status (2026-02-26)
 
 - Current runtime GUI: Tkinter (`src/gui_home.py`)
 - Production modular route: `schema_project` uses `src/gui_schema_project_kit.py` with `src/gui_kit`.
@@ -38,6 +38,11 @@ ad-hoc assumptions.
 - Ordered choices update: column generator selector includes `ordered_choice` with params JSON authoring support for multi-order progression behavior.
 - DG02 update: column generator selector now includes `state_transition` for deterministic per-entity lifecycle trajectories with transition-map, terminal-state, and dwell-time params authoring.
 - DG03 update: Project panel now includes optional `Timeline constraints JSON` authoring/edit controls for cross-table temporal integrity rules.
+- DG04 update: column generator selector now includes `derived_expr` for safe constrained same-row formulas with explicit `depends_on` source declarations and no-`eval` runtime policy.
+- DG05 update: relationships editor now supports optional `Parent selection JSON` authoring per FK for weighted parent-cohort assignment (`parent_attribute`, `weights`, optional `default_weight`).
+- DG06 update: Project panel now includes optional `Data quality profiles JSON` authoring/edit controls for MCAR/MAR/MNAR missingness and controlled quality-issue profiles (`format_error`, `stale_value`, `drift`).
+- DG07 update: Project panel now includes optional `Sample profile fits JSON` authoring/edit controls for CSV-driven profile inference and deterministic fixed profile overrides.
+- DG08 update: relationships editor now supports optional `Child count distribution JSON` authoring per FK for deterministic distribution-shaped child-count behavior (`uniform`, `poisson`, `zipf`) while preserving min/max child cardinality.
 - GUI authoring ergonomics update: generator selector options are filtered by selected dtype, pattern presets are available for regex fields, and generator params template fill is available in column editor.
 - GUI kit modernization phase A update: modular schema screen now uses debounced search controls (tables/columns/FKs), token-style editors for comma-separated business-key fields, non-blocking toasts for success feedback, params JSON editor dialog with parse location hints, and centralized shortcuts + help dialog.
 - GUI kit modernization phase B update: modular schema screen now uses preview pagination, preview column visibility/order chooser, inline validation summary with jump actions, and dirty-state prompts for unsaved navigation/load flows.
@@ -75,7 +80,8 @@ ad-hoc assumptions.
 - Incremental validation engine update: `schema_project_v2` now stages table/column/FK edits into debounced scope-aware incremental validation and preserves full-project validation before generate/export actions.
 - Scalable search/filter pipeline update: `schema_project_v2` now uses indexed + paged filtering for columns and relationships to avoid full Treeview detach/reattach passes on each search keystroke.
 - Undo/redo authoring update: `schema_project_v2` now keeps bounded command-stack undo/redo history for table/column/FK/SCD edits with route-scoped keyboard accelerators.
-- Workspace-state persistence update: `schema_project_v2` now stores/restores route-scoped panel collapse state, active tab, preview page size, and preview column visibility/order using a versioned preferences store.
+- Workspace-state persistence update: `schema_project_v2` now stores/restores route-scoped panel collapse state, active tab, preview page size, preview column visibility/order, and `schema_design_mode` (`simple|medium|complex`) using a versioned preferences store.
+- Schema design modes update: `schema_project_v2` now exposes one in-page mode selector (`Simple|Medium|Complex`) in the header; mode toggles control visibility of advanced project/table/column/relationship authoring while preserving hidden values and keeping canonical schema semantics unchanged.
 - Command palette update: app shell now exposes global `Ctrl/Cmd+K` launcher with searchable route jumps and active-route high-frequency actions (validate/load/save/generate/plan/benchmark) while preserving route-scoped shortcuts.
 - Notification center update: interactive routes now use non-blocking notifications with history for informational/success feedback, while modal dialogs remain for blocking decisions and actionable error/warning interruptions.
 - V2 visual system update: shared token module now owns v2 type scale, spacing scale, color roles, focus-ring state, and button hierarchy; `home_v2` shell/routes and `schema_project_v2` header consume these tokens instead of route-local literals.
@@ -237,17 +243,20 @@ P5 standardization rules:
 - busy/progress during generation/export tasks via `BaseScreen.safe_threaded_job`
 - actionable error dialogs for invalid actions
 - column editor allows editing the selected column and validates edits before apply
-- generator selector includes conditional/time-aware/hierarchical options `if_then`, `time_offset`, `hierarchical_category`, ordered-sequence option `ordered_choice`, lifecycle sequence option `state_transition`, plus distribution/weighted options `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted` (configured via Params JSON + depends_on where applicable)
+- generator selector includes conditional/time-aware/hierarchical options `if_then`, `time_offset`, `hierarchical_category`, safe-formula option `derived_expr`, ordered-sequence option `ordered_choice`, lifecycle sequence option `state_transition`, plus distribution/weighted options `uniform_int`, `uniform_float`, `normal`, `lognormal`, and `choice_weighted` (configured via Params JSON + depends_on where applicable)
 - generator selector list is filtered by selected dtype and blocks invalid dtype/generator combinations in column apply actions.
 - regex field includes pattern preset controls for common patterns while still supporting custom regex input.
 - generator params JSON includes template-fill action to reduce manual JSON authoring.
 - generator params JSON supports a dedicated editor dialog with pretty-format and actionable parse error location (`line`, `column`).
+- relationships editor supports optional FK `Parent selection JSON` for DG05 weighted parent-row assignment and optional `Child count distribution JSON` for DG08 distribution-shaped child-count behavior while preserving min/max child cardinality fields.
 - `sample_csv` params JSON supports optional dependent sampling (`match_column`, `match_column_index`) and relies on Depends on column linkage for same-row correlation.
 - SCD configuration flow with mode selection (`scd1` or `scd2`) and business-key linkage.
 - Business-key behavior controls: token-style comma-separated static/changing/business-key column editors, validated against existing table columns.
 - Table editor includes optional unique business-key count (`business_key_unique_count`) to support scenarios where generated row count exceeds unique business keys.
 - Table editor includes optional correlation-group JSON controls (`correlation_groups`) and JSON-editor dialog access for matrix-based rank-correlation authoring.
 - Project editor includes optional timeline-constraints JSON control (`timeline_constraints`) and dedicated JSON-editor access for DG03 cross-table temporal rule authoring.
+- Project editor includes optional data-quality-profiles JSON control (`data_quality_profiles`) and dedicated JSON-editor access for DG06 missingness/quality-rule authoring.
+- Project editor includes optional sample-profile-fits JSON control (`sample_profile_fits`) and dedicated JSON-editor access for DG07 sample-driven profile fitting authoring.
 - SCD1 controls: tracked slowly-changing column selection.
 - SCD2 controls: active period boundary columns (`from`/`to`, using `date` or `datetime`) plus tracked slowly-changing column selection; applies to root and incoming-FK child tables.
 - Includes discoverable keyboard shortcuts help and debounced search controls for large schema navigation.
@@ -567,16 +576,31 @@ P5 standardization rules:
 - Purpose: native v2 schema authoring route with full schema project editing behavior.
 - Required regions:
 - v2-style header with back navigation to `schema_studio_v2`
+- header segmented mode selector: `Simple | Medium | Complex`
 - full schema authoring/editor regions from canonical schema route contract (project/tables/columns/relationships/generate/status)
 - Required behavior:
 - preserves canonical schema validation/generation/export/JSON IO behavior of `schema_project`
 - consumes shared v2 visual tokens for header typography/color/button hierarchy/focus-ring styling
 - exposes route-scoped shortcuts/focus lifecycle parity with classic modular schema route
+- mode system is UI guidance only (no hard schema-policy enforcement and no runtime/validator semantic changes)
+- default mode is `simple`; route workspace payload persists optional `schema_design_mode` and restores it on app restart
+- mode downgrade (`complex->medium/simple`, `medium->simple`) hides advanced controls but never clears hidden values
+- downgrade with hidden non-empty advanced values shows non-blocking status/toast feedback
 - includes a v2-only structured generator configuration region in the column editor for all registered generators while preserving raw params JSON/manual entry fallback
+- structured generator form visibility by mode:
+- `simple`: structured form hidden
+- `medium`: structured form visible, advanced optional params subsection hidden
+- `complex`: structured form visible with advanced optional params subsection
 - structured generator fields and raw params JSON stay two-way synchronized; unknown params keys remain preserved during edit/save/load roundtrips
-- source-column generator fields (`if_column`, `base_column`, `match_column`, `parent_column`, `entity_column`) auto-add required entries to `depends_on` while leaving `depends_on` manually editable
+- generator selector options are filtered by dtype plus mode allowlist:
+- `simple`: `""`, `uniform_int`, `uniform_float`, `normal`, `lognormal`, `choice_weighted`, `date`, `timestamp_utc`, `latitude`, `longitude`, `money`, `percent`
+- `medium`: `simple` + `sample_csv`, `if_then`, `time_offset`, `hierarchical_category`, `ordered_choice`
+- `complex`: `medium` + `derived_expr`, `state_transition`
+- if a selected generator is outside the active mode allowlist, keep it selected/visible and emit non-blocking guidance; never clear it automatically
+- source-column generator fields (`if_column`, `base_column`, `match_column`, `parent_column`, `entity_column`) plus inferred `derived_expr` expression references auto-add required entries to `depends_on` while leaving `depends_on` manually editable
 - includes advanced optional controls for `null_rate`, `outlier_rate`, `outlier_scale`, and bytes length bounds (`min_length`, `max_length`) without changing canonical schema/runtime contracts
 - includes table-level `correlation_groups` JSON authoring + editor support for deterministic rank-correlation group configuration
+- includes project-level JSON authoring + editor support for `timeline_constraints`, `data_quality_profiles`, `sample_profile_fits`, and `locale_identity_bundles` while preserving canonical validation contracts
 - Save/Load project JSON actions execute through non-blocking async lifecycle jobs with visible busy/status feedback
 - duplicate Save/Load requests while a project IO job is active are safely blocked with actionable status guidance
 - dialog cancellations (`Save As`/`Open`) abort safely without entering async running state; unsaved-change confirmation save path remains synchronous for deterministic guard behavior

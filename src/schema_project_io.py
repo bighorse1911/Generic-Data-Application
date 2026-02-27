@@ -113,6 +113,57 @@ def load_project_from_json(path: str) -> SchemaProject:
                 )
             timeline_constraints.append(dict(raw_rule))
 
+    raw_data_quality_profiles = data.get("data_quality_profiles")
+    data_quality_profiles: list[dict[str, object]] | None = None
+    if raw_data_quality_profiles is not None:
+        if not isinstance(raw_data_quality_profiles, list):
+            raise ValueError(
+                "Project: data_quality_profiles must be a list when provided. "
+                "Fix: set data_quality_profiles to a list of profile objects or omit it."
+            )
+        data_quality_profiles = []
+        for idx, raw_profile in enumerate(raw_data_quality_profiles):
+            if not isinstance(raw_profile, dict):
+                raise ValueError(
+                    f"Project, data_quality_profiles[{idx}]: profile must be an object. "
+                    "Fix: provide each DG06 profile as a JSON object."
+                )
+            data_quality_profiles.append(dict(raw_profile))
+
+    raw_sample_profile_fits = data.get("sample_profile_fits")
+    sample_profile_fits: list[dict[str, object]] | None = None
+    if raw_sample_profile_fits is not None:
+        if not isinstance(raw_sample_profile_fits, list):
+            raise ValueError(
+                "Project: sample_profile_fits must be a list when provided. "
+                "Fix: set sample_profile_fits to a list of fit objects or omit it."
+            )
+        sample_profile_fits = []
+        for idx, raw_fit in enumerate(raw_sample_profile_fits):
+            if not isinstance(raw_fit, dict):
+                raise ValueError(
+                    f"Project, sample_profile_fits[{idx}]: fit must be an object. "
+                    "Fix: provide each DG07 fit as a JSON object."
+                )
+            sample_profile_fits.append(dict(raw_fit))
+
+    raw_locale_identity_bundles = data.get("locale_identity_bundles")
+    locale_identity_bundles: list[dict[str, object]] | None = None
+    if raw_locale_identity_bundles is not None:
+        if not isinstance(raw_locale_identity_bundles, list):
+            raise ValueError(
+                "Project: locale_identity_bundles must be a list when provided. "
+                "Fix: set locale_identity_bundles to a list of DG09 bundle objects or omit it."
+            )
+        locale_identity_bundles = []
+        for idx, raw_bundle in enumerate(raw_locale_identity_bundles):
+            if not isinstance(raw_bundle, dict):
+                raise ValueError(
+                    f"Project, locale_identity_bundles[{idx}]: bundle must be an object. "
+                    "Fix: provide each DG09 bundle as a JSON object."
+                )
+            locale_identity_bundles.append(dict(raw_bundle))
+
     tables = []
     for t in data["tables"]:
         raw_business_key_unique_count = t.get("business_key_unique_count")
@@ -172,6 +223,9 @@ def load_project_from_json(path: str) -> SchemaProject:
         tables=tables,
         foreign_keys=fks,
         timeline_constraints=timeline_constraints,
+        data_quality_profiles=data_quality_profiles,
+        sample_profile_fits=sample_profile_fits,
+        locale_identity_bundles=locale_identity_bundles,
     )
     validate_project(project)
     return project
@@ -198,3 +252,21 @@ def _normalize_sample_csv_paths(data: dict[str, object]) -> None:
                 params["path"] = "tests/fixtures/city_country_pool.csv"
                 continue
             params["path"] = to_repo_relative_path(raw_path)
+
+    sample_profile_fits = data.get("sample_profile_fits")
+    if not isinstance(sample_profile_fits, list):
+        return
+    for fit in sample_profile_fits:
+        if not isinstance(fit, dict):
+            continue
+        source = fit.get("sample_source")
+        if not isinstance(source, dict):
+            continue
+        path_value = source.get("path")
+        if not isinstance(path_value, str) or path_value.strip() == "":
+            continue
+        raw_path = path_value.strip()
+        if raw_path == "__CITY_COUNTRY_CSV__":
+            source["path"] = "tests/fixtures/city_country_pool.csv"
+            continue
+        source["path"] = to_repo_relative_path(raw_path)

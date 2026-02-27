@@ -203,6 +203,73 @@ class TestInvariants(unittest.TestCase):
             self.assertGreaterEqual(delta, 0)
             self.assertLessEqual(delta, 3)
 
+    def test_dg06_profiles_are_deterministic_and_applied(self):
+        project = SchemaProject(
+            name="invariants_dg06",
+            seed=334,
+            tables=[
+                TableSpec(
+                    table_name="events",
+                    row_count=12,
+                    columns=[
+                        ColumnSpec("event_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec(
+                            "segment",
+                            "text",
+                            nullable=False,
+                            generator="choice_weighted",
+                            params={"choices": ["VIP", "STD"], "weights": [1.0, 1.0]},
+                        ),
+                        ColumnSpec(
+                            "note",
+                            "text",
+                            nullable=True,
+                            generator="choice_weighted",
+                            params={"choices": ["ok", "ok2"], "weights": [1.0, 1.0]},
+                        ),
+                        ColumnSpec(
+                            "amount",
+                            "decimal",
+                            nullable=False,
+                            generator="uniform_float",
+                            params={"min": 10.0, "max": 10.0},
+                        ),
+                    ],
+                ),
+            ],
+            foreign_keys=[],
+            data_quality_profiles=[
+                {
+                    "profile_id": "mar_note",
+                    "table": "events",
+                    "column": "note",
+                    "kind": "missingness",
+                    "mechanism": "mar",
+                    "base_rate": 0.3,
+                    "driver_column": "segment",
+                    "value_weights": {"VIP": 2.0, "STD": 0.2},
+                    "default_weight": 0.2,
+                },
+                {
+                    "profile_id": "drift_amount",
+                    "table": "events",
+                    "column": "amount",
+                    "kind": "quality_issue",
+                    "issue_type": "drift",
+                    "rate": 1.0,
+                    "step": 1.0,
+                    "start_index": 1,
+                },
+            ],
+        )
+        first = generate_project_rows(project)
+        second = generate_project_rows(project)
+        self.assertEqual(first, second)
+
+        event_rows = first["events"]
+        self.assertTrue(any(row["note"] is None for row in event_rows))
+        self.assertEqual([float(row["amount"]) for row in event_rows], [11.0 + idx for idx in range(len(event_rows))])
+
     def test_json_roundtrip_preserves_project(self):
         project = self._project(seed=9)
 
@@ -353,6 +420,7 @@ class TestInvariants(unittest.TestCase):
         self.assertIn("money", GENERATORS)
         self.assertIn("percent", GENERATORS)
         self.assertIn("if_then", GENERATORS)
+        self.assertIn("derived_expr", GENERATORS)
         self.assertIn("time_offset", GENERATORS)
         self.assertIn("hierarchical_category", GENERATORS)
         self.assertIn("ordered_choice", GENERATORS)
@@ -417,9 +485,15 @@ class TestInvariants(unittest.TestCase):
 
             guide_titles = {entry[0] for entry in GENERATION_BEHAVIOR_GUIDE}
             self.assertIn("sample_csv generator", guide_titles)
+            self.assertIn("derived_expr safe formula generator", guide_titles)
             self.assertIn("Business key + SCD table behaviors", guide_titles)
             self.assertIn("state_transition lifecycle generator", guide_titles)
             self.assertIn("DG03 cross-table temporal integrity planner", guide_titles)
+            self.assertIn("DG05 attribute-aware FK selection", guide_titles)
+            self.assertIn("DG08 child-cardinality distribution modeling", guide_titles)
+            self.assertIn("DG06 missingness + data-quality profiles", guide_titles)
+            self.assertIn("DG07 sample-driven profile fitting", guide_titles)
+            self.assertIn("DG09 locale-coherent identity bundles", guide_titles)
 
             schema_screen = app.screens[SCHEMA_V2_ROUTE]
             self.assertTrue(hasattr(schema_screen, "preview_table"))

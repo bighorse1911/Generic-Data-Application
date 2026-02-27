@@ -48,6 +48,7 @@ class TestGuiWorkspaceStatePersistence(unittest.TestCase):
         first.columns_panel.collapse()
         first.relationships_panel.expand()
         first.generate_panel.collapse()
+        first._set_schema_design_mode("complex", emit_feedback=False, persist=False)
         first.preview_page_size_var.set("500")
         first._on_preview_page_size_changed()
         first._preview_column_preferences = {
@@ -64,6 +65,7 @@ class TestGuiWorkspaceStatePersistence(unittest.TestCase):
         self.assertTrue(second.columns_panel.is_collapsed)
         self.assertFalse(second.relationships_panel.is_collapsed)
         self.assertTrue(second.generate_panel.is_collapsed)
+        self.assertEqual(second.schema_design_mode_var.get(), "complex")
         self.assertEqual(second.preview_page_size_var.get(), "500")
         self.assertEqual(
             second._preview_column_preferences.get("orders"),

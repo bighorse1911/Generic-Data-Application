@@ -31,7 +31,13 @@ class TestGuiSchemaProjectV2Parity(unittest.TestCase):
         screen.col_unique_var.set(False)
         screen._add_column()
 
-    def _run_authoring_scenario(self, screen) -> dict[str, object]:
+    def _run_authoring_scenario(
+        self,
+        screen,
+        *,
+        fk_parent_selection_text: str = "",
+        fk_child_count_distribution_text: str = "",
+    ) -> dict[str, object]:
         screen.project_name_var.set("schema_v2_parity")
         screen.seed_var.set("91")
 
@@ -61,6 +67,8 @@ class TestGuiSchemaProjectV2Parity(unittest.TestCase):
         screen.fk_child_column_var.set(child_fk_column)
         screen.fk_min_children_var.set("1")
         screen.fk_max_children_var.set("2")
+        screen.fk_parent_selection_var.set(fk_parent_selection_text)
+        screen.fk_child_count_distribution_var.set(fk_child_count_distribution_text)
         screen._add_fk()
         screen._run_validation()
         return asdict(screen.project)
@@ -110,6 +118,30 @@ class TestGuiSchemaProjectV2Parity(unittest.TestCase):
         self.assertEqual(project_payload["seed"], 91)
         self.assertEqual(len(project_payload["tables"]), 2)
         self.assertEqual(len(project_payload["foreign_keys"]), 1)
+
+    def test_schema_project_v2_fk_parent_selection_json_is_persisted(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        payload = self._run_authoring_scenario(
+            screen,
+            fk_parent_selection_text='{"parent_attribute":"segment","weights":{"A":3,"B":1},"default_weight":1}',
+        )
+        fk = payload["foreign_keys"][0]
+        self.assertEqual(
+            fk["parent_selection"],
+            {"parent_attribute": "segment", "weights": {"A": 3, "B": 1}, "default_weight": 1},
+        )
+
+    def test_schema_project_v2_fk_child_count_distribution_json_is_persisted(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        payload = self._run_authoring_scenario(
+            screen,
+            fk_child_count_distribution_text='{"type":"poisson","lambda":1.5}',
+        )
+        fk = payload["foreign_keys"][0]
+        self.assertEqual(
+            fk["child_count_distribution"],
+            {"type": "poisson", "lambda": 1.5},
+        )
 
     def test_schema_project_v2_error_contract_for_missing_fk_is_actionable(self) -> None:
         screen = self.app.screens[SCHEMA_V2_ROUTE]

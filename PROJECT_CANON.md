@@ -31,14 +31,20 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Incremental validation engine (completed): `schema_project_v2` now uses debounced scope-aware validation for table/column/FK deltas while preserving full-project validation before generate/export actions.
 - Scalable search/filter pipeline (completed): `schema_project_v2` now uses indexed + paged search rendering for columns and relationships instead of full Treeview detach/reattach filtering.
 - Undo/redo schema authoring controls (completed): `schema_project_v2` now provides bounded command-stack undo/redo with keyboard shortcuts for table/column/FK/SCD edit recovery.
-- Persisted workspace state (completed): `schema_project_v2` now persists/restores per-route panel collapse state, selected tab, preview page size, and preview visible-column preferences across app restarts.
+- Persisted workspace state (completed): `schema_project_v2` now persists/restores per-route panel collapse state, selected tab, preview page size, preview visible-column preferences, and `schema_design_mode` (`simple|medium|complex`) across app restarts.
 - Command palette + quick navigation (completed): app shell now exposes global `Ctrl/Cmd+K` command palette with route jumps and active-screen high-frequency actions (validate/load/save/generate/plan/benchmark) while preserving route-scoped shortcut behavior.
 - Notification center + reduced modal friction (completed): interactive routes now emit non-blocking notifications with history for informational/success flows; blocking modal dialogs remain reserved for decisions and error/warning paths that require interruption.
 - V2 visual system pass (completed): shared visual tokens now define v2 route-family typography, spacing, color roles, focus-ring states, and button hierarchy and are consumed across native v2 shells/screens.
 - Guided empty states + first-run assistance (completed): schema authoring and run-workflow routes now provide contextual empty-state guidance, inline next-action hints, and starter-schema shortcuts for faster first successful preview.
+- Schema design modes for `schema_project_v2` (completed): the v2 schema route now uses one in-page mode system (`simple|medium|complex`) with a header segmented selector, mode-specific control visibility, generator allowlists, and non-destructive downgrade behavior that preserves hidden advanced values.
 - DG01 correlated column groups (completed): table-level correlation groups now support deterministic seeded multi-column rank-correlation control for numeric/categorical realism.
 - DG02 lifecycle state-transition generator (completed): per-entity Markov-style status progression now supports allowed transition maps, explicit terminal states, dwell-time bounds/overrides, deterministic trajectories, and SCD2 tracked-column transition-step mutation support.
 - DG03 cross-table temporal integrity planner (completed): project-level timeline constraints now enforce deterministic bounded temporal ordering across FK-linked rows with preserve-valid/clamp-invalid runtime policy.
+- DG04 safe derived-expression engine (completed): `derived_expr` now provides constrained same-row formula evaluation (no `eval`) with deterministic behavior, strict `depends_on` source declaration, and actionable validation/runtime errors.
+- DG05 attribute-aware FK selection (completed): foreign keys now support optional parent cohort weighting via `parent_selection` for deterministic skewed parent-row assignment while preserving min/max child cardinality guarantees.
+- DG06 missingness + data-quality profiles (completed): project-level `data_quality_profiles` now support deterministic MCAR/MAR/MNAR-style null modeling plus controlled quality issues (`format_error`, `stale_value`, `drift`) with actionable validation/runtime contracts.
+- DG07 sample-driven profile fitting (completed): project-level `sample_profile_fits` now support CSV-driven generator profile inference (`sample_source`) and deterministic frozen profile overrides (`fixed_profile`) for target columns with actionable validation/runtime contracts.
+- DG08 child-cardinality distribution modeling (completed): foreign keys now support optional `child_count_distribution` profiles (`uniform`, `poisson`, `zipf`) for deterministic distribution-driven child-count shaping while preserving per-parent min/max bounds and FK integrity.
 
 ## Architecture
 - Tkinter GUI
@@ -117,6 +123,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Kit-based schema screen now uses indexed + paged filtering for columns/FKs to keep search-response latency low on large schemas.
 - Kit-based schema screen now supports bounded undo/redo command history for table/column/FK/SCD edits with route-scoped keyboard shortcuts (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Y`, `Ctrl/Cmd+Shift+Z`).
 - Kit-based schema screen now persists/restores route workspace preferences (panel collapse state, active tab, preview page size, preview column visibility/order) through a versioned preferences store.
+- Kit-based schema screen now also persists/restores `schema_design_mode` (`simple|medium|complex`) in the route workspace payload.
 - Kit-based schema screen now includes first-run quick-start shortcuts (create starter schema, load starter fixture, generate-tab jump) and contextual empty-state hints across project/tables/relationships/generate regions.
 - App shell now provides global command palette launch (`Ctrl/Cmd+K`) with route-jump actions and active-route high-frequency workflow actions.
 - Interactive routes now include discoverable notification-history affordances and avoid blocking info/success dialogs during routine workflow completion.
@@ -124,6 +131,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Legacy fallback schema screen now includes low-risk Phase C adoption of Phase B UX primitives: opt-in preview pagination, preview column chooser, inline validation quick-jumps, and dirty-state guarded back/load prompts.
 - Table editor now supports optional `business_key_unique_count` authoring so unique business-key count can be configured independently from table row count.
 - Table editor now supports optional `correlation_groups` JSON authoring with editor dialog support for deterministic rank-correlation group configuration.
+- Relationship editor now supports optional `child_count_distribution` JSON authoring for DG08 deterministic FK child-count shape control.
 - GUI design changes must be recorded in `GUI_WIREFRAME_SCHEMA.md` and `docs/decisions/`.
 
 ## Data Generation
@@ -148,12 +156,17 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - CSV row-matched sampling (`sample_csv` optional `match_column` + `match_column_index` with `depends_on` for same-row linkage)
   - Repo-root-relative CSV sample paths in schema JSON (legacy absolute paths normalized when possible)
   - Conditional generators (phase 1 `if_then`)
+  - Safe derived expressions (`derived_expr`) with constrained AST-validated DSL, explicit dependency declaration, and strict fail-fast runtime behavior
   - Time-aware constraints (phase 2 `time_offset` with row-level date/datetime before/after offsets)
   - Hierarchical categories (phase 3 `hierarchical_category` with parent->children mapping)
   - Realistic distributions (uniform, normal, lognormal, weighted categorical) with validator/runtime guardrails and GUI authoring exposure
   - Ordered choices (`ordered_choice`) with named order paths and weighted movement progression
   - Lifecycle state transitions (`state_transition`) with per-entity transition maps, explicit terminal states, and dwell-time controls
   - Cross-table temporal integrity (`timeline_constraints`) with FK-linked parent references and bounded date/datetime enforcement windows
+  - Attribute-aware FK selection (`ForeignKeySpec.parent_selection`) with weighted parent cohorts (`parent_attribute`, `weights`, optional `default_weight`)
+  - Child-cardinality distribution modeling (`ForeignKeySpec.child_count_distribution`) with deterministic FK child-count profiles (`uniform`, `poisson`, `zipf`)
+  - Missingness/data-quality profiles (`data_quality_profiles`) with MCAR/MAR/MNAR null patterns and controlled issue injection (`format_error`, `stale_value`, `drift`)
+  - Sample-driven profile fitting (`sample_profile_fits`) with CSV-based profile inference (`sample_source`) and deterministic fixed profile overrides (`fixed_profile`)
   - Dates, timestamps, semantic numeric generators (lat/lon/money/percent)
   - Extensible data type support: `bytes` (generated as binary payload, exported to CSV as base64 text, stored in SQLite as BLOB)
   - Correlated columns via `depends_on`

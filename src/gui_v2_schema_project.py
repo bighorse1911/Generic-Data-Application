@@ -7,6 +7,7 @@ from tkinter import filedialog
 from tkinter import ttk
 
 from src.config import AppConfig
+from src.derived_expression import extract_derived_expression_references
 from src.gui_kit.forms import FormBuilder
 from src.gui_kit.json_editor import JsonEditorDialog
 from src.gui_kit.theme_tokens import V2_THEME
@@ -20,6 +21,7 @@ from src.gui_v2.generator_forms import get_generator_form_spec
 from src.gui_v2.generator_forms import parse_field_text
 from src.gui_v2.generator_forms import split_form_state
 from src.gui_v2.generator_forms import visible_fields_for
+from src.gui_v2.schema_design_modes import SchemaDesignMode
 
 V2_HEADER_BG = V2_THEME.colors.header_bg
 V2_HEADER_FG = V2_THEME.colors.header_fg
@@ -57,7 +59,8 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
     def build_header(self):  # type: ignore[override]
         spacing = V2_THEME.spacing
         type_scale = V2_THEME.type_scale
-        header = tk.Frame(self._root_content, bg=V2_HEADER_BG, height=58)
+        header_parent = self._header_host if hasattr(self, "_header_host") else self._root_content
+        header = tk.Frame(header_parent, bg=V2_HEADER_BG, height=58)
         header.pack(fill="x", pady=(0, spacing.md))
         header.pack_propagate(False)
 
@@ -83,6 +86,34 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
             fg=V2_HEADER_FG,
             font=type_scale.body_bold,
         ).pack(side="left", padx=(spacing.md, 0), pady=spacing.sm)
+
+        mode_group = tk.Frame(header, bg=V2_HEADER_BG)
+        mode_group.pack(side="left", padx=(spacing.md, 0), pady=spacing.sm)
+        tk.Label(
+            mode_group,
+            text="Mode",
+            bg=V2_HEADER_BG,
+            fg=V2_HEADER_FG,
+            font=type_scale.body_small,
+        ).pack(side="left", padx=(0, spacing.xs))
+        for mode_value, label in (("simple", "Simple"), ("medium", "Medium"), ("complex", "Complex")):
+            tk.Radiobutton(
+                mode_group,
+                text=label,
+                value=mode_value,
+                variable=self.schema_design_mode_var,
+                indicatoron=0,
+                bd=1,
+                relief="solid",
+                padx=spacing.sm,
+                pady=spacing.xs,
+                bg=V2_HEADER_BG,
+                fg=V2_HEADER_FG,
+                activebackground=V2_HEADER_BG,
+                activeforeground=V2_HEADER_FG,
+                selectcolor=V2_HEADER_BG,
+                highlightthickness=0,
+            ).pack(side="left", padx=(0, spacing.xs))
 
         tk.Button(
             header,
@@ -227,6 +258,7 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
                 "No generator selected. Raw Generator params JSON remains fully supported."
             )
             self._set_generator_form_enabled(self.selected_table_index is not None and not self.is_running)
+            self._apply_generator_form_mode_visibility()
             return
 
         spec = get_generator_form_spec(generator)
@@ -236,6 +268,7 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
                 "Use Raw Generator params JSON for this configuration."
             )
             self._set_generator_form_enabled(self.selected_table_index is not None and not self.is_running)
+            self._apply_generator_form_mode_visibility()
             return
 
         column_choices = self._current_table_column_names()
@@ -275,6 +308,7 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
                 f"Structured fields for '{generator}'. Raw Generator params JSON remains available."
             )
         self._set_generator_form_enabled(self.selected_table_index is not None and not self.is_running)
+        self._apply_generator_form_mode_visibility()
 
     def _build_field_binding(
         self,
@@ -488,6 +522,16 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
             if dtype == "datetime":
                 values.pop("min_days", None)
                 values.pop("max_days", None)
+        if generator == "derived_expr":
+            expression = values.get("expression")
+            if isinstance(expression, str) and expression.strip() != "":
+                try:
+                    extract_derived_expression_references(
+                        expression,
+                        location="Column editor / Generator config / Expression",
+                    )
+                except ValueError as exc:
+                    errors.append(str(exc))
         if dtype != "bytes":
             values.pop("min_length", None)
             values.pop("max_length", None)
@@ -496,6 +540,7 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
 
     def _dependency_source_values(self, params: dict[str, object]) -> list[str]:
         names: list[str] = []
+        generator = self.col_generator_var.get().strip()
         for binding in self._generator_form_bindings.values():
             if not binding.spec.dependency_source:
                 continue
@@ -504,6 +549,19 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
                 stripped = value.strip()
                 if stripped != "":
                     names.append(stripped)
+        if generator == "derived_expr":
+            expression = params.get("expression")
+            if isinstance(expression, str) and expression.strip() != "":
+                try:
+                    for ref_name in extract_derived_expression_references(
+                        expression,
+                        location="Column editor / Generator config / Expression",
+                    ):
+                        if ref_name not in names:
+                            names.append(ref_name)
+                except ValueError:
+                    # Expression parse errors are surfaced during required-field sync.
+                    return names
         return names
 
     def _ensure_depends_on_contains(self, source_column: str) -> None:
@@ -633,6 +691,25 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
         if hasattr(self, "generator_reload_btn"):
             self.generator_reload_btn.configure(state=state)
 
+    def _apply_generator_form_mode_visibility(self, mode: SchemaDesignMode | None = None) -> None:
+        if not hasattr(self, "generator_form_box"):
+            return
+        active_mode = mode or self._current_schema_design_mode()
+        if active_mode == "simple":
+            self.generator_form_box.grid_remove()
+            return
+
+        self.generator_form_box.grid()
+        if not hasattr(self, "generator_advanced_frame"):
+            return
+        if active_mode == "complex" and self._visible_advanced_specs():
+            self.generator_advanced_frame.grid()
+            return
+        self.generator_advanced_frame.grid_remove()
+
+    def _apply_schema_design_mode_overrides(self, mode: SchemaDesignMode) -> None:
+        self._apply_generator_form_mode_visibility(mode)
+
     # ---------------- Overrides ----------------
     def _on_column_generator_changed(self, *_args) -> None:
         super()._on_column_generator_changed(*_args)
@@ -665,6 +742,7 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
     def _set_table_editor_enabled(self, enabled: bool) -> None:
         super()._set_table_editor_enabled(enabled)
         self._set_generator_form_enabled(enabled and (not self.is_running))
+        self._apply_generator_form_mode_visibility()
 
     def _add_column(self) -> None:
         try:

@@ -270,6 +270,323 @@ class TestSchemaProjectRoundtrip(unittest.TestCase):
             except PermissionError:
                 pass
 
+    def test_roundtrip_preserves_fk_parent_selection_profile(self):
+        project = SchemaProject(
+            name="fk_parent_selection_roundtrip",
+            seed=55,
+            tables=[
+                TableSpec(
+                    table_name="customers",
+                    row_count=3,
+                    columns=[
+                        ColumnSpec("customer_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("segment", "text", nullable=False, choices=["VIP", "STD"]),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_id", "int", nullable=False),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec(
+                    child_table="orders",
+                    child_column="customer_id",
+                    parent_table="customers",
+                    parent_column="customer_id",
+                    min_children=1,
+                    max_children=4,
+                    parent_selection={
+                        "parent_attribute": "segment",
+                        "weights": {"VIP": 4.0, "STD": 1.0},
+                        "default_weight": 1.0,
+                    },
+                )
+            ],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_roundtrip_preserves_fk_child_count_distribution_profile(self):
+        project = SchemaProject(
+            name="fk_child_count_distribution_roundtrip",
+            seed=59,
+            tables=[
+                TableSpec(
+                    table_name="customers",
+                    row_count=4,
+                    columns=[ColumnSpec("customer_id", "int", nullable=False, primary_key=True)],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_id", "int", nullable=False),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec(
+                    child_table="orders",
+                    child_column="customer_id",
+                    parent_table="customers",
+                    parent_column="customer_id",
+                    min_children=1,
+                    max_children=5,
+                    child_count_distribution={"type": "poisson", "lambda": 1.4},
+                )
+            ],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_roundtrip_preserves_data_quality_profiles(self):
+        project = SchemaProject(
+            name="dg06_roundtrip",
+            seed=56,
+            tables=[
+                TableSpec(
+                    table_name="events",
+                    row_count=3,
+                    columns=[
+                        ColumnSpec("event_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("segment", "text", nullable=False, choices=["A", "B"]),
+                        ColumnSpec("note", "text", nullable=True),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+            data_quality_profiles=[
+                {
+                    "profile_id": "mar_note",
+                    "table": "events",
+                    "column": "note",
+                    "kind": "missingness",
+                    "mechanism": "mar",
+                    "base_rate": 0.3,
+                    "driver_column": "segment",
+                    "value_weights": {"A": 2.0, "B": 0.2},
+                    "default_weight": 0.2,
+                },
+                {
+                    "profile_id": "fmt_note",
+                    "table": "events",
+                    "column": "note",
+                    "kind": "quality_issue",
+                    "issue_type": "format_error",
+                    "rate": 0.05,
+                    "replacement": "BAD_NOTE",
+                },
+            ],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_roundtrip_preserves_sample_profile_fits(self):
+        project = SchemaProject(
+            name="dg07_roundtrip",
+            seed=57,
+            tables=[
+                TableSpec(
+                    table_name="orders",
+                    row_count=3,
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("city", "text", nullable=False),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+            sample_profile_fits=[
+                {
+                    "fit_id": "orders_city_fit",
+                    "table": "orders",
+                    "column": "city",
+                    "sample_source": {
+                        "path": "tests/fixtures/city_country_pool.csv",
+                        "column_index": 0,
+                        "has_header": True,
+                    },
+                }
+            ],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_save_normalizes_sample_profile_fit_path_to_repo_relative(self):
+        fixture_csv = Path(__file__).resolve().parent / "fixtures" / "city_country_pool.csv"
+        project = SchemaProject(
+            name="dg07_path_normalize",
+            seed=58,
+            tables=[
+                TableSpec(
+                    table_name="orders",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("city", "text", nullable=False),
+                    ],
+                )
+            ],
+            foreign_keys=[],
+            sample_profile_fits=[
+                {
+                    "fit_id": "orders_city_fit",
+                    "table": "orders",
+                    "column": "city",
+                    "sample_source": {
+                        "path": str(fixture_csv),
+                        "column_index": 0,
+                        "has_header": True,
+                    },
+                }
+            ],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+
+        try:
+            save_project_to_json(project, path)
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+
+            saved_path = raw["sample_profile_fits"][0]["sample_source"]["path"]
+            self.assertEqual(saved_path, "tests/fixtures/city_country_pool.csv")
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
+    def test_roundtrip_preserves_locale_identity_bundles(self):
+        project = SchemaProject(
+            name="dg09_roundtrip",
+            seed=60,
+            tables=[
+                TableSpec(
+                    table_name="customers",
+                    row_count=3,
+                    columns=[
+                        ColumnSpec("customer_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("locale", "text", nullable=False),
+                        ColumnSpec("country_code", "text", nullable=False),
+                        ColumnSpec("first_name", "text", nullable=False),
+                        ColumnSpec("last_name", "text", nullable=False),
+                        ColumnSpec("postcode", "text", nullable=False),
+                        ColumnSpec("phone_e164", "text", nullable=False),
+                        ColumnSpec("currency_code", "text", nullable=False),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_id", "int", nullable=False),
+                        ColumnSpec("locale", "text", nullable=False),
+                        ColumnSpec("currency_code", "text", nullable=False),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec(
+                    child_table="orders",
+                    child_column="customer_id",
+                    parent_table="customers",
+                    parent_column="customer_id",
+                    min_children=1,
+                    max_children=2,
+                )
+            ],
+            locale_identity_bundles=[
+                {
+                    "bundle_id": "customer_identity",
+                    "base_table": "customers",
+                    "locale_weights": {"en-US": 0.7, "en-GB": 0.3},
+                    "columns": {
+                        "locale": "locale",
+                        "country_code": "country_code",
+                        "first_name": "first_name",
+                        "last_name": "last_name",
+                        "postcode": "postcode",
+                        "phone_e164": "phone_e164",
+                        "currency_code": "currency_code",
+                    },
+                    "related_tables": [
+                        {
+                            "table": "orders",
+                            "via_fk": "customer_id",
+                            "columns": {
+                                "locale": "locale",
+                                "currency_code": "currency_code",
+                            },
+                        }
+                    ],
+                }
+            ],
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        path = tmp.name
+        tmp.close()
+        try:
+            save_project_to_json(project, path)
+            loaded = load_project_from_json(path)
+            self.assertEqual(project, loaded)
+        finally:
+            try:
+                os.remove(path)
+            except PermissionError:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,7 @@ class TestGUIGeneratorFiltering(unittest.TestCase):
         self.assertIn("state_transition", int_generators)
 
         bool_generators = valid_generators_for_dtype("bool")
-        self.assertEqual(bool_generators, ["", "if_then"])
+        self.assertEqual(bool_generators, ["", "if_then", "derived_expr"])
 
         bytes_generators = valid_generators_for_dtype("bytes")
         self.assertEqual(bytes_generators, [""])
@@ -79,6 +79,12 @@ class TestGUIGeneratorFiltering(unittest.TestCase):
         states = int_template.get("states")
         self.assertIsInstance(states, list)
         self.assertTrue(all(isinstance(value, int) for value in states))
+
+    def test_default_generator_params_template_handles_derived_expr(self):
+        template = default_generator_params_template("derived_expr", "decimal")
+        self.assertIsNotNone(template)
+        assert template is not None
+        self.assertEqual(template.get("expression"), "base_amount - discount_amount")
 
     def test_invalid_generator_for_dtype_has_actionable_error(self):
         try:

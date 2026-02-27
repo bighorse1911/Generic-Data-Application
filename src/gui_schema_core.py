@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from tkinter import ttk, messagebox, filedialog
 
 from src.config import AppConfig
+from src.derived_expression import extract_derived_expression_references
 from src.gui_kit.column_chooser import ColumnChooserDialog
 from src.gui_kit.error_surface import ErrorSurface
 from src.gui_kit.error_surface import show_error_dialog
@@ -42,6 +43,7 @@ GENERATORS = [
     "",
     "sample_csv",
     "if_then",
+    "derived_expr",
     "time_offset",
     "hierarchical_category",
     "uniform_int",
@@ -61,6 +63,7 @@ GENERATORS = [
 GENERATOR_VALID_DTYPES: dict[str, set[str]] = {
     "sample_csv": {"int", "decimal", "text"},
     "if_then": {"int", "decimal", "text", "bool", "date", "datetime"},
+    "derived_expr": {"int", "decimal", "text", "bool", "date", "datetime"},
     "time_offset": {"date", "datetime"},
     "hierarchical_category": {"text"},
     "uniform_int": {"int"},
@@ -115,6 +118,8 @@ def default_generator_params_template(generator: str, dtype: str) -> dict[str, o
             "then_value": "B",
             "else_value": "C",
         }
+    if key == "derived_expr":
+        return {"expression": "base_amount - discount_amount"}
     if key == "time_offset":
         if selected_dtype == "datetime":
             return {
@@ -596,7 +601,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
     - Manage tables in a project
     - Edit selected table (name + row_count)
     - Edit selected table columns (add/remove/move, set PK)
-    - Define FK relationships (parent->child) with cardinality min/max children
+    - Define FK relationships (parent->child) with cardinality min/max children and optional DG08 child-count distribution profile
     - Save/load full project JSON
     """
     ERROR_SURFACE_CONTEXT = "Schema project"
@@ -621,6 +626,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             tables=[],
             foreign_keys=[],
             timeline_constraints=None,
+            data_quality_profiles=None,
+            sample_profile_fits=None,
+            locale_identity_bundles=None,
         )
 
         # Selection state
@@ -631,6 +639,27 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.seed_var = tk.StringVar(value=str(self.project.seed))
         self.project_timeline_constraints_var = tk.StringVar(
             value=json.dumps(self.project.timeline_constraints, sort_keys=True) if self.project.timeline_constraints else ""
+        )
+        self.project_data_quality_profiles_var = tk.StringVar(
+            value=(
+                json.dumps(self.project.data_quality_profiles, sort_keys=True)
+                if self.project.data_quality_profiles
+                else ""
+            )
+        )
+        self.project_sample_profile_fits_var = tk.StringVar(
+            value=(
+                json.dumps(self.project.sample_profile_fits, sort_keys=True)
+                if self.project.sample_profile_fits
+                else ""
+            )
+        )
+        self.project_locale_identity_bundles_var = tk.StringVar(
+            value=(
+                json.dumps(self.project.locale_identity_bundles, sort_keys=True)
+                if self.project.locale_identity_bundles
+                else ""
+            )
         )
         self.status_var = tk.StringVar(value="Ready.")
         self.error_surface = ErrorSurface(
@@ -681,6 +710,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.fk_child_column_var = tk.StringVar(value="")
         self.fk_min_children_var = tk.StringVar(value="1")
         self.fk_max_children_var = tk.StringVar(value="3")
+        self.fk_parent_selection_var = tk.StringVar(value="")
+        self.fk_child_count_distribution_var = tk.StringVar(value="")
 
         #Validation
         self.validation_summary_var = tk.StringVar(value="No validation run yet.")
@@ -714,6 +745,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.project_name_var.trace_add("write", self._on_project_meta_changed)
         self.seed_var.trace_add("write", self._on_project_meta_changed)
         self.project_timeline_constraints_var.trace_add("write", self._on_project_meta_changed)
+        self.project_data_quality_profiles_var.trace_add("write", self._on_project_meta_changed)
+        self.project_sample_profile_fits_var.trace_add("write", self._on_project_meta_changed)
+        self.project_locale_identity_bundles_var.trace_add("write", self._on_project_meta_changed)
         self._refresh_generator_options_for_dtype()
         self._sync_pattern_preset_from_pattern()
         self._refresh_tables_list()
@@ -793,8 +827,107 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             pady=(0, 6),
         )
 
+        ttk.Label(proj, text="Data quality profiles JSON (optional):").grid(
+            row=3,
+            column=0,
+            sticky="w",
+            padx=6,
+            pady=6,
+        )
+        self.project_data_quality_profiles_entry = ttk.Entry(
+            proj,
+            textvariable=self.project_data_quality_profiles_var,
+        )
+        self.project_data_quality_profiles_entry.grid(
+            row=3,
+            column=1,
+            columnspan=3,
+            sticky="ew",
+            padx=6,
+            pady=6,
+        )
+        self.project_data_quality_profiles_editor_btn = ttk.Button(
+            proj,
+            text="Open data quality profiles JSON editor",
+            command=self._open_project_data_quality_profiles_editor,
+        )
+        self.project_data_quality_profiles_editor_btn.grid(
+            row=4,
+            column=0,
+            columnspan=4,
+            sticky="ew",
+            padx=6,
+            pady=(0, 6),
+        )
+
+        ttk.Label(proj, text="Sample profile fits JSON (optional):").grid(
+            row=5,
+            column=0,
+            sticky="w",
+            padx=6,
+            pady=6,
+        )
+        self.project_sample_profile_fits_entry = ttk.Entry(
+            proj,
+            textvariable=self.project_sample_profile_fits_var,
+        )
+        self.project_sample_profile_fits_entry.grid(
+            row=5,
+            column=1,
+            columnspan=3,
+            sticky="ew",
+            padx=6,
+            pady=6,
+        )
+        self.project_sample_profile_fits_editor_btn = ttk.Button(
+            proj,
+            text="Open sample profile fits JSON editor",
+            command=self._open_project_sample_profile_fits_editor,
+        )
+        self.project_sample_profile_fits_editor_btn.grid(
+            row=6,
+            column=0,
+            columnspan=4,
+            sticky="ew",
+            padx=6,
+            pady=(0, 6),
+        )
+
+        ttk.Label(proj, text="Locale identity bundles JSON (optional):").grid(
+            row=7,
+            column=0,
+            sticky="w",
+            padx=6,
+            pady=6,
+        )
+        self.project_locale_identity_bundles_entry = ttk.Entry(
+            proj,
+            textvariable=self.project_locale_identity_bundles_var,
+        )
+        self.project_locale_identity_bundles_entry.grid(
+            row=7,
+            column=1,
+            columnspan=3,
+            sticky="ew",
+            padx=6,
+            pady=6,
+        )
+        self.project_locale_identity_bundles_editor_btn = ttk.Button(
+            proj,
+            text="Open locale identity bundles JSON editor",
+            command=self._open_project_locale_identity_bundles_editor,
+        )
+        self.project_locale_identity_bundles_editor_btn.grid(
+            row=8,
+            column=0,
+            columnspan=4,
+            sticky="ew",
+            padx=6,
+            pady=(0, 6),
+        )
+
         btns = ttk.Frame(proj)
-        btns.grid(row=3, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
+        btns.grid(row=9, column=0, columnspan=4, sticky="ew", padx=6, pady=(10, 0))
         btns.columnconfigure(0, weight=1)
         btns.columnconfigure(1, weight=1)
 
@@ -1055,7 +1188,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         rel = ttk.LabelFrame(rel_section.content, text="", padding=10)
         rel.pack(fill="both", expand=True)
         rel.columnconfigure(1, weight=1)
-        rel.rowconfigure(6, weight=1)
+        rel.rowconfigure(8, weight=1)
 
         ttk.Label(rel, text="Parent table:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         self.fk_parent_combo = ttk.Combobox(rel, textvariable=self.fk_parent_table_var, state="readonly")
@@ -1077,15 +1210,23 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         ttk.Label(rel, text="Max children:").grid(row=4, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(rel, textvariable=self.fk_max_children_var, width=8).grid(row=4, column=1, sticky="w", padx=6, pady=6)
 
+        ttk.Label(rel, text="Parent selection JSON (optional):").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        self.fk_parent_selection_entry = ttk.Entry(rel, textvariable=self.fk_parent_selection_var)
+        self.fk_parent_selection_entry.grid(row=5, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(rel, text="Child count distribution JSON (optional):").grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        self.fk_child_count_distribution_entry = ttk.Entry(rel, textvariable=self.fk_child_count_distribution_var)
+        self.fk_child_count_distribution_entry.grid(row=6, column=1, sticky="ew", padx=6, pady=6)
+
         self.add_fk_btn = ttk.Button(rel, text="Add relationship", command=self._add_fk)
-        self.add_fk_btn.grid(row=5, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 8))
+        self.add_fk_btn.grid(row=7, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 8))
 
         fk_frame = ttk.LabelFrame(rel, text="Defined relationships", padding=8)
-        fk_frame.grid(row=6, column=0, columnspan=2, sticky="nsew", padx=6, pady=(6, 0))
+        fk_frame.grid(row=8, column=0, columnspan=2, sticky="nsew", padx=6, pady=(6, 0))
         fk_frame.rowconfigure(0, weight=1)
         fk_frame.columnconfigure(0, weight=1)
 
-        fk_cols = ("parent", "parent_pk", "child", "child_fk", "min", "max")
+        fk_cols = ("parent", "parent_pk", "child", "child_fk", "min", "max", "distribution")
         self.fks_tree = ttk.Treeview(fk_frame, columns=fk_cols, show="headings", height=10)
         for c in fk_cols:
             self.fks_tree.heading(c, text=c)
@@ -1096,6 +1237,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.fks_tree.column("child_fk", width=90)
         self.fks_tree.column("min", width=60, anchor="e")
         self.fks_tree.column("max", width=60, anchor="e")
+        self.fks_tree.column("distribution", width=180)
         install_treeview_keyboard_support(self.fks_tree, include_headers=True)
 
         y2 = ttk.Scrollbar(fk_frame, orient="vertical", command=self.fks_tree.yview)
@@ -1105,7 +1247,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         y2.grid(row=0, column=1, sticky="ns")
 
         self.remove_fk_btn = ttk.Button(rel, text="Remove selected relationship", command=self._remove_selected_fk)
-        self.remove_fk_btn.grid(row=7, column=0, columnspan=2, sticky="ew", padx=6, pady=(8, 0))
+        self.remove_fk_btn.grid(row=9, column=0, columnspan=2, sticky="ew", padx=6, pady=(8, 0))
 
         # =========================
         # Bottom: Generate / Preview / Export / SQLite
@@ -1518,6 +1660,10 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.col_depends_entry.configure(state=state)
         self.add_col_btn.configure(state=state)
         self.edit_col_btn.configure(state=state)
+        if hasattr(self, "fk_parent_selection_entry"):
+            self.fk_parent_selection_entry.configure(state=state)
+        if hasattr(self, "fk_child_count_distribution_entry"):
+            self.fk_child_count_distribution_entry.configure(state=state)
 
     def _refresh_tables_list(self) -> None:
         self.tables_list.delete(0, tk.END)
@@ -1707,6 +1853,45 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         self.project_timeline_constraints_var.set(pretty_json)
         self.status_var.set("Applied timeline constraints JSON.")
 
+    def _open_project_data_quality_profiles_editor(self) -> None:
+        JsonEditorDialog(
+            self,
+            title="Data Quality Profiles JSON Editor",
+            initial_text=self.project_data_quality_profiles_var.get().strip() or "[]",
+            require_object=False,
+            on_apply=self._on_project_data_quality_profiles_json_apply,
+        )
+
+    def _on_project_data_quality_profiles_json_apply(self, pretty_json: str) -> None:
+        self.project_data_quality_profiles_var.set(pretty_json)
+        self.status_var.set("Applied data quality profiles JSON.")
+
+    def _open_project_sample_profile_fits_editor(self) -> None:
+        JsonEditorDialog(
+            self,
+            title="Sample Profile Fits JSON Editor",
+            initial_text=self.project_sample_profile_fits_var.get().strip() or "[]",
+            require_object=False,
+            on_apply=self._on_project_sample_profile_fits_json_apply,
+        )
+
+    def _on_project_sample_profile_fits_json_apply(self, pretty_json: str) -> None:
+        self.project_sample_profile_fits_var.set(pretty_json)
+        self.status_var.set("Applied sample profile fits JSON.")
+
+    def _open_project_locale_identity_bundles_editor(self) -> None:
+        JsonEditorDialog(
+            self,
+            title="Locale Identity Bundles JSON Editor",
+            initial_text=self.project_locale_identity_bundles_var.get().strip() or "[]",
+            require_object=False,
+            on_apply=self._on_project_locale_identity_bundles_json_apply,
+        )
+
+    def _on_project_locale_identity_bundles_json_apply(self, pretty_json: str) -> None:
+        self.project_locale_identity_bundles_var.set(pretty_json)
+        self.status_var.set("Applied locale identity bundles JSON.")
+
     def _on_column_selected(self, _event=None) -> None:
         if self.selected_table_index is None:
             return
@@ -1813,6 +1998,49 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             location=action_prefix,
             field_name="depends_on",
         )
+        depends_on_list = list(depends_on or [])
+
+        if gen_name == "derived_expr":
+            if params is None:
+                raise ValueError(
+                    _gui_error(
+                        f"{action_prefix} / Derived expression",
+                        "params.expression is required",
+                        "set Params JSON to an object like {\"expression\": \"a + b\"}",
+                    )
+                )
+            expression_raw = params.get("expression")
+            if not isinstance(expression_raw, str) or expression_raw.strip() == "":
+                raise ValueError(
+                    _gui_error(
+                        f"{action_prefix} / Derived expression",
+                        "params.expression must be a non-empty string",
+                        "set params.expression to a valid derived expression",
+                    )
+                )
+            try:
+                referenced_columns = list(
+                    extract_derived_expression_references(
+                        expression_raw,
+                        location=f"{action_prefix} / Derived expression",
+                    )
+                )
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            for ref_name in referenced_columns:
+                if ref_name == name:
+                    raise ValueError(
+                        _gui_error(
+                            f"{action_prefix} / Derived expression",
+                            "expression cannot reference the target column itself",
+                            "remove self references from params.expression",
+                        )
+                    )
+                if ref_name not in depends_on_list:
+                    depends_on_list.append(ref_name)
+            self.col_depends_var.set(", ".join(depends_on_list))
+
+        depends_on_out = depends_on_list or None
 
         return ColumnSpec(
             name=name,
@@ -1826,7 +2054,7 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             pattern=pattern,
             generator=gen_name,
             params=params,
-            depends_on=depends_on,
+            depends_on=depends_on_out,
         )
 
     def _parse_column_name_csv(
@@ -1931,6 +2159,99 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             rules.append(dict(item))
         return rules
 
+    def _parse_project_data_quality_profiles(
+        self,
+        raw_value: str,
+        *,
+        location: str,
+    ) -> list[dict[str, object]] | None:
+        value = raw_value.strip()
+        if value == "":
+            return None
+        try:
+            parsed = json.loads(value)
+        except Exception as exc:
+            raise ValueError(
+                f"{location}: data_quality_profiles JSON is invalid ({exc}). "
+                "Fix: provide a valid JSON list of DG06 profile objects."
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ValueError(
+                f"{location}: data_quality_profiles must be a JSON list. "
+                "Fix: use a list like [{\"profile_id\": \"mcar_orders\", \"table\": \"orders\", \"column\": \"note\", \"kind\": \"missingness\", \"mechanism\": \"mcar\", \"base_rate\": 0.1}]."
+            )
+        profiles: list[dict[str, object]] = []
+        for idx, item in enumerate(parsed):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"{location}: data_quality_profiles[{idx}] must be a JSON object. "
+                    "Fix: provide each DG06 profile as an object."
+                )
+            profiles.append(dict(item))
+        return profiles
+
+    def _parse_project_sample_profile_fits(
+        self,
+        raw_value: str,
+        *,
+        location: str,
+    ) -> list[dict[str, object]] | None:
+        value = raw_value.strip()
+        if value == "":
+            return None
+        try:
+            parsed = json.loads(value)
+        except Exception as exc:
+            raise ValueError(
+                f"{location}: sample_profile_fits JSON is invalid ({exc}). "
+                "Fix: provide a valid JSON list of DG07 sample-profile-fit objects."
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ValueError(
+                f"{location}: sample_profile_fits must be a JSON list. "
+                "Fix: use a list like [{\"fit_id\": \"orders_amount_fit\", \"table\": \"orders\", \"column\": \"amount\", \"sample_source\": {\"path\": \"tests/fixtures/sample.csv\", \"column_index\": 0}}]."
+            )
+        fits: list[dict[str, object]] = []
+        for idx, item in enumerate(parsed):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"{location}: sample_profile_fits[{idx}] must be a JSON object. "
+                    "Fix: provide each DG07 fit as an object."
+                )
+            fits.append(dict(item))
+        return fits
+
+    def _parse_project_locale_identity_bundles(
+        self,
+        raw_value: str,
+        *,
+        location: str,
+    ) -> list[dict[str, object]] | None:
+        value = raw_value.strip()
+        if value == "":
+            return None
+        try:
+            parsed = json.loads(value)
+        except Exception as exc:
+            raise ValueError(
+                f"{location}: locale_identity_bundles JSON is invalid ({exc}). "
+                "Fix: provide a valid JSON list of DG09 locale-bundle objects."
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ValueError(
+                f"{location}: locale_identity_bundles must be a JSON list. "
+                "Fix: use a list like [{\"bundle_id\": \"customer_identity\", \"base_table\": \"customers\", \"columns\": {\"first_name\": \"first_name\", \"postcode\": \"postcode\"}}]."
+            )
+        bundles: list[dict[str, object]] = []
+        for idx, item in enumerate(parsed):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"{location}: locale_identity_bundles[{idx}] must be a JSON object. "
+                    "Fix: provide each DG09 bundle as an object."
+                )
+            bundles.append(dict(item))
+        return bundles
+
     def _apply_project_vars_to_model(self) -> None:
         name = self.project_name_var.get().strip()
         try:
@@ -1947,12 +2268,27 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.project_timeline_constraints_var.get(),
             location="Project / Timeline constraints",
         )
+        data_quality_profiles = self._parse_project_data_quality_profiles(
+            self.project_data_quality_profiles_var.get(),
+            location="Project / Data quality profiles",
+        )
+        sample_profile_fits = self._parse_project_sample_profile_fits(
+            self.project_sample_profile_fits_var.get(),
+            location="Project / Sample profile fits",
+        )
+        locale_identity_bundles = self._parse_project_locale_identity_bundles(
+            self.project_locale_identity_bundles_var.get(),
+            location="Project / Locale identity bundles",
+        )
         self.project = SchemaProject(
             name=name,
             seed=seed,
             tables=self.project.tables,
             foreign_keys=self.project.foreign_keys,
             timeline_constraints=timeline_constraints,
+            data_quality_profiles=data_quality_profiles,
+            sample_profile_fits=sample_profile_fits,
+            locale_identity_bundles=locale_identity_bundles,
         )
 
     # ----- FK helpers -----
@@ -2025,10 +2361,30 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.fks_tree.delete(item)
 
         for i, fk in enumerate(self.project.foreign_keys):
+            dist = fk.child_count_distribution
+            dist_label = ""
+            if isinstance(dist, dict):
+                dist_type = str(dist.get("type", "")).strip().lower()
+                if dist_type == "poisson":
+                    dist_label = f"poisson(lambda={dist.get('lambda')})"
+                elif dist_type == "zipf":
+                    dist_label = f"zipf(s={dist.get('s')})"
+                elif dist_type == "uniform":
+                    dist_label = "uniform"
+                elif dist_type:
+                    dist_label = dist_type
             self.fks_tree.insert(
                 "",
                 tk.END,
-                values=(fk.parent_table, fk.parent_column, fk.child_table, fk.child_column, fk.min_children, fk.max_children),
+                values=(
+                    fk.parent_table,
+                    fk.parent_column,
+                    fk.child_table,
+                    fk.child_column,
+                    fk.min_children,
+                    fk.max_children,
+                    dist_label,
+                ),
                 tags=(str(i),),
             )
 
@@ -2066,6 +2422,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -2608,6 +2967,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=tables,
                 foreign_keys=fks,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -2766,6 +3128,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                         parent_column=fk.parent_column,
                         min_children=fk.min_children,
                         max_children=fk.max_children,
+                        parent_selection=fk.parent_selection,
+                        child_count_distribution=fk.child_count_distribution,
                     )
                 )
 
@@ -2791,6 +3155,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=tables,
                 foreign_keys=fks,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -2868,6 +3235,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -2954,6 +3324,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -3031,6 +3404,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -3085,6 +3461,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=tables,
                 foreign_keys=self.project.foreign_keys,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -3169,6 +3548,52 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     )
                 )
 
+            parent_selection = None
+            parent_selection_text = self.fk_parent_selection_var.get().strip()
+            if parent_selection_text:
+                try:
+                    parsed_parent_selection = json.loads(parent_selection_text)
+                except Exception as exc:
+                    raise ValueError(
+                        _gui_error(
+                            "Add relationship / Parent selection JSON",
+                            f"invalid JSON ({exc})",
+                            "provide a JSON object like {\"parent_attribute\": \"segment\", \"weights\": {\"VIP\": 3, \"STD\": 1}, \"default_weight\": 1}",
+                        )
+                    ) from exc
+                if not isinstance(parsed_parent_selection, dict):
+                    raise ValueError(
+                        _gui_error(
+                            "Add relationship / Parent selection JSON",
+                            "value must be a JSON object",
+                            "set parent selection JSON to an object or leave it empty",
+                        )
+                    )
+                parent_selection = parsed_parent_selection
+
+            child_count_distribution = None
+            child_count_distribution_text = self.fk_child_count_distribution_var.get().strip()
+            if child_count_distribution_text:
+                try:
+                    parsed_child_count_distribution = json.loads(child_count_distribution_text)
+                except Exception as exc:
+                    raise ValueError(
+                        _gui_error(
+                            "Add relationship / Child count distribution JSON",
+                            f"invalid JSON ({exc})",
+                            "provide a JSON object like {\"type\": \"poisson\", \"lambda\": 1.5} or {\"type\": \"zipf\", \"s\": 1.2}",
+                        )
+                    ) from exc
+                if not isinstance(parsed_child_count_distribution, dict):
+                    raise ValueError(
+                        _gui_error(
+                            "Add relationship / Child count distribution JSON",
+                            "value must be a JSON object",
+                            "set child count distribution JSON to an object or leave it empty",
+                        )
+                    )
+                child_count_distribution = parsed_child_count_distribution
+
             # # MVP constraint: child can only have one FK
             # if any(fk.child_table == child for fk in self.project.foreign_keys):
             #     raise ValueError(f"Table '{child}' already has a foreign key (MVP supports 1 FK per child table).")
@@ -3211,6 +3636,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                     parent_column=parent_pk,
                     min_children=min_k,
                     max_children=max_k,
+                    parent_selection=parent_selection,
+                    child_count_distribution=child_count_distribution,
                 )
             )
 
@@ -3220,6 +3647,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=self.project.tables,
                 foreign_keys=fks,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -3249,6 +3679,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
                 tables=self.project.tables,
                 foreign_keys=fks,
                 timeline_constraints=self.project.timeline_constraints,
+                data_quality_profiles=self.project.data_quality_profiles,
+                sample_profile_fits=self.project.sample_profile_fits,
+                locale_identity_bundles=self.project.locale_identity_bundles,
             )
             validate_project(new_project)
 
@@ -3561,6 +3994,9 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             tables=new_tables,
             foreign_keys=self.project.foreign_keys,
             timeline_constraints=self.project.timeline_constraints,
+            data_quality_profiles=self.project.data_quality_profiles,
+            sample_profile_fits=self.project.sample_profile_fits,
+            locale_identity_bundles=self.project.locale_identity_bundles,
         )
 
     def _on_generate_sample(self) -> None:
@@ -3641,6 +4077,15 @@ class SchemaProjectDesignerScreen(ttk.Frame):
             self.project_timeline_constraints_var.set(
                 json.dumps(project.timeline_constraints, sort_keys=True) if project.timeline_constraints else ""
             )
+            self.project_data_quality_profiles_var.set(
+                json.dumps(project.data_quality_profiles, sort_keys=True) if project.data_quality_profiles else ""
+            )
+            self.project_sample_profile_fits_var.set(
+                json.dumps(project.sample_profile_fits, sort_keys=True) if project.sample_profile_fits else ""
+            )
+            self.project_locale_identity_bundles_var.set(
+                json.dumps(project.locale_identity_bundles, sort_keys=True) if project.locale_identity_bundles else ""
+            )
             self._suspend_dirty_tracking = False
 
             self.selected_table_index = None
@@ -3659,6 +4104,8 @@ class SchemaProjectDesignerScreen(ttk.Frame):
         except Exception as exc:
             self._suspend_dirty_tracking = False
             self._show_error_dialog("Load failed", str(exc))
+
+
 
 
 

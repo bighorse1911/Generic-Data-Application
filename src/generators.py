@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, date, timezone, timedelta
 from typing import Any, Callable, Dict, Optional
 
+from src.derived_expression import CompiledDerivedExpression
+from src.derived_expression import compile_derived_expression
+from src.derived_expression import evaluate_derived_expression
+from src.derived_expression import is_iso_date_text
+from src.derived_expression import is_iso_datetime_text
 from src.project_paths import resolve_repo_path
 from src.value_pools import load_csv_column, load_csv_column_by_match
 
@@ -24,6 +29,7 @@ class GenContext:
     row: Dict[str, Any]
     rng: random.Random
     column: str = ""
+    dtype: str = ""
 
 GeneratorFn = Callable[[Dict[str, Any], GenContext], Any]
 
@@ -31,6 +37,7 @@ REGISTRY: Dict[str, GeneratorFn] = {}
 _ORDERED_CHOICE_STATE: Dict[tuple[str, str], Dict[str, Any]] = {}
 _STATE_TRANSITION_CONFIG_STATE: Dict[tuple[str, str], Dict[str, Any]] = {}
 _STATE_TRANSITION_ENTITY_STATE: Dict[tuple[str, str, tuple[str, str]], Dict[str, Any]] = {}
+_DERIVED_EXPRESSION_STATE: Dict[tuple[str, str], CompiledDerivedExpression] = {}
 
 def register(name: str):
     def deco(fn: GeneratorFn) -> GeneratorFn:
@@ -52,6 +59,7 @@ def reset_runtime_generator_state() -> None:
     _ORDERED_CHOICE_STATE.clear()
     _STATE_TRANSITION_CONFIG_STATE.clear()
     _STATE_TRANSITION_ENTITY_STATE.clear()
+    _DERIVED_EXPRESSION_STATE.clear()
 
 def _generator_error(location: str, issue: str, hint: str) -> str:
     return f"{location}: {issue}. Fix: {hint}."
@@ -1727,6 +1735,96 @@ def gen_state_transition(params: Dict[str, Any], ctx: GenContext) -> Any:
     state["current_state"] = current_state
     state["remaining"] = remaining - 1
     return output_state
+
+
+def _coerce_derived_expression_result(value: Any, *, dtype: str, location: str) -> Any:
+    target_dtype = dtype.strip().lower()
+    if target_dtype == "int":
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                _generator_error(
+                    location,
+                    f"derived expression result type '{type(value).__name__}' is incompatible with dtype 'int'",
+                    "return an integer result or cast explicitly with to_int(...)",
+                )
+            )
+        return value
+    if target_dtype in {"decimal", "float"}:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(
+                _generator_error(
+                    location,
+                    f"derived expression result type '{type(value).__name__}' is incompatible with dtype '{target_dtype}'",
+                    "return a numeric result or cast explicitly with to_decimal(...)",
+                )
+            )
+        return float(value)
+    if target_dtype == "text":
+        if not isinstance(value, str):
+            raise ValueError(
+                _generator_error(
+                    location,
+                    f"derived expression result type '{type(value).__name__}' is incompatible with dtype 'text'",
+                    "return text directly or cast explicitly with to_text(...)",
+                )
+            )
+        return value
+    if target_dtype == "bool":
+        if not isinstance(value, bool):
+            raise ValueError(
+                _generator_error(
+                    location,
+                    f"derived expression result type '{type(value).__name__}' is incompatible with dtype 'bool'",
+                    "return a boolean expression result or cast explicitly with to_bool(...)",
+                )
+            )
+        return value
+    if target_dtype == "date":
+        if not is_iso_date_text(value):
+            raise ValueError(
+                _generator_error(
+                    location,
+                    "derived expression result is not a valid ISO date",
+                    "return text in 'YYYY-MM-DD' format for date columns",
+                )
+            )
+        return str(value).strip()
+    if target_dtype == "datetime":
+        if not is_iso_datetime_text(value):
+            raise ValueError(
+                _generator_error(
+                    location,
+                    "derived expression result is not a valid ISO datetime",
+                    "return ISO datetime text (for example '2026-02-24T10:00:00Z')",
+                )
+            )
+        return str(value).strip()
+    return value
+
+
+@register("derived_expr")
+def gen_derived_expr(params: Dict[str, Any], ctx: GenContext) -> Any:
+    location = f"Table '{ctx.table}', column '{ctx.column}', generator 'derived_expr'"
+    expression_raw = params.get("expression")
+    if not isinstance(expression_raw, str) or expression_raw.strip() == "":
+        raise ValueError(
+            _generator_error(
+                location,
+                "params.expression is required",
+                "set params.expression to a non-empty expression string",
+            )
+        )
+    expression = expression_raw.strip()
+
+    column_key = ctx.column.strip() if isinstance(ctx.column, str) and ctx.column.strip() else f"params:{id(params)}"
+    state_key = (ctx.table, column_key)
+    compiled = _DERIVED_EXPRESSION_STATE.get(state_key)
+    if compiled is None or compiled.expression != expression:
+        compiled = compile_derived_expression(expression, location=location)
+        _DERIVED_EXPRESSION_STATE[state_key] = compiled
+
+    value = evaluate_derived_expression(compiled, row=ctx.row, location=location)
+    return _coerce_derived_expression_result(value, dtype=ctx.dtype, location=location)
 
 
     ##----------------CORRELATIONS----------------##

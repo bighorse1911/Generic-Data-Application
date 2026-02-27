@@ -4,12 +4,13 @@ import base64
 import csv
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from typing import Callable
 
 from src.generator_project import generate_project_rows
+from src.generator_project import generate_project_rows_streaming
 from src.schema_project_model import SchemaProject
 from src.schema_project_model import TableSpec
 from src.storage_sqlite_project import create_tables, insert_project_rows
@@ -562,6 +563,9 @@ def _clone_project_with_row_overrides(project: SchemaProject, overrides: dict[st
         tables=tables,
         foreign_keys=project.foreign_keys,
         timeline_constraints=project.timeline_constraints,
+        data_quality_profiles=project.data_quality_profiles,
+        sample_profile_fits=project.sample_profile_fits,
+        locale_identity_bundles=project.locale_identity_bundles,
     )
 
 
@@ -744,8 +748,12 @@ def run_generation_with_strategy(
 
     selected_tables = _selected_tables_with_required_parents(project, profile)
     selected_set = set(selected_tables)
-    chunk_plan = build_chunk_plan(project, profile)
+    effective_profile = replace(profile, target_tables=selected_tables)
+    chunk_plan = build_chunk_plan(project, effective_profile)
     chunk_summary = summarize_chunk_plan(chunk_plan)
+    chunk_entries_by_table: dict[str, list[ChunkPlanEntry]] = {}
+    for entry in chunk_plan:
+        chunk_entries_by_table.setdefault(entry.table_name, []).append(entry)
 
     mode = profile.output_mode
     if mode in {"csv", "all"} and (output_csv_folder is None or output_csv_folder.strip() == ""):
@@ -774,57 +782,90 @@ def run_generation_with_strategy(
     )
 
     runtime_project = _clone_project_with_row_overrides(project, profile.row_overrides)
-    rows_by_table_full = generate_project_rows(runtime_project)
-    _ensure_not_cancelled(cancel_requested, "post-generation")
-
-    rows_by_table = {
-        table_name: list(rows_by_table_full.get(table_name, []))
-        for table_name in selected_tables
-    }
-
-    rows_processed = 0
-    for entry in chunk_plan:
-        if entry.table_name not in selected_set:
-            continue
-        _ensure_not_cancelled(cancel_requested, "chunk processing")
-        rows_processed += entry.rows_in_chunk
-        _emit_event(
-            on_event,
-            RuntimeEvent(
-                kind="progress",
-                table_name=entry.table_name,
-                stage=entry.stage,
-                chunk_index=entry.chunk_index,
-                total_chunks=chunk_summary.total_chunks,
-                rows_processed=rows_processed,
-                total_rows=chunk_summary.total_rows,
-                message="Generation progress.",
-            ),
-        )
-
+    rows_by_table: dict[str, list[dict[str, object]]] = {}
     csv_paths: dict[str, str] = {}
-    if mode in {"csv", "all"}:
-        csv_paths = _write_rows_to_csv_folder(
-            rows_by_table,
-            selected_tables,
-            output_csv_folder or "",
-            buffer_rows=profile.csv_buffer_rows,
-            on_event=on_event,
-            cancel_requested=cancel_requested,
-        )
-
     sqlite_counts: dict[str, int] = {}
-    if mode in {"sqlite", "all"}:
-        assert output_sqlite_path is not None
-        create_tables(output_sqlite_path, runtime_project)
-        sqlite_counts = insert_project_rows(
-            output_sqlite_path,
+    rows_processed = 0
+    total_rows = 0
+
+    def _emit_progress_for_table(table_name: str) -> None:
+        nonlocal rows_processed
+        for entry in chunk_entries_by_table.get(table_name, []):
+            rows_processed += entry.rows_in_chunk
+            _emit_event(
+                on_event,
+                RuntimeEvent(
+                    kind="progress",
+                    table_name=entry.table_name,
+                    stage=entry.stage,
+                    chunk_index=entry.chunk_index,
+                    total_chunks=chunk_summary.total_chunks,
+                    rows_processed=rows_processed,
+                    total_rows=chunk_summary.total_rows,
+                    message="Generation progress.",
+                ),
+            )
+
+    if mode == "preview":
+        rows_by_table_full = generate_project_rows(runtime_project)
+        _ensure_not_cancelled(cancel_requested, "post-generation")
+        rows_by_table = {
+            table_name: list(rows_by_table_full.get(table_name, []))
+            for table_name in selected_tables
+        }
+        for table_name in selected_tables:
+            _ensure_not_cancelled(cancel_requested, "chunk processing")
+            _emit_progress_for_table(table_name)
+        total_rows = sum(len(rows) for rows in rows_by_table.values())
+    else:
+        sample_row_limit = max(0, int(profile.preview_row_target))
+
+        if mode in {"sqlite", "all"}:
+            assert output_sqlite_path is not None
+            create_tables(output_sqlite_path, runtime_project)
+
+        def _on_generated_table(table_name: str, rows: list[dict[str, object]]) -> None:
+            nonlocal total_rows
+            if table_name not in selected_set:
+                return
+            _ensure_not_cancelled(cancel_requested, f"table processing ({table_name})")
+
+            if sample_row_limit > 0:
+                rows_by_table[table_name] = list(rows[:sample_row_limit])
+
+            if mode in {"csv", "all"}:
+                table_paths = _write_rows_to_csv_folder(
+                    {table_name: rows},
+                    (table_name,),
+                    output_csv_folder or "",
+                    buffer_rows=profile.csv_buffer_rows,
+                    on_event=on_event,
+                    cancel_requested=cancel_requested,
+                )
+                csv_paths.update(table_paths)
+
+            if mode in {"sqlite", "all"}:
+                assert output_sqlite_path is not None
+                inserted = insert_project_rows(
+                    output_sqlite_path,
+                    runtime_project,
+                    {table_name: rows},
+                    chunk_size=profile.sqlite_batch_size,
+                )
+                sqlite_counts[table_name] = int(inserted.get(table_name, 0))
+
+            total_rows += len(rows)
+            _emit_progress_for_table(table_name)
+
+        generate_project_rows_streaming(
             runtime_project,
-            rows_by_table,
-            chunk_size=profile.sqlite_batch_size,
+            on_table_rows=_on_generated_table,
         )
 
-    total_rows = sum(len(rows) for rows in rows_by_table.values())
+    if mode in {"sqlite", "all"}:
+        for table_name in selected_tables:
+            sqlite_counts.setdefault(table_name, 0)
+
     _emit_event(
         on_event,
         RuntimeEvent(

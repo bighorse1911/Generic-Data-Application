@@ -72,6 +72,49 @@ class TestGuiV2SchemaProjectGeneratorUI(unittest.TestCase):
         depends_on = [part.strip() for part in screen.col_depends_var.get().split(",") if part.strip()]
         self.assertIn("flag", depends_on)
 
+    def test_derived_expr_expression_auto_adds_depends_on(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        self._ensure_selected_table(screen)
+
+        screen.col_name_var.set("base_amount")
+        screen.col_dtype_var.set("decimal")
+        screen.col_nullable_var.set(False)
+        screen.col_pk_var.set(False)
+        screen.col_unique_var.set(False)
+        screen._add_column()
+
+        screen.col_name_var.set("discount_amount")
+        screen.col_dtype_var.set("decimal")
+        screen.col_nullable_var.set(False)
+        screen.col_pk_var.set(False)
+        screen.col_unique_var.set(False)
+        screen._add_column()
+
+        screen.col_name_var.set("net_amount")
+        screen.col_dtype_var.set("decimal")
+        screen.col_generator_var.set("derived_expr")
+        screen._generator_form_bindings["expression"].var.set("base_amount - discount_amount")
+
+        depends_on = [part.strip() for part in screen.col_depends_var.get().split(",") if part.strip()]
+        self.assertIn("base_amount", depends_on)
+        self.assertIn("discount_amount", depends_on)
+
+        payload = json.loads(screen.col_params_var.get())
+        self.assertEqual(payload.get("expression"), "base_amount - discount_amount")
+
+    def test_derived_expr_structured_sync_preserves_unknown_params(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        self._ensure_selected_table(screen)
+
+        screen.col_dtype_var.set("decimal")
+        screen.col_generator_var.set("derived_expr")
+        screen.col_params_var.set('{"expression": "price - discount", "custom_x": "keep"}')
+        screen._generator_form_bindings["expression"].var.set("price - fee")
+
+        payload = json.loads(screen.col_params_var.get())
+        self.assertEqual(payload.get("expression"), "price - fee")
+        self.assertEqual(payload.get("custom_x"), "keep")
+
     def test_save_load_roundtrip_keeps_unknown_generator_params(self) -> None:
         screen = self.app.screens[SCHEMA_V2_ROUTE]
         self._ensure_selected_table(screen)
@@ -204,6 +247,201 @@ class TestGuiV2SchemaProjectGeneratorUI(unittest.TestCase):
 
             self.assertEqual(screen.project.timeline_constraints, payload)
             self.assertEqual(json.loads(screen.project_timeline_constraints_var.get()), payload)
+
+    def test_project_data_quality_profiles_roundtrip_through_save_load(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        payload = [
+            {
+                "profile_id": "mar_note",
+                "table": "orders",
+                "column": "note",
+                "kind": "missingness",
+                "mechanism": "mar",
+                "base_rate": 0.25,
+                "driver_column": "segment",
+                "value_weights": {"VIP": 2.0, "STD": 0.2},
+                "default_weight": 0.2,
+            }
+        ]
+        screen.project = SchemaProject(
+            name="dg06_gui_roundtrip",
+            seed=124,
+            tables=[
+                TableSpec(
+                    table_name="orders",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("segment", "text", nullable=False, choices=["VIP", "STD"]),
+                        ColumnSpec("note", "text", nullable=True),
+                    ],
+                ),
+            ],
+            foreign_keys=[],
+            data_quality_profiles=payload,
+        )
+        screen._suspend_project_meta_dirty = True
+        screen.project_name_var.set(screen.project.name)
+        screen.seed_var.set(str(screen.project.seed))
+        screen.project_data_quality_profiles_var.set(json.dumps(payload))
+        screen._suspend_project_meta_dirty = False
+
+        screen._apply_project_vars_to_model()
+        self.assertEqual(screen.project.data_quality_profiles, payload)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "v2_data_quality_roundtrip.json")
+            with mock.patch("src.gui_schema_core.filedialog.asksaveasfilename", return_value=path):
+                self.assertTrue(screen._save_project())
+
+            screen.project_data_quality_profiles_var.set("")
+            with mock.patch("src.gui_schema_core.filedialog.askopenfilename", return_value=path), mock.patch.object(
+                screen,
+                "confirm_discard_or_save",
+                return_value=True,
+            ):
+                screen._load_project()
+
+            self.assertEqual(screen.project.data_quality_profiles, payload)
+            self.assertEqual(json.loads(screen.project_data_quality_profiles_var.get()), payload)
+
+    def test_project_sample_profile_fits_roundtrip_through_save_load(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        payload = [
+            {
+                "fit_id": "orders_city_fit",
+                "table": "orders",
+                "column": "city",
+                "sample_source": {
+                    "path": "tests/fixtures/city_country_pool.csv",
+                    "column_index": 0,
+                    "has_header": True,
+                },
+            }
+        ]
+        screen.project = SchemaProject(
+            name="dg07_gui_roundtrip",
+            seed=125,
+            tables=[
+                TableSpec(
+                    table_name="orders",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("city", "text", nullable=False),
+                    ],
+                ),
+            ],
+            foreign_keys=[],
+            sample_profile_fits=payload,
+        )
+        screen._suspend_project_meta_dirty = True
+        screen.project_name_var.set(screen.project.name)
+        screen.seed_var.set(str(screen.project.seed))
+        screen.project_sample_profile_fits_var.set(json.dumps(payload))
+        screen._suspend_project_meta_dirty = False
+
+        screen._apply_project_vars_to_model()
+        self.assertEqual(screen.project.sample_profile_fits, payload)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "v2_sample_profile_fits_roundtrip.json")
+            with mock.patch("src.gui_schema_core.filedialog.asksaveasfilename", return_value=path):
+                self.assertTrue(screen._save_project())
+
+            screen.project_sample_profile_fits_var.set("")
+            with mock.patch("src.gui_schema_core.filedialog.askopenfilename", return_value=path), mock.patch.object(
+                screen,
+                "confirm_discard_or_save",
+                return_value=True,
+            ):
+                screen._load_project()
+
+            self.assertEqual(screen.project.sample_profile_fits, payload)
+            self.assertEqual(json.loads(screen.project_sample_profile_fits_var.get()), payload)
+
+    def test_project_locale_identity_bundles_roundtrip_through_save_load(self) -> None:
+        screen = self.app.screens[SCHEMA_V2_ROUTE]
+        payload = [
+            {
+                "bundle_id": "customer_identity",
+                "base_table": "customers",
+                "locale_weights": {"en-US": 0.8, "en-GB": 0.2},
+                "columns": {
+                    "locale": "locale",
+                    "country_code": "country_code",
+                    "first_name": "first_name",
+                    "last_name": "last_name",
+                    "postcode": "postcode",
+                    "phone_e164": "phone_e164",
+                    "currency_code": "currency_code",
+                },
+                "related_tables": [
+                    {
+                        "table": "orders",
+                        "via_fk": "customer_id",
+                        "columns": {"locale": "locale", "currency_code": "currency_code"},
+                    }
+                ],
+            }
+        ]
+        screen.project = SchemaProject(
+            name="dg09_gui_roundtrip",
+            seed=126,
+            tables=[
+                TableSpec(
+                    table_name="customers",
+                    row_count=2,
+                    columns=[
+                        ColumnSpec("customer_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("locale", "text", nullable=False),
+                        ColumnSpec("country_code", "text", nullable=False),
+                        ColumnSpec("first_name", "text", nullable=False),
+                        ColumnSpec("last_name", "text", nullable=False),
+                        ColumnSpec("postcode", "text", nullable=False),
+                        ColumnSpec("phone_e164", "text", nullable=False),
+                        ColumnSpec("currency_code", "text", nullable=False),
+                    ],
+                ),
+                TableSpec(
+                    table_name="orders",
+                    columns=[
+                        ColumnSpec("order_id", "int", nullable=False, primary_key=True),
+                        ColumnSpec("customer_id", "int", nullable=False),
+                        ColumnSpec("locale", "text", nullable=False),
+                        ColumnSpec("currency_code", "text", nullable=False),
+                    ],
+                ),
+            ],
+            foreign_keys=[
+                ForeignKeySpec("orders", "customer_id", "customers", "customer_id", 1, 1),
+            ],
+            locale_identity_bundles=payload,
+        )
+        screen._suspend_project_meta_dirty = True
+        screen.project_name_var.set(screen.project.name)
+        screen.seed_var.set(str(screen.project.seed))
+        screen.project_locale_identity_bundles_var.set(json.dumps(payload))
+        screen._suspend_project_meta_dirty = False
+
+        screen._apply_project_vars_to_model()
+        self.assertEqual(screen.project.locale_identity_bundles, payload)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "v2_locale_identity_bundles_roundtrip.json")
+            with mock.patch("src.gui_schema_core.filedialog.asksaveasfilename", return_value=path):
+                self.assertTrue(screen._save_project())
+
+            screen.project_locale_identity_bundles_var.set("")
+            with mock.patch("src.gui_schema_core.filedialog.askopenfilename", return_value=path), mock.patch.object(
+                screen,
+                "confirm_discard_or_save",
+                return_value=True,
+            ):
+                screen._load_project()
+
+            self.assertEqual(screen.project.locale_identity_bundles, payload)
+            self.assertEqual(json.loads(screen.project_locale_identity_bundles_var.get()), payload)
 
 
 if __name__ == "__main__":

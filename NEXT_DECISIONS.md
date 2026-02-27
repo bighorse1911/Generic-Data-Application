@@ -42,6 +42,14 @@ Direction 1 - Smarter Data
 - DG01 - Correlated column groups (joint realism): added first-class table-level correlation groups for multi-column numeric/categorical rank-correlation control with deterministic seeded sampling and GUI authoring exposure (completed 2026-02-22)
 - DG02 - Lifecycle/state-transition generator: implemented `state_transition` with allowed transition maps, explicit terminal states, dwell-time controls, deterministic per-entity trajectories, and SCD2 tracked-column transition-step mutation support (completed 2026-02-23)
 - DG03 - Cross-table temporal integrity planner: implemented project-level `timeline_constraints` with deterministic FK-linked temporal interval enforcement (preserve-valid / clamp-invalid / repair-null-or-unparseable), canonical validation/runtime errors, GUI project-level authoring exposure, and regression coverage (completed 2026-02-23)
+- DG04 - Safe derived-expression engine: implemented `derived_expr` constrained expression DSL (no `eval`) with deterministic same-row evaluation, explicit `depends_on` source declaration, strict fail-fast runtime policy, GUI dependency auto-assist, and regression coverage (completed 2026-02-24)
+- DG05 - Attribute-aware FK selection: implemented optional `ForeignKeySpec.parent_selection` weighted parent cohort profiles (`parent_attribute`, `weights`, `default_weight`) for deterministic FK skew modeling while preserving min/max child cardinality constraints (completed 2026-02-24)
+- DG06 - Missingness and data-quality profile modeling: implemented optional project-level `data_quality_profiles` for deterministic MCAR/MAR/MNAR-style missingness and controlled quality issues (`format_error`, `stale_value`, `drift`) with actionable validation/runtime errors and GUI project-level authoring support (completed 2026-02-24)
+- DG07 - Sample-driven profile fitting: implemented optional project-level `sample_profile_fits` with CSV-driven profile inference (`sample_source`) and deterministic frozen profile overrides (`fixed_profile`) for target columns, plus actionable validation/runtime errors and GUI project-level authoring support (completed 2026-02-24)
+- DG08 - Child-cardinality distribution modeling: implemented optional FK-level `child_count_distribution` profiles (`uniform`, `poisson`, `zipf`) for deterministic distribution-shaped child counts while preserving FK min/max integrity and GUI relationship authoring support (completed 2026-02-25)
+- DG09 - Locale-coherent identity bundles: implemented optional project-level `locale_identity_bundles` locale-pack contracts for deterministic coherent names/addresses/phones/postcodes/currency fields with related-table FK projections and validation/GUI/test coverage (completed 2026-02-26)
+- DG10 - Streaming generation for very large schemas: implemented memory-bounded streaming generation/export flow via `generate_project_rows_streaming` and strategy runtime integration for deterministic ordering and FK-safe CSV/SQLite outputs (completed 2026-02-26)
+- Schema design modes for `schema_project_v2`: implemented one-route in-page `simple|medium|complex` UI modes with header selector, mode-scoped control visibility, mode-scoped generator allowlists, structured-form progressive disclosure, persisted workspace mode state, and non-destructive downgrade behavior that preserves hidden advanced values (completed 2026-02-26)
 
 ## Completed Directions
 - Direction 2 - Modular GUI Adoption (incremental, low-risk)
@@ -55,32 +63,19 @@ Direction 1 - Smarter Data
 
 ## Next Candidates
 **Priority 1 (future features):**
-- DG04 - Safe derived-expression engine: add a constrained expression DSL for derived columns and row-level formulas (no `eval`) with deterministic evaluation and actionable validation errors.
-- DG05 - Attribute-aware FK selection: add weighted parent-row selection for FKs based on parent attributes/cohorts (not just uniform) to model realistic distribution skews.
-- DG06 - Missingness and data-quality profile modeling: add configurable MCAR/MAR/MNAR-style null patterns plus controlled data-quality issues (format errors, stale values, drift) for test realism.
-- DG07 - Sample-driven profile fitting: add optional schema-profile inference from sample CSVs to bootstrap generator params/distributions while preserving deterministic generation from fixed inferred profiles.
-- DG08 - Child-cardinality distribution modeling: extend FK child-count behavior beyond min/max to support deterministic distribution-driven child counts (for example poisson/zipf-like configurable shapes).
-- DG09 - Locale-coherent identity bundles: add locale packs that keep names/addresses/phones/postcodes/currency formats mutually consistent within entity rows and related tables.
-- DG10 - Streaming generation for very large schemas: add memory-bounded row streaming/export pipeline that preserves deterministic output ordering and FK integrity under large row counts.
+No active data-generation feature candidates are currently queued.
 
 ## Data Generation Backlog (Prioritized)
 
 ### Summary
-- Prioritize realism fidelity first (derived logic).
-- Then improve structural realism and robustness (attribute-aware FK selection, missingness profiles, sample-driven fitting, cardinality distributions).
-- Finish with domain coherence and scale (locale-consistent bundles, streaming generation for large projects).
+- Structural realism baseline now includes DG10 streaming generation and DG09 locale-coherent identity bundles.
+- No active data-generation feature candidates are currently queued.
 
 ### Prioritized Next Steps
-1. DG04 - Safe derived-expression engine.
-2. DG05 - Attribute-aware FK selection.
-3. DG06 - Missingness and data-quality profile modeling.
-4. DG07 - Sample-driven profile fitting.
-5. DG08 - Child-cardinality distribution modeling.
-6. DG09 - Locale-coherent identity bundles.
-7. DG10 - Streaming generation for very large schemas.
+No active data-generation priorities are currently queued.
 
 ### Test Cases and Scenarios
-- Determinism regression: same schema + seed must reproduce identical outputs for DG03-DG10 while preserving DG01/DG02 determinism guarantees.
+- Determinism regression: same schema + seed must reproduce identical outputs for DG08-DG10 while preserving DG01-DG07 determinism guarantees.
 - Correlation fidelity regression tests: generated column pairs/groups must continue meeting configured DG01 rank-correlation targets within defined tolerance bands.
 - Transition validity regression tests: DG02 continues to forbid invalid/self transitions and respect dwell-time constraints.
 - Temporal integrity tests: DG03 enforces cross-table event ordering for FK-linked rows without violating existing date/datetime constraints.
@@ -88,7 +83,7 @@ Direction 1 - Smarter Data
 - FK realism tests: DG05 parent selection frequencies follow configured cohort/attribute weights.
 - Missingness-quality tests: DG06 null/error/drift rates match configured profiles by table/column segments.
 - Profile-fit reproducibility tests: DG07 inferred profiles are stable for same sample inputs and deterministic when reused.
-- Cardinality-shape tests: DG08 child-count distributions approximate configured shapes while preserving FK integrity.
+- DG08 regression tests: child-count distributions remain deterministic and continue approximating configured shapes while preserving FK integrity.
 - Locale coherence tests: DG09 field bundles remain internally consistent (country/postcode/phone/currency/date formatting).
 - Large-scale performance tests: DG10 maintains bounded memory and deterministic row ordering under large row counts and multi-table exports.
 

@@ -27,6 +27,11 @@ GENERATION_BEHAVIOR_GUIDE: tuple[GuideEntry, ...] = (
         "Set Generator='if_then', include params.if_column/operator/value/then_value/else_value, and set Depends on column to include if_column.",
     ),
     (
+        "derived_expr safe formula generator",
+        "Evaluates a constrained expression DSL against same-row source columns without using eval.",
+        "Set Generator='derived_expr', include params.expression (for example {\"expression\": \"base_amount - discount_amount\"}), and ensure depends_on contains every referenced source column. Use col(\"...\") for non-identifier column names.",
+    ),
+    (
         "time_offset time-aware generator",
         "Constrains date/datetime output to be before or after another time column in the same row.",
         "Set Generator='time_offset', include params.base_column and optional direction ('after'/'before') plus min/max offsets (date: min_days/max_days, datetime: min_seconds/max_seconds), and include base_column in Depends on column.",
@@ -80,6 +85,31 @@ GENERATION_BEHAVIOR_GUIDE: tuple[GuideEntry, ...] = (
         "DG03 cross-table temporal integrity planner",
         "Enforces bounded temporal ordering across FK-linked rows (for example signup -> order -> ship -> invoice).",
         "Set Project-level Timeline constraints JSON with rules that target a child date/datetime column and one or more FK-linked parent references (direction + min/max days/seconds). Runtime preserves valid child values and clamps invalid/unparseable values into the allowed interval.",
+    ),
+    (
+        "DG05 attribute-aware FK selection",
+        "Skews FK parent-row assignment using parent attribute cohorts instead of uniform-only parent selection.",
+        "In a relationship, set optional Parent selection JSON like {\"parent_attribute\": \"segment\", \"weights\": {\"VIP\": 4, \"STD\": 1}, \"default_weight\": 1}. Runtime still enforces min/max children per parent while biasing extra children toward higher-weight cohorts.",
+    ),
+    (
+        "DG08 child-cardinality distribution modeling",
+        "Shapes FK child-count behavior beyond min/max bounds using deterministic distribution profiles.",
+        "In a relationship, set optional Child count distribution JSON like {\"type\": \"poisson\", \"lambda\": 1.4}, {\"type\": \"zipf\", \"s\": 1.2}, or {\"type\": \"uniform\"}. Runtime applies the configured shape while preserving deterministic seeded output and FK min/max bounds.",
+    ),
+    (
+        "DG06 missingness + data-quality profiles",
+        "Adds configurable MCAR/MAR/MNAR missingness and controlled data-quality issues (format errors, stale values, drift).",
+        "Set Project-level Data quality profiles JSON with entries like {\"profile_id\": \"mar_note\", \"table\": \"orders\", \"column\": \"note\", \"kind\": \"missingness\", \"mechanism\": \"mar\", \"base_rate\": 0.25, \"driver_column\": \"segment\", \"value_weights\": {\"VIP\": 2, \"STD\": 0.2}, \"default_weight\": 0.2} or {\"profile_id\": \"drift_amount\", \"table\": \"orders\", \"column\": \"amount\", \"kind\": \"quality_issue\", \"issue_type\": \"drift\", \"rate\": 0.5, \"step\": 1.2}.",
+    ),
+    (
+        "DG07 sample-driven profile fitting",
+        "Infers target-column generator profiles from CSV samples and can freeze them as fixed profiles for deterministic reuse.",
+        "Set Project-level Sample profile fits JSON with entries like {\"fit_id\": \"orders_amount_fit\", \"table\": \"orders\", \"column\": \"amount\", \"sample_source\": {\"path\": \"tests/fixtures/profile_fit.csv\", \"column_index\": 2}} for auto inference, or use fixed_profile like {\"fit_id\": \"orders_amount_fixed\", \"table\": \"orders\", \"column\": \"amount\", \"fixed_profile\": {\"generator\": \"normal\", \"params\": {\"mean\": 125.0, \"stdev\": 15.0, \"min\": 50.0, \"max\": 200.0}}} to freeze deterministic fitted behavior.",
+    ),
+    (
+        "DG09 locale-coherent identity bundles",
+        "Applies deterministic locale packs so names, addresses, phones, postcodes, and currency metadata stay mutually consistent across base and related FK-linked rows.",
+        "Set Project-level Locale identity bundles JSON with entries like {\"bundle_id\": \"customer_identity\", \"base_table\": \"customers\", \"locale_weights\": {\"en-US\": 0.7, \"en-GB\": 0.2, \"fr-FR\": 0.1}, \"columns\": {\"locale\": \"locale\", \"country_code\": \"country_code\", \"first_name\": \"first_name\", \"last_name\": \"last_name\", \"full_name\": \"full_name\", \"address_line1\": \"address_line1\", \"city\": \"city\", \"region\": \"region\", \"postcode\": \"postcode\", \"phone_e164\": \"phone_e164\", \"currency_code\": \"currency_code\"}, \"related_tables\": [{\"table\": \"orders\", \"via_fk\": \"customer_id\", \"columns\": {\"currency_code\": \"currency_code\", \"locale\": \"locale\"}}]}.",
     ),
     (
         "Correlated generator via depends_on (advanced JSON)",

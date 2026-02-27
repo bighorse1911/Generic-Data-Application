@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 from typing import Literal, Optional
+from src.derived_expression import compile_derived_expression
+from src.locale_identity import LOCALE_IDENTITY_PACKS
+from src.locale_identity import SUPPORTED_LOCALE_IDENTITY_SLOTS
 from src.project_paths import resolve_repo_path
 
 DataType = Literal["int", "float", "decimal", "text", "bool", "date", "datetime", "bytes"]
@@ -77,6 +81,10 @@ class ForeignKeySpec:
     # generation rule: children per parent
     min_children: int = 1
     max_children: int = 3
+    # optional DG05 parent attribute-aware weighted selection profile
+    parent_selection: dict[str, object] | None = None
+    # optional DG08 child-cardinality distribution profile
+    child_count_distribution: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +94,9 @@ class SchemaProject:
     tables: list[TableSpec] = field(default_factory=list)
     foreign_keys: list[ForeignKeySpec] = field(default_factory=list)
     timeline_constraints: list[dict[str, object]] | None = None
+    data_quality_profiles: list[dict[str, object]] | None = None
+    sample_profile_fits: list[dict[str, object]] | None = None
+    locale_identity_bundles: list[dict[str, object]] | None = None
 
 
 def _validation_error(location: str, issue: str, hint: str) -> str:
@@ -98,6 +109,113 @@ def _is_scalar_json_value(value: object) -> bool:
 
 def _scalar_identity(value: object) -> tuple[str, str]:
     return (type(value).__name__, repr(value))
+
+
+def _validate_fk_child_count_distribution(
+    raw_profile: object,
+    *,
+    location: str,
+) -> None:
+    if not isinstance(raw_profile, dict):
+        raise ValueError(
+            _validation_error(
+                location,
+                "child_count_distribution must be a JSON object when provided",
+                "set child_count_distribution to an object with type and optional shape parameters",
+            )
+        )
+
+    type_raw = raw_profile.get("type")
+    if not isinstance(type_raw, str) or type_raw.strip() == "":
+        raise ValueError(
+            _validation_error(
+                location,
+                "child_count_distribution.type is required",
+                "set type to one of: uniform, poisson, zipf",
+            )
+        )
+    dist_type = type_raw.strip().lower()
+    if dist_type not in {"uniform", "poisson", "zipf"}:
+        raise ValueError(
+            _validation_error(
+                location,
+                f"unsupported child_count_distribution.type '{type_raw}'",
+                "set type to one of: uniform, poisson, zipf",
+            )
+        )
+
+    if dist_type == "poisson":
+        lam_raw = raw_profile.get("lambda")
+        if lam_raw is None:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.lambda is required for type='poisson'",
+                    "set lambda to a positive numeric value",
+                )
+            )
+        if isinstance(lam_raw, bool):
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.lambda must be numeric",
+                    "set lambda to a positive numeric value",
+                )
+            )
+        try:
+            lam = float(lam_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.lambda must be numeric",
+                    "set lambda to a positive numeric value",
+                )
+            ) from exc
+        if (not math.isfinite(lam)) or lam <= 0.0:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.lambda must be a finite value > 0",
+                    "set lambda to a positive numeric value",
+                )
+            )
+    elif dist_type == "zipf":
+        s_raw = raw_profile.get("s")
+        if s_raw is None:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.s is required for type='zipf'",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            )
+        if isinstance(s_raw, bool):
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.s must be numeric",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            )
+        try:
+            s_value = float(s_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.s must be numeric",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            ) from exc
+        if (not math.isfinite(s_value)) or s_value <= 0.0:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    "child_count_distribution.s must be a finite value > 0",
+                    "set s to a positive numeric value (for example 1.2)",
+                )
+            )
 
 
 def correlation_cholesky_lower(matrix: list[list[float]]) -> list[list[float]]:
@@ -569,6 +687,76 @@ def validate_project(project: SchemaProject) -> None:
                 _validation_error(
                     location,
                     f"{field_name} cannot be negative",
+                    hint,
+                )
+            )
+        return parsed
+
+    def _parse_probability(
+        value: object,
+        *,
+        location: str,
+        field_name: str,
+        hint: str,
+    ) -> float:
+        if isinstance(value, bool):
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be numeric",
+                    hint,
+                )
+            )
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be numeric",
+                    hint,
+                )
+            ) from exc
+        if (not math.isfinite(parsed)) or parsed < 0.0 or parsed > 1.0:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be between 0 and 1",
+                    hint,
+                )
+            )
+        return parsed
+
+    def _parse_non_negative_finite_float(
+        value: object,
+        *,
+        location: str,
+        field_name: str,
+        hint: str,
+    ) -> float:
+        if isinstance(value, bool):
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be numeric",
+                    hint,
+                )
+            )
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be numeric",
+                    hint,
+                )
+            ) from exc
+        if (not math.isfinite(parsed)) or parsed < 0.0:
+            raise ValueError(
+                _validation_error(
+                    location,
+                    f"{field_name} must be a finite value >= 0",
                     hint,
                 )
             )
@@ -1425,6 +1613,46 @@ def validate_project(project: SchemaProject) -> None:
                             f"{location}: non-terminal state '{state}' is missing transition weights. "
                             "Fix: add one or more outbound transition targets for every non-terminal state."
                         )
+            if c.generator == "derived_expr":
+                if c.dtype == "bytes":
+                    raise ValueError(
+                        f"Table '{t.table_name}', column '{c.name}': generator 'derived_expr' does not support dtype bytes. "
+                        "Fix: use a non-bytes target dtype for derived expressions."
+                    )
+                params = c.params or {}
+                location = f"Table '{t.table_name}', column '{c.name}': generator 'derived_expr'"
+                expression_raw = params.get("expression")
+                if not isinstance(expression_raw, str) or expression_raw.strip() == "":
+                    raise ValueError(
+                        f"{location}: params.expression is required. "
+                        "Fix: set params.expression to a non-empty expression string."
+                    )
+                try:
+                    compiled = compile_derived_expression(expression_raw, location=location)
+                except ValueError as exc:
+                    raise ValueError(str(exc)) from exc
+
+                referenced_columns = list(compiled.references)
+                for ref_name in referenced_columns:
+                    if ref_name == c.name:
+                        raise ValueError(
+                            f"{location}: expression cannot reference the target column itself ('{c.name}'). "
+                            "Fix: remove self references and derive from other source columns."
+                        )
+                    if ref_name not in col_map:
+                        raise ValueError(
+                            f"{location}: expression reference '{ref_name}' was not found. "
+                            "Fix: use existing source column names in params.expression."
+                        )
+
+                depends_on = c.depends_on or []
+                missing_depends = [ref_name for ref_name in referenced_columns if ref_name not in depends_on]
+                if missing_depends:
+                    missing_display = ", ".join(missing_depends)
+                    raise ValueError(
+                        f"{location}: requires depends_on to include referenced expression columns ({missing_display}). "
+                        "Fix: add all expression source columns to depends_on so they generate first."
+                    )
             if c.generator == "sample_csv":
                 params = c.params or {}
                 path_value = params.get("path")
@@ -1994,6 +2222,128 @@ def validate_project(project: SchemaProject) -> None:
                 f"Foreign key on table '{fk.child_table}': min_children cannot exceed max_children. "
                 "Fix: set min_children <= max_children."
             )
+        child_count_distribution = fk.child_count_distribution
+        if child_count_distribution is not None:
+            _validate_fk_child_count_distribution(
+                child_count_distribution,
+                location=f"Foreign key on table '{fk.child_table}', column '{fk.child_column}'",
+            )
+        parent_selection = fk.parent_selection
+        if parent_selection is not None:
+            location = f"Foreign key on table '{fk.child_table}', column '{fk.child_column}'"
+            if not isinstance(parent_selection, dict):
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "parent_selection must be a JSON object when provided",
+                        "set parent_selection to an object with parent_attribute, weights, and optional default_weight",
+                    )
+                )
+
+            parent_attribute_raw = parent_selection.get("parent_attribute")
+            if not isinstance(parent_attribute_raw, str) or parent_attribute_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "parent_selection.parent_attribute is required",
+                        "set parent_selection.parent_attribute to an existing parent column name",
+                    )
+                )
+            parent_attribute = parent_attribute_raw.strip()
+            parent_attribute_col = parent_cols.get(parent_attribute)
+            if parent_attribute_col is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"parent_selection.parent_attribute '{parent_attribute}' was not found on table '{fk.parent_table}'",
+                        "use an existing parent table column name for parent_attribute",
+                    )
+                )
+            if parent_attribute_col.dtype == "bytes":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"parent_selection.parent_attribute '{parent_attribute}' cannot use dtype bytes",
+                        "use a non-bytes parent attribute column for weighted cohort selection",
+                    )
+                )
+
+            weights_raw = parent_selection.get("weights")
+            if not isinstance(weights_raw, dict) or len(weights_raw) == 0:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "parent_selection.weights must be a non-empty object",
+                        "set weights to a mapping of parent attribute values to non-negative numeric weights",
+                    )
+                )
+
+            normalized_weights: dict[str, float] = {}
+            for raw_key, raw_weight in weights_raw.items():
+                if not isinstance(raw_key, str) or raw_key.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "parent_selection.weights contains an empty or non-string key",
+                            "use non-empty string keys in parent_selection.weights",
+                        )
+                    )
+                key = raw_key.strip()
+                if key in normalized_weights:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"parent_selection.weights has duplicate key '{key}' after normalization",
+                            "use unique weight keys in parent_selection.weights",
+                        )
+                    )
+                try:
+                    weight = float(raw_weight)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"parent_selection.weights['{raw_key}'] must be numeric",
+                            "use non-negative numeric values for parent_selection.weights",
+                        )
+                    ) from exc
+                if (not math.isfinite(weight)) or weight < 0:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"parent_selection.weights['{raw_key}'] must be a finite value >= 0",
+                            "use non-negative finite numeric weights",
+                        )
+                    )
+                normalized_weights[key] = weight
+
+            default_weight_raw = parent_selection.get("default_weight", 1.0)
+            try:
+                default_weight = float(default_weight_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "parent_selection.default_weight must be numeric when provided",
+                        "set default_weight to a non-negative numeric value",
+                    )
+                ) from exc
+            if (not math.isfinite(default_weight)) or default_weight < 0:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "parent_selection.default_weight must be a finite value >= 0",
+                        "set default_weight to a non-negative finite numeric value",
+                    )
+                )
+            if default_weight <= 0 and not any(weight > 0 for weight in normalized_weights.values()):
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "parent_selection provides no positive selection weight",
+                        "set at least one positive weight in weights or set default_weight > 0",
+                    )
+                )
 
     timeline_constraints = project.timeline_constraints
     if timeline_constraints is not None:
@@ -2324,4 +2674,1134 @@ def validate_project(project: SchemaProject) -> None:
                                 "use min_seconds/max_seconds for datetime child/parent columns",
                             )
                         )
+
+    data_quality_profiles = project.data_quality_profiles
+    if data_quality_profiles is not None:
+        if not isinstance(data_quality_profiles, list):
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "data_quality_profiles must be a list when provided",
+                    "set data_quality_profiles to a list of profile objects or omit data_quality_profiles",
+                )
+            )
+        if len(data_quality_profiles) == 0:
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "data_quality_profiles cannot be empty when provided",
+                    "add one or more DG06 profiles or omit data_quality_profiles",
+                )
+            )
+
+        seen_profile_ids: set[str] = set()
+        for profile_index, raw_profile in enumerate(data_quality_profiles):
+            location = f"Project data_quality_profiles[{profile_index}]"
+            if not isinstance(raw_profile, dict):
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "profile must be a JSON object",
+                        "configure this DG06 profile as an object with profile_id, table, column, and rule fields",
+                    )
+                )
+
+            profile_id_raw = raw_profile.get("profile_id")
+            if not isinstance(profile_id_raw, str) or profile_id_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "profile_id is required",
+                        "set profile_id to a non-empty string",
+                    )
+                )
+            profile_id = profile_id_raw.strip()
+            if profile_id in seen_profile_ids:
+                raise ValueError(
+                    _validation_error(
+                        "Project",
+                        f"duplicate DG06 profile_id '{profile_id}'",
+                        "use unique profile_id values in data_quality_profiles",
+                    )
+                )
+            seen_profile_ids.add(profile_id)
+
+            table_raw = raw_profile.get("table")
+            if not isinstance(table_raw, str) or table_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "table is required",
+                        "set table to an existing table name",
+                    )
+                )
+            table_name = table_raw.strip()
+            table = table_map.get(table_name)
+            if table is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"table '{table_name}' was not found",
+                        "use an existing table name for DG06 profiles",
+                    )
+                )
+            table_cols = {column.name: column for column in table.columns}
+
+            column_raw = raw_profile.get("column")
+            if not isinstance(column_raw, str) or column_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "column is required",
+                        "set column to an existing target column name on the configured table",
+                    )
+                )
+            column_name = column_raw.strip()
+            column = table_cols.get(column_name)
+            if column is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"column '{column_name}' was not found on table '{table_name}'",
+                        "use an existing column name for DG06 profiles",
+                    )
+                )
+            if column.primary_key:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"column '{column_name}' cannot target a primary key",
+                        "target a non-primary-key column for DG06 missingness/data-quality profiles",
+                    )
+                )
+
+            where_raw = raw_profile.get("where")
+            if where_raw is not None:
+                if not isinstance(where_raw, dict) or len(where_raw) == 0:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "where must be a non-empty object when provided",
+                            "set where to an object like {\"segment\": [\"VIP\", \"STD\"]} or remove where",
+                        )
+                    )
+                for where_key_raw, where_values_raw in where_raw.items():
+                    if not isinstance(where_key_raw, str) or where_key_raw.strip() == "":
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "where contains an empty or non-string column key",
+                                "use existing column-name string keys in where",
+                            )
+                        )
+                    where_column = where_key_raw.strip()
+                    if where_column not in table_cols:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                f"where column '{where_column}' was not found on table '{table_name}'",
+                                "use existing table columns in where predicates",
+                            )
+                        )
+                    if isinstance(where_values_raw, list):
+                        if len(where_values_raw) == 0:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    f"where['{where_key_raw}'] cannot be an empty list",
+                                    "provide one or more scalar match values in where lists",
+                                )
+                            )
+                        match_values = where_values_raw
+                    else:
+                        match_values = [where_values_raw]
+                    for match_value in match_values:
+                        if not _is_scalar_json_value(match_value):
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    f"where['{where_key_raw}'] values must be scalar",
+                                    "use scalar string/number/bool/null values in where predicates",
+                                )
+                            )
+
+            kind_raw = raw_profile.get("kind")
+            if not isinstance(kind_raw, str) or kind_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "kind is required",
+                        "set kind to 'missingness' or 'quality_issue'",
+                    )
+                )
+            kind = kind_raw.strip().lower()
+            if kind not in {"missingness", "quality_issue"}:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"unsupported kind '{kind_raw}'",
+                        "set kind to 'missingness' or 'quality_issue'",
+                    )
+                )
+
+            if kind == "missingness":
+                mechanism_raw = raw_profile.get("mechanism")
+                if not isinstance(mechanism_raw, str) or mechanism_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "missingness.mechanism is required",
+                            "set mechanism to 'mcar', 'mar', or 'mnar'",
+                        )
+                    )
+                mechanism = mechanism_raw.strip().lower()
+                if mechanism not in {"mcar", "mar", "mnar"}:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"unsupported missingness mechanism '{mechanism_raw}'",
+                            "set mechanism to 'mcar', 'mar', or 'mnar'",
+                        )
+                    )
+                _parse_probability(
+                    raw_profile.get("base_rate"),
+                    location=location,
+                    field_name="base_rate",
+                    hint="set base_rate to a numeric value between 0 and 1",
+                )
+
+                driver_column_raw = raw_profile.get("driver_column")
+                if mechanism == "mcar":
+                    if driver_column_raw is not None:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "driver_column is not used for mechanism 'mcar'",
+                                "remove driver_column or switch mechanism to 'mar'/'mnar'",
+                            )
+                        )
+                elif mechanism == "mar":
+                    if not isinstance(driver_column_raw, str) or driver_column_raw.strip() == "":
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "driver_column is required for mechanism 'mar'",
+                                "set driver_column to an existing source column on the same table",
+                            )
+                        )
+                    driver_column = driver_column_raw.strip()
+                    if driver_column == column_name:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "driver_column cannot equal the target column for mechanism 'mar'",
+                                "use another source column for MAR, or set mechanism='mnar' for self-value missingness",
+                            )
+                        )
+                    if driver_column not in table_cols:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                f"driver_column '{driver_column}' was not found on table '{table_name}'",
+                                "use an existing table column for driver_column",
+                            )
+                        )
+                else:
+                    if (
+                        isinstance(driver_column_raw, str)
+                        and driver_column_raw.strip() != ""
+                        and driver_column_raw.strip() != column_name
+                    ):
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "driver_column must match the target column for mechanism 'mnar'",
+                                "omit driver_column for MNAR or set it to the same target column name",
+                            )
+                        )
+
+                weights_raw = raw_profile.get("value_weights")
+                normalized_weights: dict[str, float] = {}
+                if weights_raw is not None:
+                    if not isinstance(weights_raw, dict):
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "value_weights must be an object when provided",
+                                "set value_weights to a mapping of source values to non-negative weights",
+                            )
+                        )
+                    for raw_key, raw_weight in weights_raw.items():
+                        if not isinstance(raw_key, str) or raw_key.strip() == "":
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "value_weights contains an empty or non-string key",
+                                    "use non-empty string keys in value_weights",
+                                )
+                            )
+                        key = raw_key.strip()
+                        if key in normalized_weights:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    f"value_weights has duplicate key '{key}' after normalization",
+                                    "use unique string keys in value_weights",
+                                )
+                            )
+                        normalized_weights[key] = _parse_non_negative_finite_float(
+                            raw_weight,
+                            location=location,
+                            field_name=f"value_weights['{raw_key}']",
+                            hint="use non-negative finite numeric weights",
+                        )
+                default_weight = _parse_non_negative_finite_float(
+                    raw_profile.get("default_weight", 1.0),
+                    location=location,
+                    field_name="default_weight",
+                    hint="set default_weight to a non-negative finite numeric value",
+                )
+                if mechanism in {"mar", "mnar"}:
+                    if default_weight <= 0 and not any(weight > 0 for weight in normalized_weights.values()):
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "missingness profile provides no positive effective weight",
+                                "set at least one value_weights entry > 0 or set default_weight > 0",
+                            )
+                        )
+            else:
+                issue_type_raw = raw_profile.get("issue_type")
+                if not isinstance(issue_type_raw, str) or issue_type_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "quality_issue.issue_type is required",
+                            "set issue_type to 'format_error', 'stale_value', or 'drift'",
+                        )
+                    )
+                issue_type = issue_type_raw.strip().lower()
+                if issue_type not in {"format_error", "stale_value", "drift"}:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"unsupported issue_type '{issue_type_raw}'",
+                            "set issue_type to 'format_error', 'stale_value', or 'drift'",
+                        )
+                    )
+                _parse_probability(
+                    raw_profile.get("rate"),
+                    location=location,
+                    field_name="rate",
+                    hint="set rate to a numeric value between 0 and 1",
+                )
+
+                if issue_type == "format_error":
+                    if column.dtype == "bytes":
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "format_error does not support dtype bytes",
+                                "target a non-bytes column for format_error profiles",
+                            )
+                        )
+                    replacement_raw = raw_profile.get("replacement")
+                    if replacement_raw is not None:
+                        if not isinstance(replacement_raw, str) or replacement_raw.strip() == "":
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "replacement must be a non-empty string when provided",
+                                    "set replacement to a non-empty text token or remove replacement",
+                                )
+                            )
+                elif issue_type == "stale_value":
+                    lag_rows = _parse_non_negative_int(
+                        raw_profile.get("lag_rows", 1),
+                        location=location,
+                        field_name="lag_rows",
+                        hint="set lag_rows to an integer >= 1",
+                    )
+                    if lag_rows < 1:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "lag_rows must be >= 1",
+                                "set lag_rows to 1 or greater for stale_value profiles",
+                            )
+                        )
+                else:
+                    if column.dtype not in {"int", "float", "decimal", "date", "datetime"}:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                f"drift does not support dtype '{column.dtype}'",
+                                "use drift on int/float/decimal/date/datetime columns",
+                            )
+                        )
+                    step_raw = raw_profile.get("step")
+                    if step_raw is None:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "drift.step is required",
+                                "set step to a non-zero numeric value (or integer units for date/datetime)",
+                            )
+                        )
+                    if column.dtype in {"date", "datetime"}:
+                        if isinstance(step_raw, bool):
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "drift.step must be an integer for date/datetime drift",
+                                    "set step to a non-zero integer number of days/seconds",
+                                )
+                            )
+                        try:
+                            step = int(step_raw)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "drift.step must be an integer for date/datetime drift",
+                                    "set step to a non-zero integer number of days/seconds",
+                                )
+                            ) from exc
+                        if step == 0:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "drift.step cannot be zero",
+                                    "set step to a non-zero integer number of days/seconds",
+                                )
+                            )
+                    else:
+                        if isinstance(step_raw, bool):
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "drift.step must be numeric",
+                                    "set step to a non-zero numeric drift increment",
+                                )
+                            )
+                        try:
+                            step = float(step_raw)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "drift.step must be numeric",
+                                    "set step to a non-zero numeric drift increment",
+                                )
+                            ) from exc
+                        if (not math.isfinite(step)) or step == 0.0:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "drift.step must be a non-zero finite numeric value",
+                                    "set step to a non-zero numeric drift increment",
+                                )
+                            )
+
+                    start_index = _parse_non_negative_int(
+                        raw_profile.get("start_index", 1),
+                        location=location,
+                        field_name="start_index",
+                        hint="set start_index to an integer >= 1",
+                    )
+                    if start_index < 1:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "start_index must be >= 1",
+                                "set start_index to 1 or greater for drift profiles",
+                            )
+                        )
+
+    locale_identity_bundles = project.locale_identity_bundles
+    if locale_identity_bundles is not None:
+        if not isinstance(locale_identity_bundles, list):
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "locale_identity_bundles must be a list when provided",
+                    "set locale_identity_bundles to a list of DG09 bundle objects or omit locale_identity_bundles",
+                )
+            )
+        if len(locale_identity_bundles) == 0:
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "locale_identity_bundles cannot be empty when provided",
+                    "add one or more DG09 bundle objects or omit locale_identity_bundles",
+                )
+            )
+
+        allowed_slots = set(SUPPORTED_LOCALE_IDENTITY_SLOTS)
+        supported_locales = set(LOCALE_IDENTITY_PACKS.keys())
+        seen_bundle_ids: set[str] = set()
+        for bundle_index, raw_bundle in enumerate(locale_identity_bundles):
+            location = f"Project locale_identity_bundles[{bundle_index}]"
+            if not isinstance(raw_bundle, dict):
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "bundle must be a JSON object",
+                        "configure this DG09 bundle as an object with bundle_id, base_table, and columns",
+                    )
+                )
+
+            bundle_id_raw = raw_bundle.get("bundle_id")
+            if not isinstance(bundle_id_raw, str) or bundle_id_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "bundle_id is required",
+                        "set bundle_id to a non-empty string",
+                    )
+                )
+            bundle_id = bundle_id_raw.strip()
+            if bundle_id in seen_bundle_ids:
+                raise ValueError(
+                    _validation_error(
+                        "Project",
+                        f"duplicate DG09 bundle_id '{bundle_id}'",
+                        "use unique bundle_id values in locale_identity_bundles",
+                    )
+                )
+            seen_bundle_ids.add(bundle_id)
+
+            base_table_raw = raw_bundle.get("base_table")
+            if not isinstance(base_table_raw, str) or base_table_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "base_table is required",
+                        "set base_table to an existing table name",
+                    )
+                )
+            base_table_name = base_table_raw.strip()
+            base_table = table_map.get(base_table_name)
+            if base_table is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"base_table '{base_table_name}' was not found",
+                        "use an existing table name for base_table",
+                    )
+                )
+            base_cols = {column.name: column for column in base_table.columns}
+
+            columns_raw = raw_bundle.get("columns")
+            if not isinstance(columns_raw, dict) or len(columns_raw) == 0:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "columns must be a non-empty object",
+                        "set columns to a mapping like {'first_name': 'first_name_col', 'postcode': 'postcode_col'}",
+                    )
+                )
+            seen_slots: set[str] = set()
+            for raw_slot, raw_column in columns_raw.items():
+                if not isinstance(raw_slot, str) or raw_slot.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "columns contains an empty or non-string slot key",
+                            f"use one or more supported slots: {', '.join(sorted(allowed_slots))}",
+                        )
+                    )
+                slot = raw_slot.strip()
+                if slot not in allowed_slots:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"unsupported columns slot '{raw_slot}'",
+                            f"use one of: {', '.join(sorted(allowed_slots))}",
+                        )
+                    )
+                if slot in seen_slots:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"columns has duplicate slot '{slot}' after normalization",
+                            "list each DG09 slot once in columns",
+                        )
+                    )
+                seen_slots.add(slot)
+
+                if not isinstance(raw_column, str) or raw_column.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"columns['{raw_slot}'] must be a non-empty string column name",
+                            "map each slot to an existing table column name",
+                        )
+                    )
+                column_name = raw_column.strip()
+                column = base_cols.get(column_name)
+                if column is None:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"columns['{raw_slot}'] column '{column_name}' was not found on table '{base_table_name}'",
+                            "map DG09 slots to existing base_table columns",
+                        )
+                    )
+                if column.primary_key:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"columns['{raw_slot}'] cannot target primary key column '{column_name}'",
+                            "target non-primary-key columns for locale identity bundle values",
+                        )
+                    )
+
+            locale_raw = raw_bundle.get("locale")
+            locale_weights_raw = raw_bundle.get("locale_weights")
+            if locale_raw is not None and locale_weights_raw is not None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "locale and locale_weights cannot both be set",
+                        "set exactly one of locale or locale_weights, or omit both to use default locale",
+                    )
+                )
+            if locale_raw is not None:
+                if not isinstance(locale_raw, str) or locale_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "locale must be a non-empty string when provided",
+                            f"use one of: {', '.join(sorted(supported_locales))}",
+                        )
+                    )
+                locale_name = locale_raw.strip()
+                if locale_name not in supported_locales:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"unsupported locale '{locale_raw}'",
+                            f"use one of: {', '.join(sorted(supported_locales))}",
+                        )
+                    )
+            if locale_weights_raw is not None:
+                if not isinstance(locale_weights_raw, dict) or len(locale_weights_raw) == 0:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "locale_weights must be a non-empty object when provided",
+                            "set locale_weights to a mapping of locale ids to non-negative numeric weights",
+                        )
+                    )
+                has_positive_weight = False
+                for raw_locale, raw_weight in locale_weights_raw.items():
+                    if not isinstance(raw_locale, str) or raw_locale.strip() == "":
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "locale_weights contains an empty or non-string locale key",
+                                f"use supported locale ids as keys: {', '.join(sorted(supported_locales))}",
+                            )
+                        )
+                    locale_name = raw_locale.strip()
+                    if locale_name not in supported_locales:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                f"unsupported locale_weights key '{raw_locale}'",
+                                f"use one of: {', '.join(sorted(supported_locales))}",
+                            )
+                        )
+                    weight = _parse_non_negative_finite_float(
+                        raw_weight,
+                        location=location,
+                        field_name=f"locale_weights['{raw_locale}']",
+                        hint="use non-negative finite numeric weights",
+                    )
+                    if weight > 0.0:
+                        has_positive_weight = True
+                if not has_positive_weight:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "locale_weights provides no positive weight",
+                            "set at least one locale weight > 0",
+                        )
+                    )
+
+            related_tables_raw = raw_bundle.get("related_tables")
+            if related_tables_raw is not None:
+                if not isinstance(related_tables_raw, list):
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "related_tables must be a list when provided",
+                            "set related_tables to a list of objects with table, via_fk, and columns",
+                        )
+                    )
+                for related_index, raw_related in enumerate(related_tables_raw):
+                    related_location = f"{location}, related_tables[{related_index}]"
+                    if not isinstance(raw_related, dict):
+                        raise ValueError(
+                            _validation_error(
+                                related_location,
+                                "related table entry must be a JSON object",
+                                "configure table, via_fk, and columns for each related table",
+                            )
+                        )
+                    related_table_raw = raw_related.get("table")
+                    if not isinstance(related_table_raw, str) or related_table_raw.strip() == "":
+                        raise ValueError(
+                            _validation_error(
+                                related_location,
+                                "table is required",
+                                "set table to an existing child table name",
+                            )
+                        )
+                    related_table_name = related_table_raw.strip()
+                    related_table = table_map.get(related_table_name)
+                    if related_table is None:
+                        raise ValueError(
+                            _validation_error(
+                                related_location,
+                                f"table '{related_table_name}' was not found",
+                                "use an existing related table name",
+                            )
+                        )
+                    related_cols = {column.name: column for column in related_table.columns}
+
+                    via_fk_raw = raw_related.get("via_fk")
+                    if not isinstance(via_fk_raw, str) or via_fk_raw.strip() == "":
+                        raise ValueError(
+                            _validation_error(
+                                related_location,
+                                "via_fk is required",
+                                "set via_fk to the FK child column linking related table rows to base_table",
+                            )
+                        )
+                    via_fk = via_fk_raw.strip()
+                    if via_fk not in related_cols:
+                        raise ValueError(
+                            _validation_error(
+                                related_location,
+                                f"via_fk '{via_fk}' was not found on table '{related_table_name}'",
+                                "use an existing related table column for via_fk",
+                            )
+                        )
+                    direct_fk = next(
+                        (
+                            fk
+                            for fk in project.foreign_keys
+                            if fk.child_table == related_table_name
+                            and fk.child_column == via_fk
+                            and fk.parent_table == base_table_name
+                        ),
+                        None,
+                    )
+                    if direct_fk is None:
+                        raise ValueError(
+                            _validation_error(
+                                related_location,
+                                (
+                                    f"via_fk '{related_table_name}.{via_fk}' does not directly reference "
+                                    f"base_table '{base_table_name}'"
+                                ),
+                                "define a direct FK from related table via_fk to base_table before using this DG09 mapping",
+                            )
+                        )
+
+                    related_columns_raw = raw_related.get("columns")
+                    if not isinstance(related_columns_raw, dict) or len(related_columns_raw) == 0:
+                        raise ValueError(
+                            _validation_error(
+                                related_location,
+                                "columns must be a non-empty object",
+                                "set columns to a mapping like {'currency_code': 'currency_code_col'}",
+                            )
+                        )
+                    seen_related_slots: set[str] = set()
+                    for raw_slot, raw_column in related_columns_raw.items():
+                        if not isinstance(raw_slot, str) or raw_slot.strip() == "":
+                            raise ValueError(
+                                _validation_error(
+                                    related_location,
+                                    "columns contains an empty or non-string slot key",
+                                    f"use one or more supported slots: {', '.join(sorted(allowed_slots))}",
+                                )
+                            )
+                        slot = raw_slot.strip()
+                        if slot not in allowed_slots:
+                            raise ValueError(
+                                _validation_error(
+                                    related_location,
+                                    f"unsupported columns slot '{raw_slot}'",
+                                    f"use one of: {', '.join(sorted(allowed_slots))}",
+                                )
+                            )
+                        if slot in seen_related_slots:
+                            raise ValueError(
+                                _validation_error(
+                                    related_location,
+                                    f"columns has duplicate slot '{slot}' after normalization",
+                                    "list each DG09 slot once in related table columns mapping",
+                                )
+                            )
+                        seen_related_slots.add(slot)
+
+                        if not isinstance(raw_column, str) or raw_column.strip() == "":
+                            raise ValueError(
+                                _validation_error(
+                                    related_location,
+                                    f"columns['{raw_slot}'] must be a non-empty string column name",
+                                    "map each slot to an existing related table column name",
+                                )
+                            )
+                        column_name = raw_column.strip()
+                        column = related_cols.get(column_name)
+                        if column is None:
+                            raise ValueError(
+                                _validation_error(
+                                    related_location,
+                                    (
+                                        f"columns['{raw_slot}'] column '{column_name}' was not found "
+                                        f"on table '{related_table_name}'"
+                                    ),
+                                    "map DG09 slots to existing related table columns",
+                                )
+                            )
+                        if column.primary_key:
+                            raise ValueError(
+                                _validation_error(
+                                    related_location,
+                                    f"columns['{raw_slot}'] cannot target primary key column '{column_name}'",
+                                    "target non-primary-key columns for related-table locale bundle values",
+                                )
+                            )
+
+    sample_profile_fits = project.sample_profile_fits
+    if sample_profile_fits is not None:
+        if not isinstance(sample_profile_fits, list):
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "sample_profile_fits must be a list when provided",
+                    "set sample_profile_fits to a list of DG07 fit objects or omit sample_profile_fits",
+                )
+            )
+        if len(sample_profile_fits) == 0:
+            raise ValueError(
+                _validation_error(
+                    "Project",
+                    "sample_profile_fits cannot be empty when provided",
+                    "add one or more DG07 fit objects or omit sample_profile_fits",
+                )
+            )
+
+        seen_fit_ids: set[str] = set()
+        seen_targets: set[tuple[str, str]] = set()
+        for fit_index, raw_fit in enumerate(sample_profile_fits):
+            location = f"Project sample_profile_fits[{fit_index}]"
+            if not isinstance(raw_fit, dict):
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "fit must be a JSON object",
+                        "configure this DG07 fit as an object with fit_id, table, column, and sample_source/fixed_profile",
+                    )
+                )
+
+            fit_id_raw = raw_fit.get("fit_id")
+            if not isinstance(fit_id_raw, str) or fit_id_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "fit_id is required",
+                        "set fit_id to a non-empty string",
+                    )
+                )
+            fit_id = fit_id_raw.strip()
+            if fit_id in seen_fit_ids:
+                raise ValueError(
+                    _validation_error(
+                        "Project",
+                        f"duplicate DG07 fit_id '{fit_id}'",
+                        "use unique fit_id values in sample_profile_fits",
+                    )
+                )
+            seen_fit_ids.add(fit_id)
+
+            table_raw = raw_fit.get("table")
+            if not isinstance(table_raw, str) or table_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "table is required",
+                        "set table to an existing table name",
+                    )
+                )
+            table_name = table_raw.strip()
+            table = table_map.get(table_name)
+            if table is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"table '{table_name}' was not found",
+                        "use an existing table name for DG07 fits",
+                    )
+                )
+            table_cols = {column.name: column for column in table.columns}
+
+            column_raw = raw_fit.get("column")
+            if not isinstance(column_raw, str) or column_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "column is required",
+                        "set column to an existing target column name on the configured table",
+                    )
+                )
+            column_name = column_raw.strip()
+            column = table_cols.get(column_name)
+            if column is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"column '{column_name}' was not found on table '{table_name}'",
+                        "use an existing column name for DG07 fits",
+                    )
+                )
+            if column.primary_key:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"column '{column_name}' cannot target a primary key",
+                        "target a non-primary-key column for DG07 profile fitting",
+                    )
+                )
+            target = (table_name, column_name)
+            if target in seen_targets:
+                raise ValueError(
+                    _validation_error(
+                        "Project",
+                        f"multiple DG07 fits target '{table_name}.{column_name}'",
+                        "define at most one DG07 fit per table + column target",
+                    )
+                )
+            seen_targets.add(target)
+
+            strategy_raw = raw_fit.get("strategy", "auto")
+            if not isinstance(strategy_raw, str) or strategy_raw.strip() == "":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "strategy must be a string when provided",
+                        "set strategy to 'auto' or omit strategy",
+                    )
+                )
+            strategy = strategy_raw.strip().lower()
+            if strategy != "auto":
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        f"unsupported strategy '{strategy_raw}'",
+                        "set strategy to 'auto' for this release",
+                    )
+                )
+
+            fixed_profile_raw = raw_fit.get("fixed_profile")
+            sample_source_raw = raw_fit.get("sample_source")
+            if fixed_profile_raw is None and sample_source_raw is None:
+                raise ValueError(
+                    _validation_error(
+                        location,
+                        "requires fixed_profile or sample_source",
+                        "set fixed_profile for frozen deterministic profiles or sample_source for CSV-driven inference",
+                    )
+                )
+
+            if fixed_profile_raw is not None:
+                if not isinstance(fixed_profile_raw, dict):
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "fixed_profile must be a JSON object when provided",
+                            "set fixed_profile like {'generator': 'normal', 'params': {...}}",
+                        )
+                    )
+                generator_raw = fixed_profile_raw.get("generator")
+                if not isinstance(generator_raw, str) or generator_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "fixed_profile.generator is required",
+                            "set fixed_profile.generator to a non-empty generator id",
+                        )
+                    )
+                params_raw = fixed_profile_raw.get("params", {})
+                if not isinstance(params_raw, dict):
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "fixed_profile.params must be a JSON object when provided",
+                            "set fixed_profile.params to an object like {'min': 0, 'max': 100}",
+                        )
+                    )
+                depends_on_raw = fixed_profile_raw.get("depends_on")
+                if depends_on_raw is not None:
+                    if not isinstance(depends_on_raw, list):
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "fixed_profile.depends_on must be a list when provided",
+                                "set fixed_profile.depends_on to a list of existing source column names",
+                            )
+                        )
+                    if len(depends_on_raw) == 0:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "fixed_profile.depends_on cannot be empty when provided",
+                                "add one or more source column names or omit fixed_profile.depends_on",
+                            )
+                        )
+                    depends_on_names: list[str] = []
+                    for dep in depends_on_raw:
+                        if not isinstance(dep, str) or dep.strip() == "":
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "fixed_profile.depends_on contains an empty or non-string value",
+                                    "use non-empty source column names in fixed_profile.depends_on",
+                                )
+                            )
+                        dep_name = dep.strip()
+                        if dep_name == column_name:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    "fixed_profile.depends_on cannot include the target column itself",
+                                    "list only other source columns in fixed_profile.depends_on",
+                                )
+                            )
+                        if dep_name not in table_cols:
+                            raise ValueError(
+                                _validation_error(
+                                    location,
+                                    f"fixed_profile.depends_on column '{dep_name}' was not found on table '{table_name}'",
+                                    "use existing table columns in fixed_profile.depends_on",
+                                )
+                            )
+                        depends_on_names.append(dep_name)
+                    if len(set(depends_on_names)) != len(depends_on_names):
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "fixed_profile.depends_on contains duplicate column names",
+                                "list each dependency source column once",
+                            )
+                        )
+
+            if sample_source_raw is not None:
+                if not isinstance(sample_source_raw, dict):
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "sample_source must be a JSON object when provided",
+                            "set sample_source like {'path': 'tests/fixtures/sample.csv', 'column_index': 0}",
+                        )
+                    )
+                if column.dtype in {"bool", "bytes"}:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"sample_source inference does not support target dtype '{column.dtype}'",
+                            "use fixed_profile for bool/bytes targets or change target dtype",
+                        )
+                    )
+
+                path_raw = sample_source_raw.get("path")
+                if not isinstance(path_raw, str) or path_raw.strip() == "":
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "sample_source.path is required",
+                            "set sample_source.path to an existing CSV file path",
+                        )
+                    )
+                sample_path = path_raw.strip()
+                resolved_path = resolve_repo_path(sample_path)
+                if not resolved_path.exists():
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            f"sample_source.path '{sample_path}' does not exist",
+                            "provide an existing CSV file path",
+                        )
+                    )
+
+                has_header_raw = sample_source_raw.get("has_header", True)
+                if not isinstance(has_header_raw, bool):
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "sample_source.has_header must be boolean when provided",
+                            "set sample_source.has_header to true or false",
+                        )
+                    )
+                has_header = bool(has_header_raw)
+
+                has_index = "column_index" in sample_source_raw
+                has_name = "column_name" in sample_source_raw
+                if has_index == has_name:
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "sample_source requires exactly one of column_index or column_name",
+                            "set either sample_source.column_index or sample_source.column_name",
+                        )
+                    )
+                if has_index:
+                    column_index = _parse_non_negative_int(
+                        sample_source_raw.get("column_index"),
+                        location=location,
+                        field_name="sample_source.column_index",
+                        hint="set sample_source.column_index to an integer >= 0",
+                    )
+                    if column_index < 0:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "sample_source.column_index cannot be negative",
+                                "set sample_source.column_index to 0 or greater",
+                            )
+                        )
+                else:
+                    column_name_raw = sample_source_raw.get("column_name")
+                    if not isinstance(column_name_raw, str) or column_name_raw.strip() == "":
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "sample_source.column_name must be a non-empty string",
+                                "set sample_source.column_name to a CSV header name",
+                            )
+                        )
+                    if not has_header:
+                        raise ValueError(
+                            _validation_error(
+                                location,
+                                "sample_source.column_name requires sample_source.has_header=true",
+                                "set has_header=true when using column_name or use column_index",
+                            )
+                        )
+
+                skip_empty_raw = sample_source_raw.get("skip_empty", True)
+                if not isinstance(skip_empty_raw, bool):
+                    raise ValueError(
+                        _validation_error(
+                            location,
+                            "sample_source.skip_empty must be boolean when provided",
+                            "set sample_source.skip_empty to true or false",
+                        )
+                    )
 

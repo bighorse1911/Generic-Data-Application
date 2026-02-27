@@ -1,3 +1,4 @@
+import json
 import tkinter as tk
 from tkinter import filedialog, ttk
 from typing import Iterable
@@ -31,9 +32,17 @@ from src.gui_schema_shared import (
     SCD_MODES,
     ValidationIssue,
     ValidationHeatmap,
+    valid_generators_for_dtype,
 )
 from src.schema_project_io import load_project_from_json, save_project_to_json
 from src.storage_sqlite_project import create_tables, insert_project_rows
+from src.gui_v2.schema_design_modes import (
+    DEFAULT_SCHEMA_DESIGN_MODE,
+    SchemaDesignMode,
+    allowed_generators_for_mode,
+    is_mode_downgrade,
+    normalize_schema_design_mode,
+)
 
 VALIDATION_DEBOUNCE_MS = 180
 FILTER_PAGE_SIZE = 200
@@ -67,6 +76,11 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
     def _build(self) -> None:
         if hasattr(self, "scroll"):
             self.scroll.destroy()
+        if hasattr(self, "_header_host") and isinstance(self._header_host, tk.Widget):
+            self._header_host.destroy()
+
+        self._header_host = ttk.Frame(self)
+        self._header_host.pack(fill="x")
 
         self.scroll = ScrollFrame(self, padding=16)
         self.scroll.pack(fill="both", expand=True)
@@ -83,6 +97,11 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         self._fk_filter_index: list[IndexedFilterRow] = []
         self._fk_filter_rows: list[IndexedFilterRow] = []
         self._fk_filter_page_index = 0
+        self._schema_design_mode_suspended = True
+        self._schema_design_mode_trace_name: str | None = None
+        self._schema_design_mode_last_applied: SchemaDesignMode = DEFAULT_SCHEMA_DESIGN_MODE
+        self._last_out_of_mode_generator_notice: tuple[SchemaDesignMode, str] | None = None
+        self.schema_design_mode_var = tk.StringVar(value=DEFAULT_SCHEMA_DESIGN_MODE)
 
         self.build_header()
 
@@ -100,12 +119,22 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.build_status_bar()
         self.main_tabs.bind("<<NotebookTabChanged>>", self._on_main_tab_changed, add="+")
         self._restore_workspace_state()
+        self._apply_schema_design_mode_ui(emit_feedback=False, persist=False)
+        if self._schema_design_mode_trace_name is None:
+            self._schema_design_mode_trace_name = self.schema_design_mode_var.trace_add(
+                "write",
+                self._on_schema_design_mode_changed,
+            )
+        self._schema_design_mode_suspended = False
         self._register_focus_anchors()
         self._register_shortcuts()
         self._suspend_project_meta_dirty = False
         self.project_name_var.trace_add("write", self._on_project_meta_changed)
         self.seed_var.trace_add("write", self._on_project_meta_changed)
         self.project_timeline_constraints_var.trace_add("write", self._on_project_meta_changed)
+        self.project_data_quality_profiles_var.trace_add("write", self._on_project_meta_changed)
+        self.project_sample_profile_fits_var.trace_add("write", self._on_project_meta_changed)
+        self.project_locale_identity_bundles_var.trace_add("write", self._on_project_meta_changed)
         self.enable_dirty_state_guard(context="Schema Project Designer", on_save=self._save_project)
         self.mark_clean()
         self.job_lifecycle = JobLifecycleController(
@@ -147,15 +176,159 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.safe_threaded_job(worker, on_done, on_failed)
 
     def build_header(self) -> ttk.Frame:
+        header_parent = self._header_host if hasattr(self, "_header_host") else self._root_content
         header = BaseScreen.build_header(
             self,
-            self._root_content,
+            header_parent,
             title="Schema Project Designer (Kit Preview)",
             back_command=self._on_back_requested,
         )
         ttk.Button(header, text="Notifications", command=self._show_notifications_history).pack(side="right", padx=(0, 6))
         ttk.Button(header, text="Shortcuts", command=self._show_shortcuts_help).pack(side="right")
         return header
+
+    def _current_schema_design_mode(self) -> SchemaDesignMode:
+        return normalize_schema_design_mode(self.schema_design_mode_var.get())
+
+    def _set_schema_design_mode(
+        self,
+        mode: object,
+        *,
+        emit_feedback: bool,
+        persist: bool,
+    ) -> None:
+        normalized = normalize_schema_design_mode(mode)
+        if normalized != self.schema_design_mode_var.get():
+            self._schema_design_mode_suspended = True
+            try:
+                self.schema_design_mode_var.set(normalized)
+            finally:
+                self._schema_design_mode_suspended = False
+        self._apply_schema_design_mode_ui(emit_feedback=emit_feedback, persist=persist)
+
+    def _on_schema_design_mode_changed(self, *_args) -> None:
+        if self._schema_design_mode_suspended:
+            return
+        self._apply_schema_design_mode_ui(emit_feedback=True, persist=True)
+
+    def _mode_allowed_generators_for_dtype(self, dtype: str) -> list[str]:
+        base_valid = valid_generators_for_dtype(dtype)
+        allowed = set(allowed_generators_for_mode(self._current_schema_design_mode()))
+        selected = self.col_generator_var.get().strip() if hasattr(self, "col_generator_var") else ""
+        return [
+            generator
+            for generator in base_valid
+            if generator == "" or generator in allowed or (selected != "" and generator == selected)
+        ]
+
+    @staticmethod
+    def _set_grid_group_visible(widget: object, visible: bool) -> None:
+        if widget is None:
+            return
+        if not isinstance(widget, tk.Widget):
+            return
+        if visible:
+            widget.grid()
+            return
+        widget.grid_remove()
+
+    def _project_has_advanced_values(self) -> bool:
+        return bool(
+            self.project.timeline_constraints
+            or self.project.data_quality_profiles
+            or self.project.sample_profile_fits
+            or self.project.locale_identity_bundles
+            or self.project_timeline_constraints_var.get().strip()
+            or self.project_data_quality_profiles_var.get().strip()
+            or self.project_sample_profile_fits_var.get().strip()
+            or self.project_locale_identity_bundles_var.get().strip()
+        )
+
+    @staticmethod
+    def _table_has_medium_values(table: TableSpec) -> bool:
+        return bool(
+            table.business_key
+            or table.business_key_unique_count is not None
+            or table.business_key_static_columns
+            or table.business_key_changing_columns
+            or table.scd_mode
+            or table.scd_tracked_columns
+            or table.scd_active_from_column
+            or table.scd_active_to_column
+        )
+
+    @staticmethod
+    def _table_has_complex_values(table: TableSpec) -> bool:
+        return bool(table.correlation_groups)
+
+    def _project_has_out_of_mode_generators(self, mode: SchemaDesignMode) -> bool:
+        allowed = set(allowed_generators_for_mode(mode))
+        for table in self.project.tables:
+            for column in table.columns:
+                generator = (column.generator or "").strip()
+                if generator != "" and generator not in allowed:
+                    return True
+        selected = self.col_generator_var.get().strip()
+        return selected != "" and selected not in allowed
+
+    def _collect_hidden_mode_value_labels(self, mode: SchemaDesignMode) -> list[str]:
+        labels: list[str] = []
+
+        if mode in {"simple", "medium"} and self._project_has_advanced_values():
+            labels.append("project advanced JSON settings")
+
+        if mode == "simple":
+            if any(self._table_has_medium_values(table) for table in self.project.tables):
+                labels.append("business key / SCD table settings")
+            if any(
+                fk.parent_selection is not None or fk.child_count_distribution is not None
+                for fk in self.project.foreign_keys
+            ):
+                labels.append("advanced relationship settings")
+            if self._project_has_out_of_mode_generators(mode):
+                labels.append("advanced generator selections")
+        if mode == "medium":
+            if any(self._table_has_complex_values(table) for table in self.project.tables):
+                labels.append("correlation group settings")
+            if self._project_has_out_of_mode_generators(mode):
+                labels.append("complex generator selections")
+
+        return labels
+
+    def _apply_schema_design_mode_ui(self, *, emit_feedback: bool, persist: bool) -> None:
+        mode = self._current_schema_design_mode()
+        previous_mode = self._schema_design_mode_last_applied
+
+        is_medium_or_complex = mode in {"medium", "complex"}
+        is_complex = mode == "complex"
+
+        self._set_grid_group_visible(getattr(self, "project_complex_group", None), is_complex)
+        self._set_grid_group_visible(getattr(self, "table_mode_medium_group", None), is_medium_or_complex)
+        self._set_grid_group_visible(getattr(self, "table_mode_complex_group", None), is_complex)
+        self._set_grid_group_visible(getattr(self, "columns_mode_medium_group", None), is_medium_or_complex)
+        self._set_grid_group_visible(getattr(self, "columns_mode_medium_actions", None), is_medium_or_complex)
+        self._set_grid_group_visible(getattr(self, "relationships_mode_medium_group", None), is_medium_or_complex)
+
+        self._refresh_generator_options_for_dtype()
+        if hasattr(self, "_apply_schema_design_mode_overrides"):
+            try:
+                self._apply_schema_design_mode_overrides(mode)
+            except Exception:
+                pass
+
+        if emit_feedback and is_mode_downgrade(previous_mode, mode):
+            hidden = self._collect_hidden_mode_value_labels(mode)
+            if hidden:
+                shown = ", ".join(hidden)
+                message = (
+                    f"{mode.title()} mode active. Hidden advanced settings are preserved: {shown}."
+                )
+                self.set_status(message)
+                self._show_toast(message, level="info")
+
+        self._schema_design_mode_last_applied = mode
+        if persist:
+            self._persist_workspace_state()
 
     def build_project_panel(self) -> CollapsiblePanel:
         panel = CollapsiblePanel(self.schema_tab, "Project", collapsed=False)
@@ -168,22 +341,59 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         project_box.grid(row=0, column=0, sticky="ew")
         project_box.columnconfigure(0, weight=1)
 
-        project_form_frame = ttk.Frame(project_box)
-        project_form_frame.grid(row=0, column=0, sticky="ew")
-        form = FormBuilder(project_form_frame)
-        self.project_name_entry = form.add_entry("Project name", self.project_name_var)
-        self.seed_entry = form.add_entry("Seed", self.seed_var, width=12)
-        self.project_timeline_constraints_entry = form.add_entry(
+        project_core_group = ttk.Frame(project_box)
+        project_core_group.grid(row=0, column=0, sticky="ew")
+        project_core_form = FormBuilder(project_core_group)
+        self.project_name_entry = project_core_form.add_entry("Project name", self.project_name_var)
+        self.seed_entry = project_core_form.add_entry("Seed", self.seed_var, width=12)
+
+        self.project_complex_group = ttk.Frame(project_box)
+        self.project_complex_group.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.project_complex_group.columnconfigure(0, weight=1)
+        project_complex_form_frame = ttk.Frame(self.project_complex_group)
+        project_complex_form_frame.grid(row=0, column=0, sticky="ew")
+        project_complex_form = FormBuilder(project_complex_form_frame)
+        self.project_timeline_constraints_entry = project_complex_form.add_entry(
             "Timeline constraints JSON (optional)",
             self.project_timeline_constraints_var,
         )
+        self.project_data_quality_profiles_entry = project_complex_form.add_entry(
+            "Data quality profiles JSON (optional)",
+            self.project_data_quality_profiles_var,
+        )
+        self.project_sample_profile_fits_entry = project_complex_form.add_entry(
+            "Sample profile fits JSON (optional)",
+            self.project_sample_profile_fits_var,
+        )
+        self.project_locale_identity_bundles_entry = project_complex_form.add_entry(
+            "Locale identity bundles JSON (optional)",
+            self.project_locale_identity_bundles_var,
+        )
 
         self.project_timeline_constraints_editor_btn = ttk.Button(
-            project_box,
+            self.project_complex_group,
             text="Open timeline constraints JSON editor",
             command=self._open_project_timeline_constraints_editor,
         )
         self.project_timeline_constraints_editor_btn.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.project_data_quality_profiles_editor_btn = ttk.Button(
+            self.project_complex_group,
+            text="Open data quality profiles JSON editor",
+            command=self._open_project_data_quality_profiles_editor,
+        )
+        self.project_data_quality_profiles_editor_btn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.project_sample_profile_fits_editor_btn = ttk.Button(
+            self.project_complex_group,
+            text="Open sample profile fits JSON editor",
+            command=self._open_project_sample_profile_fits_editor,
+        )
+        self.project_sample_profile_fits_editor_btn.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self.project_locale_identity_bundles_editor_btn = ttk.Button(
+            self.project_complex_group,
+            text="Open locale identity bundles JSON editor",
+            command=self._open_project_locale_identity_bundles_editor,
+        )
+        self.project_locale_identity_bundles_editor_btn.grid(row=4, column=0, sticky="ew", pady=(8, 0))
 
         buttons = ttk.Frame(project_box)
         buttons.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -204,7 +414,7 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.redo_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         validation_box = ttk.LabelFrame(panel.body, text="Schema validation", padding=10)
-        validation_box.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
+        validation_box.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
         validation_box.columnconfigure(0, weight=1)
         validation_box.rowconfigure(1, weight=1)
         validation_box.rowconfigure(2, weight=0)
@@ -235,7 +445,7 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.inline_validation.grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
         quick_start_box = ttk.LabelFrame(panel.body, text="First-run quick start", padding=10)
-        quick_start_box.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        quick_start_box.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         quick_start_box.columnconfigure(0, weight=1)
 
         self.onboarding_project_hint_var = tk.StringVar(value="")
@@ -329,57 +539,72 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         right_box.grid(row=0, column=1, sticky="nsew")
         right_box.columnconfigure(0, weight=1)
 
-        table_form_frame = ttk.Frame(right_box)
-        table_form_frame.grid(row=0, column=0, sticky="ew")
-        table_form = FormBuilder(table_form_frame)
-        self.table_name_entry = table_form.add_entry("Table name", self.table_name_var)
-        self.row_count_entry = table_form.add_entry("Root row count", self.row_count_var, width=12)
-        self.table_business_key_unique_count_entry = table_form.add_entry(
+        table_core_group = ttk.Frame(right_box)
+        table_core_group.grid(row=0, column=0, sticky="ew")
+        table_core_form = FormBuilder(table_core_group)
+        self.table_name_entry = table_core_form.add_entry("Table name", self.table_name_var)
+        self.row_count_entry = table_core_form.add_entry("Root row count", self.row_count_var, width=12)
+
+        self.table_mode_medium_group = ttk.Frame(right_box)
+        self.table_mode_medium_group.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        table_medium_form = FormBuilder(self.table_mode_medium_group)
+        self.table_business_key_unique_count_entry = table_medium_form.add_entry(
             "Unique business keys (optional)",
             self.table_business_key_unique_count_var,
             width=12,
         )
-        self.table_business_key_entry = TokenEntry(table_form_frame, textvariable=self.table_business_key_var)
-        table_form.add_widget("Business key columns (comma)", self.table_business_key_entry)
+        self.table_business_key_entry = TokenEntry(
+            self.table_mode_medium_group,
+            textvariable=self.table_business_key_var,
+        )
+        table_medium_form.add_widget("Business key columns (comma)", self.table_business_key_entry)
         self.table_business_key_static_entry = TokenEntry(
-            table_form_frame,
+            self.table_mode_medium_group,
             textvariable=self.table_business_key_static_columns_var,
         )
-        table_form.add_widget("Business key static columns (comma)", self.table_business_key_static_entry)
+        table_medium_form.add_widget("Business key static columns (comma)", self.table_business_key_static_entry)
         self.table_business_key_changing_entry = TokenEntry(
-            table_form_frame,
+            self.table_mode_medium_group,
             textvariable=self.table_business_key_changing_columns_var,
         )
-        table_form.add_widget("Business key changing columns (comma)", self.table_business_key_changing_entry)
-        self.table_scd_mode_combo = table_form.add_combo(
+        table_medium_form.add_widget("Business key changing columns (comma)", self.table_business_key_changing_entry)
+        self.table_scd_mode_combo = table_medium_form.add_combo(
             "SCD mode",
             self.table_scd_mode_var,
             SCD_MODES,
             readonly=True,
         )
-        self.table_scd_tracked_entry = TokenEntry(table_form_frame, textvariable=self.table_scd_tracked_columns_var)
-        table_form.add_widget("SCD tracked columns (comma)", self.table_scd_tracked_entry)
-        self.table_scd_active_from_entry = table_form.add_entry(
+        self.table_scd_tracked_entry = TokenEntry(
+            self.table_mode_medium_group,
+            textvariable=self.table_scd_tracked_columns_var,
+        )
+        table_medium_form.add_widget("SCD tracked columns (comma)", self.table_scd_tracked_entry)
+        self.table_scd_active_from_entry = table_medium_form.add_entry(
             "SCD active from column",
             self.table_scd_active_from_var,
         )
-        self.table_scd_active_to_entry = table_form.add_entry(
+        self.table_scd_active_to_entry = table_medium_form.add_entry(
             "SCD active to column",
             self.table_scd_active_to_var,
         )
-        self.table_correlation_groups_entry = table_form.add_entry(
+
+        self.table_mode_complex_group = ttk.Frame(right_box)
+        self.table_mode_complex_group.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.table_mode_complex_group.columnconfigure(0, weight=1)
+        table_complex_form = FormBuilder(self.table_mode_complex_group)
+        self.table_correlation_groups_entry = table_complex_form.add_entry(
             "Correlation groups JSON (optional)",
             self.table_correlation_groups_var,
         )
         self.table_correlation_groups_editor_btn = ttk.Button(
-            right_box,
+            self.table_mode_complex_group,
             text="Open correlation groups JSON editor",
             command=self._open_table_correlation_groups_editor,
         )
         self.table_correlation_groups_editor_btn.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
         self.apply_table_btn = ttk.Button(right_box, text="Apply table changes", command=self._apply_table_changes)
-        self.apply_table_btn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.apply_table_btn.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         return panel
 
     def build_columns_panel(self) -> CollapsiblePanel:
@@ -394,40 +619,48 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         editor_box.grid(row=0, column=0, sticky="ew")
         editor_box.columnconfigure(0, weight=1)
 
-        column_form_frame = ttk.Frame(editor_box)
-        column_form_frame.grid(row=0, column=0, sticky="ew")
-        column_form = FormBuilder(column_form_frame)
+        column_core_group = ttk.Frame(editor_box)
+        column_core_group.grid(row=0, column=0, sticky="ew")
+        column_core_form = FormBuilder(column_core_group)
 
-        self.col_name_entry = column_form.add_entry("Column name", self.col_name_var)
-        self.col_dtype_combo = column_form.add_combo("DType", self.col_dtype_var, DTYPES, readonly=True)
-        self.col_min_entry = column_form.add_entry("Min value", self.col_min_var, width=12)
-        self.col_max_entry = column_form.add_entry("Max value", self.col_max_var, width=12)
-        self.col_choices_entry = column_form.add_entry("Choices (comma-separated)", self.col_choices_var)
-        self.col_pattern_entry = column_form.add_entry("Regex pattern", self.col_pattern_var)
+        self.col_name_entry = column_core_form.add_entry("Column name", self.col_name_var)
+        self.col_dtype_combo = column_core_form.add_combo("DType", self.col_dtype_var, DTYPES, readonly=True)
+        self.col_min_entry = column_core_form.add_entry("Min value", self.col_min_var, width=12)
+        self.col_max_entry = column_core_form.add_entry("Max value", self.col_max_var, width=12)
+        self.col_choices_entry = column_core_form.add_entry("Choices (comma-separated)", self.col_choices_var)
+        self.col_pattern_entry = column_core_form.add_entry("Regex pattern", self.col_pattern_var)
         self.col_pattern_entry.bind("<FocusOut>", self._on_pattern_entry_focus_out)
-        self.col_pattern_preset_combo = column_form.add_combo(
+        self.col_generator_combo = column_core_form.add_combo("Generator", self.col_generator_var, GENERATORS, readonly=True)
+
+        self.columns_mode_medium_group = ttk.Frame(editor_box)
+        self.columns_mode_medium_group.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        column_medium_form = FormBuilder(self.columns_mode_medium_group)
+        self.col_pattern_preset_combo = column_medium_form.add_combo(
             "Pattern preset",
             self.col_pattern_preset_var,
             list(PATTERN_PRESETS.keys()),
             readonly=True,
         )
         self.col_pattern_preset_combo.bind("<<ComboboxSelected>>", self._on_pattern_preset_selected)
-        self.col_generator_combo = column_form.add_combo("Generator", self.col_generator_var, GENERATORS, readonly=True)
-        self.col_params_entry = column_form.add_entry("Generator params JSON", self.col_params_var)
-        self.col_depends_entry = column_form.add_entry("Depends on column", self.col_depends_var)
+        self.col_params_entry = column_medium_form.add_entry("Generator params JSON", self.col_params_var)
+        self.col_depends_entry = column_medium_form.add_entry("Depends on column", self.col_depends_var)
 
+        self.columns_mode_medium_actions = ttk.Frame(editor_box)
+        self.columns_mode_medium_actions.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self.columns_mode_medium_actions.columnconfigure(0, weight=1)
+        self.columns_mode_medium_actions.columnconfigure(1, weight=1)
         self.col_params_template_btn = ttk.Button(
-            editor_box,
+            self.columns_mode_medium_actions,
             text="Fill params template for selected generator",
             command=self._apply_generator_params_template,
         )
-        self.col_params_template_btn.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        self.col_params_template_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.col_params_editor_btn = ttk.Button(
-            editor_box,
+            self.columns_mode_medium_actions,
             text="Open params JSON editor",
             command=self._open_params_json_editor,
         )
-        self.col_params_editor_btn.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self.col_params_editor_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         checks = ttk.Frame(editor_box)
         checks.grid(row=3, column=0, sticky="w", pady=(6, 0))
@@ -499,19 +732,31 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         rel_box.grid(row=0, column=0, sticky="ew")
         rel_box.columnconfigure(0, weight=1)
 
-        rel_form_frame = ttk.Frame(rel_box)
-        rel_form_frame.grid(row=0, column=0, sticky="ew")
-        rel_form = FormBuilder(rel_form_frame)
-        self.fk_parent_combo = rel_form.add_combo("Parent table", self.fk_parent_table_var, [], readonly=True)
+        rel_core_group = ttk.Frame(rel_box)
+        rel_core_group.grid(row=0, column=0, sticky="ew")
+        rel_core_form = FormBuilder(rel_core_group)
+        self.fk_parent_combo = rel_core_form.add_combo("Parent table", self.fk_parent_table_var, [], readonly=True)
         self.fk_parent_combo.bind("<<ComboboxSelected>>", self._on_fk_selection_changed)
-        self.fk_child_combo = rel_form.add_combo("Child table", self.fk_child_table_var, [], readonly=True)
+        self.fk_child_combo = rel_core_form.add_combo("Child table", self.fk_child_table_var, [], readonly=True)
         self.fk_child_combo.bind("<<ComboboxSelected>>", self._on_fk_selection_changed)
-        self.fk_child_col_combo = rel_form.add_combo("Child FK column (int)", self.fk_child_column_var, [], readonly=True)
-        self.fk_min_entry = rel_form.add_entry("Min children", self.fk_min_children_var, width=8)
-        self.fk_max_entry = rel_form.add_entry("Max children", self.fk_max_children_var, width=8)
+        self.fk_child_col_combo = rel_core_form.add_combo("Child FK column (int)", self.fk_child_column_var, [], readonly=True)
+        self.fk_min_entry = rel_core_form.add_entry("Min children", self.fk_min_children_var, width=8)
+        self.fk_max_entry = rel_core_form.add_entry("Max children", self.fk_max_children_var, width=8)
+
+        self.relationships_mode_medium_group = ttk.Frame(rel_box)
+        self.relationships_mode_medium_group.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        rel_medium_form = FormBuilder(self.relationships_mode_medium_group)
+        self.fk_parent_selection_entry = rel_medium_form.add_entry(
+            "Parent selection JSON (optional)",
+            self.fk_parent_selection_var,
+        )
+        self.fk_child_count_distribution_entry = rel_medium_form.add_entry(
+            "Child count distribution JSON (optional)",
+            self.fk_child_count_distribution_var,
+        )
 
         self.add_fk_btn = ttk.Button(rel_box, text="Add relationship", command=self._add_fk)
-        self.add_fk_btn.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.add_fk_btn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
         list_box = ttk.LabelFrame(panel.body, text="Defined relationships", padding=8)
         list_box.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
@@ -523,7 +768,7 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
 
         self.fks_table = TableView(list_box, height=8)
         self.fks_table.grid(row=1, column=0, sticky="nsew")
-        self.fks_table.set_columns(["parent", "parent_pk", "child", "child_fk", "min", "max"])
+        self.fks_table.set_columns(["parent", "parent_pk", "child", "child_fk", "min", "max", "distribution"])
         self.fks_tree = self.fks_table.tree
         self.fks_tree.column("parent", width=110)
         self.fks_tree.column("child", width=110)
@@ -531,6 +776,7 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.fks_tree.column("child_fk", width=90)
         self.fks_tree.column("min", width=60, anchor="e")
         self.fks_tree.column("max", width=60, anchor="e")
+        self.fks_tree.column("distribution", width=180)
 
         fk_page = ttk.Frame(list_box)
         fk_page.grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -910,6 +1156,7 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
             "panel_state": self._workspace_panel_state(),
             "preview_page_size": page_size,
             "preview_column_preferences": self._workspace_preview_column_state(),
+            "schema_design_mode": self._current_schema_design_mode(),
         }
 
     def _persist_workspace_state(self) -> None:
@@ -936,6 +1183,13 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
             return
         if not isinstance(payload, dict):
             return
+
+        restored_mode = normalize_schema_design_mode(payload.get("schema_design_mode"))
+        self._schema_design_mode_suspended = True
+        try:
+            self.schema_design_mode_var.set(restored_mode)
+        finally:
+            self._schema_design_mode_suspended = False
 
         raw_columns = payload.get("preview_column_preferences")
         if isinstance(raw_columns, dict):
@@ -1017,6 +1271,21 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
             self.seed_var.set(str(self.project.seed))
             self.project_timeline_constraints_var.set(
                 json.dumps(self.project.timeline_constraints, sort_keys=True) if self.project.timeline_constraints else ""
+            )
+            self.project_data_quality_profiles_var.set(
+                json.dumps(self.project.data_quality_profiles, sort_keys=True)
+                if self.project.data_quality_profiles
+                else ""
+            )
+            self.project_sample_profile_fits_var.set(
+                json.dumps(self.project.sample_profile_fits, sort_keys=True)
+                if self.project.sample_profile_fits
+                else ""
+            )
+            self.project_locale_identity_bundles_var.set(
+                json.dumps(self.project.locale_identity_bundles, sort_keys=True)
+                if self.project.locale_identity_bundles
+                else ""
             )
         finally:
             self._suspend_project_meta_dirty = False
@@ -1296,6 +1565,9 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
                 )
             ],
             timeline_constraints=None,
+            data_quality_profiles=None,
+            sample_profile_fits=None,
+            locale_identity_bundles=None,
         )
 
     def _create_starter_schema(self) -> None:
@@ -1618,12 +1890,67 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
                 projected_rules.append(rule_copy)
             if projected_rules:
                 projected_timeline_constraints = projected_rules
+        projected_data_quality_profiles: list[dict[str, object]] | None = None
+        raw_profiles = self.project.data_quality_profiles or []
+        if raw_profiles:
+            projected_profiles: list[dict[str, object]] = []
+            for raw_profile in raw_profiles:
+                if not isinstance(raw_profile, dict):
+                    continue
+                profile_table = str(raw_profile.get("table", "")).strip()
+                if profile_table not in table_names:
+                    continue
+                projected_profiles.append(dict(raw_profile))
+            if projected_profiles:
+                projected_data_quality_profiles = projected_profiles
+        projected_sample_profile_fits: list[dict[str, object]] | None = None
+        raw_fits = self.project.sample_profile_fits or []
+        if raw_fits:
+            projected_fits: list[dict[str, object]] = []
+            for raw_fit in raw_fits:
+                if not isinstance(raw_fit, dict):
+                    continue
+                fit_table = str(raw_fit.get("table", "")).strip()
+                if fit_table not in table_names:
+                    continue
+                projected_fits.append(dict(raw_fit))
+            if projected_fits:
+                projected_sample_profile_fits = projected_fits
+        projected_locale_identity_bundles: list[dict[str, object]] | None = None
+        raw_locale_bundles = self.project.locale_identity_bundles or []
+        if raw_locale_bundles:
+            projected_bundles: list[dict[str, object]] = []
+            for raw_bundle in raw_locale_bundles:
+                if not isinstance(raw_bundle, dict):
+                    continue
+                base_table = str(raw_bundle.get("base_table", "")).strip()
+                if base_table not in table_names:
+                    continue
+                bundle_copy = dict(raw_bundle)
+                related_raw = raw_bundle.get("related_tables")
+                if isinstance(related_raw, list):
+                    filtered_related = [
+                        dict(item)
+                        for item in related_raw
+                        if isinstance(item, dict)
+                        and str(item.get("table", "")).strip() in table_names
+                    ]
+                    if filtered_related:
+                        bundle_copy["related_tables"] = filtered_related
+                    else:
+                        bundle_copy.pop("related_tables", None)
+                projected_bundles.append(bundle_copy)
+            if projected_bundles:
+                projected_locale_identity_bundles = projected_bundles
         return SchemaProject(
             name=self.project.name,
             seed=self.project.seed,
             tables=ordered_tables,
             foreign_keys=projected_fks,
             timeline_constraints=projected_timeline_constraints,
+            data_quality_profiles=projected_data_quality_profiles,
+            sample_profile_fits=projected_sample_profile_fits,
+            locale_identity_bundles=projected_locale_identity_bundles,
         )
 
     @staticmethod
@@ -1748,6 +2075,34 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
         self.col_params_var.set(pretty_json)
         self.set_status("Applied JSON editor content to Generator params JSON.")
         self._show_toast("Generator params updated from JSON editor.", level="success")
+
+    def _refresh_generator_options_for_dtype(self) -> None:
+        if not hasattr(self, "col_generator_combo"):
+            return
+
+        mode = self._current_schema_design_mode()
+        selected = self.col_generator_var.get().strip()
+        full_valid = valid_generators_for_dtype(self.col_dtype_var.get())
+        mode_valid = self._mode_allowed_generators_for_dtype(self.col_dtype_var.get())
+        self.col_generator_combo.configure(values=mode_valid)
+
+        if selected and selected not in full_valid:
+            self.col_generator_var.set("")
+            self._last_out_of_mode_generator_notice = None
+            return
+
+        allowed = set(allowed_generators_for_mode(mode))
+        if selected and selected not in allowed:
+            notice_key = (mode, selected)
+            if notice_key != self._last_out_of_mode_generator_notice:
+                self.set_status(
+                    f"{mode.title()} mode: generator '{selected}' is preserved for this column "
+                    "and remains valid, even though it is hidden from this mode's default list."
+                )
+                self._last_out_of_mode_generator_notice = notice_key
+            return
+
+        self._last_out_of_mode_generator_notice = None
 
     def _refresh_tables_list(self) -> None:
         super()._refresh_tables_list()
@@ -1940,7 +2295,27 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
     def _refresh_fks_tree(self) -> None:
         self._fk_filter_index = []
         for idx, fk in enumerate(self.project.foreign_keys):
-            values = (fk.parent_table, fk.parent_column, fk.child_table, fk.child_column, fk.min_children, fk.max_children)
+            dist = fk.child_count_distribution
+            dist_label = ""
+            if isinstance(dist, dict):
+                dist_type = str(dist.get("type", "")).strip().lower()
+                if dist_type == "poisson":
+                    dist_label = f"poisson(lambda={dist.get('lambda')})"
+                elif dist_type == "zipf":
+                    dist_label = f"zipf(s={dist.get('s')})"
+                elif dist_type == "uniform":
+                    dist_label = "uniform"
+                elif dist_type:
+                    dist_label = dist_type
+            values = (
+                fk.parent_table,
+                fk.parent_column,
+                fk.child_table,
+                fk.child_column,
+                fk.min_children,
+                fk.max_children,
+                dist_label,
+            )
             search_text = " ".join(str(v).lower() for v in values)
             self._fk_filter_index.append(
                 IndexedFilterRow(
@@ -2137,6 +2512,21 @@ class SchemaEditorBaseScreen(SchemaProjectDesignerScreen, BaseScreen):
             self.seed_var.set(str(self.project.seed))
             self.project_timeline_constraints_var.set(
                 json.dumps(self.project.timeline_constraints, sort_keys=True) if self.project.timeline_constraints else ""
+            )
+            self.project_data_quality_profiles_var.set(
+                json.dumps(self.project.data_quality_profiles, sort_keys=True)
+                if self.project.data_quality_profiles
+                else ""
+            )
+            self.project_sample_profile_fits_var.set(
+                json.dumps(self.project.sample_profile_fits, sort_keys=True)
+                if self.project.sample_profile_fits
+                else ""
+            )
+            self.project_locale_identity_bundles_var.set(
+                json.dumps(self.project.locale_identity_bundles, sort_keys=True)
+                if self.project.locale_identity_bundles
+                else ""
             )
         finally:
             self._suspend_project_meta_dirty = False
