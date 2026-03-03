@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="774" height="874" viewBox="0 0 774 874">
+  <rect x="0" y="0" width="774" height="874" fill="#f3f6fb" />
+  <defs><marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#1f5a95" /></marker></defs>
+  <rect x="32" y="32" width="300" height="168" fill="#ffffff" stroke="#556b8a" stroke-width="2" />
+  <rect x="32" y="32" width="300" height="30" fill="#dae7f8" stroke="#556b8a" stroke-width="2" />
+  <text x="40" y="52" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1a2a44">SCD_TEST</text>
+  <text x="40" y="80" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">new_table_id: int</text>
+  <text x="40" y="98" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[PK] PK: int</text>
+  <text x="40" y="116" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">BK: int</text>
+  <text x="40" y="134" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">Name: text</text>
+  <text x="40" y="152" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">Org: text</text>
+  <text x="40" y="170" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">EFFECTIVE_FROM: date</text>
+  <text x="40" y="188" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">EFFECTIVE_TO: date</text>
+  <rect x="32" y="224" width="300" height="150" fill="#ffffff" stroke="#556b8a" stroke-width="2" />
+  <rect x="32" y="224" width="300" height="30" fill="#dae7f8" stroke="#556b8a" stroke-width="2" />
+  <text x="40" y="244" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1a2a44">campaigns</text>
+  <text x="40" y="272" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[PK] campaign_id: int</text>
+  <text x="40" y="290" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">channel: text</text>
+  <text x="40" y="308" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">budget: decimal</text>
+  <text x="40" y="326" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">started_on: date</text>
+  <text x="40" y="344" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">ended_on: date</text>
+  <text x="40" y="362" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">active: bool</text>
+  <rect x="32" y="398" width="300" height="420" fill="#ffffff" stroke="#556b8a" stroke-width="2" />
+  <rect x="32" y="398" width="300" height="30" fill="#dae7f8" stroke="#556b8a" stroke-width="2" />
+  <text x="40" y="418" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1a2a44">customers</text>
+  <text x="40" y="446" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[PK] customer_id: int</text>
+  <text x="40" y="464" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">age: int</text>
+  <text x="40" y="482" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">salary: int</text>
+  <text x="40" y="500" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">segment: text</text>
+  <text x="40" y="518" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">home_city: text</text>
+  <text x="40" y="536" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">home_country: text</text>
+  <text x="40" y="554" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">signup_date: date</text>
+  <text x="40" y="572" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">signup_ts: datetime</text>
+  <text x="40" y="590" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">active: bool</text>
+  <text x="40" y="608" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">latitude: decimal</text>
+  <text x="40" y="626" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">longitude: decimal</text>
+  <text x="40" y="644" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">score: decimal</text>
+  <text x="40" y="662" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">lifetime_value: decimal</text>
+  <text x="40" y="680" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">note: text</text>
+  <text x="40" y="698" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">optional_tag: text</text>
+  <text x="40" y="716" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">outlier_metric: decimal</text>
+  <text x="40" y="734" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">fallback_int: int</text>
+  <text x="40" y="752" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">fallback_float: decimal</text>
+  <text x="40" y="770" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">fallback_date: date</text>
+  <text x="40" y="788" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">fallback_datetime: datetime</text>
+  <text x="40" y="806" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">status_choice: text</text>
+  <rect x="442" y="32" width="300" height="204" fill="#ffffff" stroke="#556b8a" stroke-width="2" />
+  <rect x="442" y="32" width="300" height="30" fill="#dae7f8" stroke="#556b8a" stroke-width="2" />
+  <text x="450" y="52" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1a2a44">events</text>
+  <text x="450" y="80" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[PK] event_id: int</text>
+  <text x="450" y="98" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[FK] customer_id: int</text>
+  <text x="450" y="116" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[FK] campaign_id: int</text>
+  <text x="450" y="134" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">event_time: datetime</text>
+  <text x="450" y="152" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">event_type: text</text>
+  <text x="450" y="170" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">event_amount: decimal</text>
+  <text x="450" y="188" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">event_lat: decimal</text>
+  <text x="450" y="206" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">event_lon: decimal</text>
+  <text x="450" y="224" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">quality_score: decimal</text>
+  <rect x="442" y="260" width="300" height="132" fill="#ffffff" stroke="#556b8a" stroke-width="2" />
+  <rect x="442" y="260" width="300" height="30" fill="#dae7f8" stroke="#556b8a" stroke-width="2" />
+  <text x="450" y="280" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1a2a44">orders</text>
+  <text x="450" y="308" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[PK] order_id: int</text>
+  <text x="450" y="326" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">[FK] customer_id: int</text>
+  <text x="450" y="344" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">ordered_at: datetime</text>
+  <text x="450" y="362" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">order_amount: decimal</text>
+  <text x="450" y="380" font-family="Consolas, Courier New, monospace" font-size="11" fill="#27374d">order_status: text</text>
+  <path d="M 332 260 L 387 260 L 387 104 L 442 104" fill="none" stroke="#1f5a95" stroke-width="2" marker-end="url(#arrow)" />
+  <text x="393" y="175" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#1f5a95">events.campaign_id -&gt; campaigns.campaign_id</text>
+  <path d="M 332 434 L 387 434 L 387 86 L 442 86" fill="none" stroke="#1f5a95" stroke-width="2" marker-end="url(#arrow)" />
+  <text x="393" y="253" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#1f5a95">events.customer_id -&gt; customers.customer_id</text>
+  <path d="M 332 434 L 387 434 L 387 314 L 442 314" fill="none" stroke="#1f5a95" stroke-width="2" marker-end="url(#arrow)" />
+  <text x="393" y="367" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#1f5a95">orders.customer_id -&gt; customers.customer_id</text>
+</svg>

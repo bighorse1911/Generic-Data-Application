@@ -6,6 +6,8 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter import ttk
 
+from src import gui_v2_schema_project_form as v2_schema_form
+from src import gui_v2_schema_project_layout as v2_schema_layout
 from src.config import AppConfig
 from src.derived_expression import extract_derived_expression_references
 from src.gui_kit.forms import FormBuilder
@@ -35,6 +37,13 @@ class _FieldBinding:
     action_button: ttk.Button | None = None
 
 
+def _bind_v2_schema_module_context(module) -> None:
+    for name, value in globals().items():
+        if name.startswith("__"):
+            continue
+        module.__dict__.setdefault(name, value)
+
+
 class SchemaProjectV2Screen(SchemaEditorBaseScreen):
     """Native v2 schema authoring route with canonical schema-editor behavior."""
 
@@ -50,265 +59,41 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
         self._sync_generator_form_from_params_json()
 
     def build_columns_panel(self):  # type: ignore[override]
-        panel = super().build_columns_panel()
-        editor_box = self._find_column_editor_box(panel)
-        if editor_box is not None:
-            self._install_generator_form_host(editor_box)
-        return panel
+        return v2_schema_layout.build_columns_panel(self)
 
     def build_header(self):  # type: ignore[override]
-        spacing = V2_THEME.spacing
-        type_scale = V2_THEME.type_scale
-        header_parent = self._header_host if hasattr(self, "_header_host") else self._root_content
-        header = tk.Frame(header_parent, bg=V2_HEADER_BG, height=58)
-        header.pack(fill="x", pady=(0, spacing.md))
-        header.pack_propagate(False)
-
-        tk.Button(
-            header,
-            text="Back",
-            command=self._on_back_requested,
-            padx=spacing.md,
-            pady=spacing.sm - spacing.xs,
-            **v2_button_options("secondary"),
-        ).pack(side="left", padx=(spacing.sm, spacing.sm), pady=spacing.sm)
-        tk.Label(
-            header,
-            text="Schema Project v2",
-            bg=V2_HEADER_BG,
-            fg=V2_HEADER_FG,
-            font=type_scale.page_title,
-        ).pack(side="left", pady=spacing.sm)
-        tk.Label(
-            header,
-            textvariable=self._dirty_indicator_var,
-            bg=V2_HEADER_BG,
-            fg=V2_HEADER_FG,
-            font=type_scale.body_bold,
-        ).pack(side="left", padx=(spacing.md, 0), pady=spacing.sm)
-
-        mode_group = tk.Frame(header, bg=V2_HEADER_BG)
-        mode_group.pack(side="left", padx=(spacing.md, 0), pady=spacing.sm)
-        tk.Label(
-            mode_group,
-            text="Mode",
-            bg=V2_HEADER_BG,
-            fg=V2_HEADER_FG,
-            font=type_scale.body_small,
-        ).pack(side="left", padx=(0, spacing.xs))
-        for mode_value, label in (("simple", "Simple"), ("medium", "Medium"), ("complex", "Complex")):
-            tk.Radiobutton(
-                mode_group,
-                text=label,
-                value=mode_value,
-                variable=self.schema_design_mode_var,
-                indicatoron=0,
-                bd=1,
-                relief="solid",
-                padx=spacing.sm,
-                pady=spacing.xs,
-                bg=V2_HEADER_BG,
-                fg=V2_HEADER_FG,
-                activebackground=V2_HEADER_BG,
-                activeforeground=V2_HEADER_FG,
-                selectcolor=V2_HEADER_BG,
-                highlightthickness=0,
-            ).pack(side="left", padx=(0, spacing.xs))
-
-        tk.Button(
-            header,
-            text="Shortcuts",
-            command=self._show_shortcuts_help,
-            padx=spacing.md,
-            pady=spacing.sm - spacing.xs,
-            **v2_button_options("secondary"),
-        ).pack(side="right", padx=(0, spacing.sm), pady=spacing.sm)
-        tk.Button(
-            header,
-            text="Notifications",
-            command=self._show_notifications_history,
-            padx=spacing.md,
-            pady=spacing.sm - spacing.xs,
-            **v2_button_options("secondary"),
-        ).pack(side="right", padx=(0, spacing.sm), pady=spacing.sm)
-        return header
+        return v2_schema_layout.build_header(self)
 
     def _on_back_requested(self) -> None:
-        if self.confirm_discard_or_save(action_name="returning to Schema Studio v2"):
-            self.app.show_screen("schema_studio_v2")
+        return v2_schema_layout._on_back_requested(self)
 
     # ---------------- Generator Form (v2-only) ----------------
     def _attach_generator_form_sync(self) -> None:
-        if self._params_trace_name is None:
-            self._params_trace_name = self.col_params_var.trace_add(
-                "write",
-                self._on_params_json_var_changed,
-            )
+        return v2_schema_form._attach_generator_form_sync(self)
 
     def _find_column_editor_box(self, panel: object) -> ttk.LabelFrame | None:
-        body = getattr(panel, "body", None)
-        if body is None:
-            return None
-        for child in body.winfo_children():
-            if not isinstance(child, ttk.LabelFrame):
-                continue
-            try:
-                label = str(child.cget("text")).strip().lower()
-            except Exception:
-                continue
-            if label == "column editor":
-                return child
-        return None
+        return v2_schema_form._find_column_editor_box(self, panel)
 
     def _install_generator_form_host(self, editor_box: ttk.LabelFrame) -> None:
-        if hasattr(self, "generator_form_box"):
-            return
-
-        editor_box.columnconfigure(0, weight=1)
-        self.generator_form_box = ttk.LabelFrame(
-            editor_box,
-            text="Generator Configuration (v2)",
-            padding=8,
-        )
-        self.generator_form_box.grid(row=6, column=0, sticky="ew", pady=(8, 0))
-        self.generator_form_box.columnconfigure(0, weight=1)
-
-        self.generator_form_message_var = tk.StringVar(
-            value=(
-                "Select a generator to configure structured fields. "
-                "Raw Generator params JSON remains available below for edge cases."
-            )
-        )
-        ttk.Label(
-            self.generator_form_box,
-            textvariable=self.generator_form_message_var,
-            wraplength=620,
-            justify="left",
-        ).grid(row=0, column=0, sticky="ew")
-
-        self.generator_fields_frame = ttk.Frame(self.generator_form_box)
-        self.generator_fields_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self.generator_fields_frame.columnconfigure(0, weight=1)
-
-        self.generator_advanced_frame = ttk.LabelFrame(
-            self.generator_form_box,
-            text="Advanced Optional Params",
-            padding=8,
-        )
-        self.generator_advanced_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        self.generator_advanced_frame.columnconfigure(0, weight=1)
-
-        actions = ttk.Frame(self.generator_form_box)
-        actions.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        actions.columnconfigure(0, weight=1)
-        actions.columnconfigure(1, weight=1)
-
-        self.generator_reset_btn = ttk.Button(
-            actions,
-            text="Reset Structured Fields To Template",
-            command=self._reset_generator_form_to_template,
-        )
-        self.generator_reset_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        self.generator_reload_btn = ttk.Button(
-            actions,
-            text="Reload Structured Fields From Raw JSON",
-            command=self._reload_generator_form_from_json,
-        )
-        self.generator_reload_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        return v2_schema_form._install_generator_form_host(self, editor_box)
 
     def _set_generator_form_message(self, message: str) -> None:
-        if hasattr(self, "generator_form_message_var"):
-            self.generator_form_message_var.set(message)
+        return v2_schema_form._set_generator_form_message(self, message)
 
     def _current_table_column_names(self) -> list[str]:
-        if self.selected_table_index is None:
-            return []
-        table = self.project.tables[self.selected_table_index]
-        current_name = self.col_name_var.get().strip()
-        return [name for name in (column.name for column in table.columns) if name != current_name]
+        return v2_schema_form._current_table_column_names(self)
 
     def _visible_generator_specs(self) -> list[GeneratorFieldSpec]:
-        generator = self.col_generator_var.get().strip()
-        dtype = self.col_dtype_var.get().strip().lower()
-        return visible_fields_for(generator, dtype=dtype, include_cross_cutting=False)
+        return v2_schema_form._visible_generator_specs(self)
 
     def _visible_advanced_specs(self) -> list[GeneratorFieldSpec]:
-        dtype = self.col_dtype_var.get().strip().lower()
-        return [spec for spec in CROSS_CUTTING_FIELDS if spec.is_visible_for_dtype(dtype)]
+        return v2_schema_form._visible_advanced_specs(self)
 
     def _clear_dynamic_form_rows(self) -> None:
-        if hasattr(self, "generator_fields_frame"):
-            for child in self.generator_fields_frame.winfo_children():
-                child.destroy()
-        if hasattr(self, "generator_advanced_frame"):
-            for child in self.generator_advanced_frame.winfo_children():
-                child.destroy()
-        self._generator_form_bindings.clear()
-        self._advanced_form_bindings.clear()
+        return v2_schema_form._clear_dynamic_form_rows(self)
 
     def _rebuild_generator_form_fields(self) -> None:
-        if not hasattr(self, "generator_fields_frame"):
-            return
-
-        self._clear_dynamic_form_rows()
-
-        generator = self.col_generator_var.get().strip()
-        if generator == "":
-            self._set_generator_form_message(
-                "No generator selected. Raw Generator params JSON remains fully supported."
-            )
-            self._set_generator_form_enabled(self.selected_table_index is not None and not self.is_running)
-            self._apply_generator_form_mode_visibility()
-            return
-
-        spec = get_generator_form_spec(generator)
-        if spec is None:
-            self._set_generator_form_message(
-                f"No structured spec registered for generator '{generator}'. "
-                "Use Raw Generator params JSON for this configuration."
-            )
-            self._set_generator_form_enabled(self.selected_table_index is not None and not self.is_running)
-            self._apply_generator_form_mode_visibility()
-            return
-
-        column_choices = self._current_table_column_names()
-        form = FormBuilder(self.generator_fields_frame)
-        for field_spec in self._visible_generator_specs():
-            binding = self._build_field_binding(
-                form,
-                self.generator_fields_frame,
-                field_spec,
-                column_choices=column_choices,
-            )
-            self._generator_form_bindings[field_spec.field_id] = binding
-
-        advanced_specs = self._visible_advanced_specs()
-        if advanced_specs:
-            self.generator_advanced_frame.grid()
-            advanced_form = FormBuilder(self.generator_advanced_frame)
-            for field_spec in advanced_specs:
-                binding = self._build_field_binding(
-                    advanced_form,
-                    self.generator_advanced_frame,
-                    field_spec,
-                    column_choices=column_choices,
-                )
-                self._advanced_form_bindings[field_spec.field_id] = binding
-        else:
-            self.generator_advanced_frame.grid_remove()
-
-        descriptor = spec.description.strip()
-        if descriptor:
-            self._set_generator_form_message(
-                f"Structured fields for '{generator}': {descriptor}. "
-                "Raw Generator params JSON can still include extra keys."
-            )
-        else:
-            self._set_generator_form_message(
-                f"Structured fields for '{generator}'. Raw Generator params JSON remains available."
-            )
-        self._set_generator_form_enabled(self.selected_table_index is not None and not self.is_running)
-        self._apply_generator_form_mode_visibility()
+        return v2_schema_form._rebuild_generator_form_fields(self)
 
     def _build_field_binding(
         self,
@@ -318,264 +103,51 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
         *,
         column_choices: list[str],
     ) -> _FieldBinding:
-        var = tk.StringVar(value="")
-        var.trace_add("write", self._on_generator_form_field_changed)
-
-        action_button: ttk.Button | None = None
-
-        if field_spec.control_kind == "combo":
-            widget = ttk.Combobox(
-                parent,
-                textvariable=var,
-                values=list(field_spec.options),
-                state="readonly",
-            )
-            form.add_widget(field_spec.label, widget)
-            return _FieldBinding(field_spec, var, widget, action_button)
-
-        if field_spec.control_kind == "column":
-            values = [""] + column_choices
-            widget = ttk.Combobox(
-                parent,
-                textvariable=var,
-                values=values,
-                state="readonly",
-            )
-            form.add_widget(field_spec.label, widget)
-            return _FieldBinding(field_spec, var, widget, action_button)
-
-        if field_spec.control_kind == "path":
-            holder = ttk.Frame(parent)
-            holder.columnconfigure(0, weight=1)
-            entry = ttk.Entry(holder, textvariable=var)
-            entry.grid(row=0, column=0, sticky="ew")
-            action_button = ttk.Button(
-                holder,
-                text="Browse...",
-                command=lambda v=var: self._browse_generator_path(v),
-            )
-            action_button.grid(row=0, column=1, sticky="e", padx=(6, 0))
-            form.add_widget(field_spec.label, holder)
-            return _FieldBinding(field_spec, var, entry, action_button)
-
-        if field_spec.control_kind == "json_object":
-            holder = ttk.Frame(parent)
-            holder.columnconfigure(0, weight=1)
-            entry = ttk.Entry(holder, textvariable=var)
-            entry.grid(row=0, column=0, sticky="ew")
-            action_button = ttk.Button(
-                holder,
-                text="Edit JSON...",
-                command=lambda s=field_spec, v=var: self._open_structured_object_editor(s, v),
-            )
-            action_button.grid(row=0, column=1, sticky="e", padx=(6, 0))
-            form.add_widget(field_spec.label, holder)
-            return _FieldBinding(field_spec, var, entry, action_button)
-
-        widget = ttk.Entry(parent, textvariable=var)
-        form.add_widget(field_spec.label, widget)
-        return _FieldBinding(field_spec, var, widget, action_button)
+        return v2_schema_form._build_field_binding(
+            self,
+            form,
+            parent,
+            field_spec,
+            column_choices=column_choices,
+        )
 
     def _browse_generator_path(self, target_var: tk.StringVar) -> None:
-        path = filedialog.askopenfilename(
-            title="Select CSV file",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if path:
-            target_var.set(path)
+        return v2_schema_form._browse_generator_path(self, target_var)
 
     def _open_structured_object_editor(
         self,
         field_spec: GeneratorFieldSpec,
         target_var: tk.StringVar,
     ) -> None:
-        JsonEditorDialog(
-            self,
-            title=f"{field_spec.label} JSON Editor",
-            initial_text=target_var.get() or "{}",
-            require_object=True,
-            on_apply=lambda pretty_json: target_var.set(pretty_json),
-        )
+        return v2_schema_form._open_structured_object_editor(self, field_spec, target_var)
 
     def _on_generator_form_field_changed(self, *_args) -> None:
-        if self._suspend_generator_sync:
-            return
-        self._sync_params_json_from_generator_form(
-            require_required_fields=False,
-            raise_on_error=False,
-        )
+        return v2_schema_form._on_generator_form_field_changed(self, *_args)
 
     def _on_params_json_var_changed(self, *_args) -> None:
-        if self._suspend_generator_sync:
-            return
-        self._sync_generator_form_from_params_json()
+        return v2_schema_form._on_params_json_var_changed(self, *_args)
 
     def _parse_params_json_object(self) -> tuple[dict[str, object] | None, str | None]:
-        raw = self.col_params_var.get().strip()
-        if raw == "":
-            return {}, None
-        try:
-            parsed = json.loads(raw)
-        except Exception as exc:
-            return None, (
-                "Generator params JSON currently contains invalid JSON. "
-                f"Fix: correct the JSON syntax. Details: {exc}"
-            )
-        if not isinstance(parsed, dict):
-            return None, "Generator params JSON must be an object. Fix: use a JSON object payload."
-        return parsed, None
+        return v2_schema_form._parse_params_json_object(self)
 
     def _sync_generator_form_from_params_json(self) -> None:
-        if not hasattr(self, "generator_fields_frame"):
-            return
-
-        generator = self.col_generator_var.get().strip()
-        dtype = self.col_dtype_var.get().strip().lower()
-        params, parse_error = self._parse_params_json_object()
-        if parse_error is not None:
-            self._set_generator_form_message(parse_error)
-            return
-        assert params is not None
-
-        state = split_form_state(generator, dtype=dtype, params=params)
-        self._unknown_generator_params = dict(state.passthrough_params)
-
-        self._suspend_generator_sync = True
-        try:
-            for field_id, binding in self._generator_form_bindings.items():
-                binding.var.set(format_field_value(binding.spec, state.known_params.get(field_id)))
-            for field_id, binding in self._advanced_form_bindings.items():
-                binding.var.set(format_field_value(binding.spec, state.known_params.get(field_id)))
-        finally:
-            self._suspend_generator_sync = False
-
-        if self._unknown_generator_params:
-            unknown_keys = ", ".join(sorted(self._unknown_generator_params.keys()))
-            self._set_generator_form_message(
-                "Structured fields synced from Raw Generator params JSON. "
-                f"Preserving unknown passthrough keys: {unknown_keys}."
-            )
+        return v2_schema_form._sync_generator_form_from_params_json(self)
 
     def _collect_structured_params(
         self,
         *,
         require_required_fields: bool,
     ) -> tuple[dict[str, object], list[str]]:
-        values: dict[str, object] = {}
-        errors: list[str] = []
-
-        def _consume(binding: _FieldBinding) -> None:
-            raw = binding.var.get()
-            if raw.strip() == "":
-                if require_required_fields and binding.spec.required:
-                    errors.append(
-                        f"Column editor / Generator config / {binding.spec.label}: value is required. "
-                        "Fix: provide a value or use Raw Generator params JSON."
-                    )
-                return
-            try:
-                parsed = parse_field_text(binding.spec, raw)
-            except ValueError as exc:
-                errors.append(
-                    f"Column editor / Generator config / {binding.spec.label}: {exc}. "
-                    "Fix: correct this field or use Raw Generator params JSON."
-                )
-                return
-            if parsed is None:
-                return
-            values[binding.spec.field_id] = parsed
-
-        for binding in self._generator_form_bindings.values():
-            _consume(binding)
-        for binding in self._advanced_form_bindings.values():
-            _consume(binding)
-
-        generator = self.col_generator_var.get().strip()
-        dtype = self.col_dtype_var.get().strip().lower()
-        if generator == "choice_weighted":
-            choices = values.get("choices")
-            weights = values.get("weights")
-            if isinstance(choices, list) and isinstance(weights, list) and len(weights) > 0:
-                if len(choices) != len(weights):
-                    errors.append(
-                        "Column editor / Generator config / Weights (comma): weight count must match choices count. "
-                        "Fix: provide one weight per choice."
-                    )
-        if generator == "sample_csv":
-            match_column = values.get("match_column")
-            has_match_column = isinstance(match_column, str) and match_column.strip() != ""
-            has_match_index = "match_column_index" in values
-            if has_match_column and require_required_fields and not has_match_index:
-                errors.append(
-                    "Column editor / Generator config / Match column index: value is required when Match source column is set. "
-                    "Fix: set Match column index or clear Match source column."
-                )
-            if (not has_match_column) and ("match_column_index" in values):
-                errors.append(
-                    "Column editor / Generator config / Match column index: requires Match source column. "
-                    "Fix: set Match source column or clear Match column index."
-                )
-        if generator == "time_offset":
-            if dtype == "date":
-                values.pop("min_seconds", None)
-                values.pop("max_seconds", None)
-            if dtype == "datetime":
-                values.pop("min_days", None)
-                values.pop("max_days", None)
-        if generator == "derived_expr":
-            expression = values.get("expression")
-            if isinstance(expression, str) and expression.strip() != "":
-                try:
-                    extract_derived_expression_references(
-                        expression,
-                        location="Column editor / Generator config / Expression",
-                    )
-                except ValueError as exc:
-                    errors.append(str(exc))
-        if dtype != "bytes":
-            values.pop("min_length", None)
-            values.pop("max_length", None)
-
-        return values, errors
+        return v2_schema_form._collect_structured_params(
+            self,
+            require_required_fields=require_required_fields,
+        )
 
     def _dependency_source_values(self, params: dict[str, object]) -> list[str]:
-        names: list[str] = []
-        generator = self.col_generator_var.get().strip()
-        for binding in self._generator_form_bindings.values():
-            if not binding.spec.dependency_source:
-                continue
-            value = params.get(binding.spec.field_id)
-            if isinstance(value, str):
-                stripped = value.strip()
-                if stripped != "":
-                    names.append(stripped)
-        if generator == "derived_expr":
-            expression = params.get("expression")
-            if isinstance(expression, str) and expression.strip() != "":
-                try:
-                    for ref_name in extract_derived_expression_references(
-                        expression,
-                        location="Column editor / Generator config / Expression",
-                    ):
-                        if ref_name not in names:
-                            names.append(ref_name)
-                except ValueError:
-                    # Expression parse errors are surfaced during required-field sync.
-                    return names
-        return names
+        return v2_schema_form._dependency_source_values(self, params)
 
     def _ensure_depends_on_contains(self, source_column: str) -> None:
-        source = source_column.strip()
-        if source == "":
-            return
-        current_column_name = self.col_name_var.get().strip()
-        if source == current_column_name:
-            return
-        existing = [part.strip() for part in self.col_depends_var.get().split(",") if part.strip()]
-        if source in existing:
-            return
-        existing.append(source)
-        self.col_depends_var.set(", ".join(existing))
+        return v2_schema_form._ensure_depends_on_contains(self, source_column)
 
     def _sync_params_json_from_generator_form(
         self,
@@ -583,132 +155,26 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
         require_required_fields: bool,
         raise_on_error: bool,
     ) -> bool:
-        if self._suspend_generator_sync:
-            return True
-        generator = self.col_generator_var.get().strip()
-        if generator == "":
-            return True
-
-        values, errors = self._collect_structured_params(require_required_fields=require_required_fields)
-        if errors:
-            if raise_on_error:
-                raise ValueError("\n".join(errors))
-            self._set_generator_form_message(errors[0])
-            return False
-
-        merged: dict[str, object] = dict(self._unknown_generator_params)
-        merged.update(values)
-
-        dtype = self.col_dtype_var.get().strip().lower()
-        if generator == "time_offset":
-            if dtype == "date":
-                merged.pop("min_seconds", None)
-                merged.pop("max_seconds", None)
-            if dtype == "datetime":
-                merged.pop("min_days", None)
-                merged.pop("max_days", None)
-        if generator == "sample_csv":
-            match_column = merged.get("match_column")
-            if not (isinstance(match_column, str) and match_column.strip()):
-                merged.pop("match_column_index", None)
-
-        payload = json.dumps(merged, sort_keys=True) if merged else ""
-
-        self._suspend_generator_sync = True
-        try:
-            self.col_params_var.set(payload)
-        finally:
-            self._suspend_generator_sync = False
-
-        for source_name in self._dependency_source_values(values):
-            self._ensure_depends_on_contains(source_name)
-        return True
+        return v2_schema_form._sync_params_json_from_generator_form(
+            self,
+            require_required_fields=require_required_fields,
+            raise_on_error=raise_on_error,
+        )
 
     def _reload_generator_form_from_json(self) -> None:
-        self._sync_generator_form_from_params_json()
-        self.set_status("Reloaded structured generator fields from Raw Generator params JSON.")
+        return v2_schema_form._reload_generator_form_from_json(self)
 
     def _reset_generator_form_to_template(self) -> None:
-        generator = self.col_generator_var.get().strip()
-        dtype = self.col_dtype_var.get().strip()
-        if generator == "":
-            self._show_error_dialog(
-                "Generator template",
-                "Column editor / Generator config: no generator selected. "
-                "Fix: choose a generator before resetting to template.",
-            )
-            return
-        template = default_generator_params_template(generator, dtype)
-        if template is None:
-            self._show_error_dialog(
-                "Generator template",
-                f"Column editor / Generator config: no template is defined for generator '{generator}'. "
-                "Fix: enter params manually in structured fields or Raw Generator params JSON.",
-            )
-            return
-
-        self._unknown_generator_params = {}
-        self._suspend_generator_sync = True
-        try:
-            for field_id, binding in self._generator_form_bindings.items():
-                binding.var.set(format_field_value(binding.spec, template.get(field_id)))
-            for field_id, binding in self._advanced_form_bindings.items():
-                binding.var.set(format_field_value(binding.spec, template.get(field_id)))
-        finally:
-            self._suspend_generator_sync = False
-
-        self._sync_params_json_from_generator_form(
-            require_required_fields=False,
-            raise_on_error=False,
-        )
-        self._set_generator_form_message(
-            f"Reset structured fields to template for generator '{generator}'."
-        )
-        self._show_toast(f"Reset structured fields for '{generator}'.", level="success")
+        return v2_schema_form._reset_generator_form_to_template(self)
 
     def _set_generator_form_enabled(self, enabled: bool) -> None:
-        state = tk.NORMAL if enabled else tk.DISABLED
-        combo_state = "readonly" if enabled else tk.DISABLED
-
-        for binding in self._generator_form_bindings.values():
-            if isinstance(binding.input_widget, ttk.Combobox):
-                binding.input_widget.configure(state=combo_state)
-            else:
-                binding.input_widget.configure(state=state)
-            if binding.action_button is not None:
-                binding.action_button.configure(state=state)
-
-        for binding in self._advanced_form_bindings.values():
-            if isinstance(binding.input_widget, ttk.Combobox):
-                binding.input_widget.configure(state=combo_state)
-            else:
-                binding.input_widget.configure(state=state)
-            if binding.action_button is not None:
-                binding.action_button.configure(state=state)
-
-        if hasattr(self, "generator_reset_btn"):
-            self.generator_reset_btn.configure(state=state)
-        if hasattr(self, "generator_reload_btn"):
-            self.generator_reload_btn.configure(state=state)
+        return v2_schema_form._set_generator_form_enabled(self, enabled)
 
     def _apply_generator_form_mode_visibility(self, mode: SchemaDesignMode | None = None) -> None:
-        if not hasattr(self, "generator_form_box"):
-            return
-        active_mode = mode or self._current_schema_design_mode()
-        if active_mode == "simple":
-            self.generator_form_box.grid_remove()
-            return
-
-        self.generator_form_box.grid()
-        if not hasattr(self, "generator_advanced_frame"):
-            return
-        if active_mode == "complex" and self._visible_advanced_specs():
-            self.generator_advanced_frame.grid()
-            return
-        self.generator_advanced_frame.grid_remove()
+        return v2_schema_form._apply_generator_form_mode_visibility(self, mode)
 
     def _apply_schema_design_mode_overrides(self, mode: SchemaDesignMode) -> None:
-        self._apply_generator_form_mode_visibility(mode)
+        return v2_schema_form._apply_schema_design_mode_overrides(self, mode)
 
     # ---------------- Overrides ----------------
     def _on_column_generator_changed(self, *_args) -> None:
@@ -765,3 +231,17 @@ class SchemaProjectV2Screen(SchemaEditorBaseScreen):
             self._show_error_dialog("Edit column failed", str(exc))
             return
         super()._apply_selected_column_changes()
+
+
+for _v2_schema_module in (
+    v2_schema_layout,
+    v2_schema_form,
+):
+    _bind_v2_schema_module_context(_v2_schema_module)
+
+
+__all__ = [
+    "SchemaProjectV2Screen",
+    "_FieldBinding",
+]
+

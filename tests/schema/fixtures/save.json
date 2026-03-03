@@ -1,0 +1,36 @@
+{
+  "name": "modified_name",
+  "seed": 1,
+  "tables": [
+    {
+      "table_name": "new_table",
+      "columns": [
+        {
+          "name": "new_table_id",
+          "dtype": "int",
+          "nullable": false,
+          "primary_key": true,
+          "unique": false,
+          "min_value": null,
+          "max_value": null,
+          "choices": null,
+          "pattern": null,
+          "generator": null,
+          "params": null,
+          "depends_on": null
+        }
+      ],
+      "row_count": 100,
+      "business_key": null,
+      "business_key_unique_count": null,
+      "business_key_static_columns": null,
+      "business_key_changing_columns": null,
+      "scd_mode": null,
+      "scd_tracked_columns": null,
+      "scd_active_from_column": null,
+      "scd_active_to_column": null
+    }
+  ],
+  "foreign_keys": [],
+  "sql_ddl": "CREATE TABLE \"new_table\" (\n  \"new_table_id\" INTEGER NOT NULL PRIMARY KEY\n);"
+}

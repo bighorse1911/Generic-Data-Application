@@ -51,6 +51,14 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Pure-Python backend (no external deps)
 - Schema-first design
 - Generator registry pattern
+- Domain-first package scaffolding (incremental, compatibility-first):
+  - `src/schema` (schema model/validation surface)
+  - `src/generation` (generation pipeline + dependency helpers + generator registry wrappers)
+  - `src/runtime` (performance/multiprocessing compatibility wrappers)
+  - `src/gui/schema` (classic schema GUI implementation)
+  - `src/gui/v2/routes` (v2 route-per-module exports)
+- Backward-compatible top-level shims remain in place (`src/schema_project_model.py`, `src/generator_project.py`, `src/generators.py`, `src/gui_schema_core.py`, `src/gui_schema_editor_base.py`, `src/gui_v2_redesign.py`) so existing imports continue to work during migration.
+- Architecture navigation index: `docs/ARCHITECTURE_INDEX.md` is the canonical “where to edit” module map.
 - Route policy constants: `src/gui_route_policy.py` defines primary/fallback/deprecated schema route keys.
 - v2 generator form contracts: `src/gui_v2/generator_forms.py` defines typed field specs/state parsing used exclusively by `schema_project_v2`.
 - GUI wireframe/design decision canon: `GUI_WIREFRAME_SCHEMA.md` (library-agnostic contract); all GUI design changes must update this file and add decision logs.

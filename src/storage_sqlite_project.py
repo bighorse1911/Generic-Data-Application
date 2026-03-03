@@ -3,7 +3,7 @@ import sqlite3
 from typing import Iterable
 
 from src.schema_project_model import SchemaProject, TableSpec, ColumnSpec, ForeignKeySpec, validate_project
-from src.generator_project import _dependency_order  # internal helper
+from src.generation.dependency import dependency_order
 
 logger = logging.getLogger("storage_sqlite_project")
 
@@ -82,7 +82,7 @@ def insert_project_rows(
     validate_project(project)
 
     table_map = {t.table_name: t for t in project.tables}
-    order = _dependency_order(project)
+    order = dependency_order(project)
 
     inserted_counts: dict[str, int] = {}
 
