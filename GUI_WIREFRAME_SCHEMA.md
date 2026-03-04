@@ -75,6 +75,7 @@ ad-hoc assumptions.
 - Native v2 missing-route parity update: additive native routes now include `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2`; `schema_studio_v2` schema handoff targets `schema_project_v2` and preserves fallback compatibility.
 - Specialist v2 route restoration update: `home_v2` cards region is scrollable so all v2 cards remain reachable; `erd_designer_v2` and `location_selector_v2` include explicit `Open Classic Tool` actions while preserving native v2 route behavior.
 - Experimental route update: additive route `schema_demo_v2` is available from `home_v2` as a strict mockup-style schema screen (modeled on `demopage.png`) with full model-backed authoring/generation/save/export behavior and independent route-local preloaded demo state.
+- Experimental launcher update: `home_v2` now supports an optional debug-gated card (`Schema Project PyQt Experiment`) that appears only when `GDA_ENABLE_PYQT_EXPERIMENT=1` and starts an isolated subprocess-based PyQt prototype route without changing canonical Tk route inventory.
 - v2 generator GUI migration update: `schema_project_v2` now includes v2-only structured inline generator configuration for all registered generators with raw params JSON fallback, passthrough unknown-key preservation, source-column dependency auto-add, and advanced optional params controls (`null_rate`, `outlier_rate`, `outlier_scale`, bytes length).
 - Async schema project IO update: `schema_project_v2` Save/Load project JSON actions now execute via non-blocking job lifecycle callbacks with busy/status feedback, duplicate-operation guards, and explicit cancel/abort-safe behavior when dialogs are dismissed.
 - Incremental validation engine update: `schema_project_v2` now stages table/column/FK edits into debounced scope-aware incremental validation and preserves full-project validation before generate/export actions.
@@ -651,6 +652,20 @@ P5 standardization rules:
 - `Mock Data Rules` and `Distribution Config` actions on columns tab switch to constraints tab and focus matching advanced sections
 - `Close` uses dirty-state guard and routes back to `home_v2`
 - preserves canonical validation/error format and deterministic generation semantics
+
+### 4.22 `schema_project_pyqt_experiment` (debug-gated optional launcher)
+
+- Purpose: isolated optional PyQt6 prototype surface for schema-project UX experimentation without mutating canonical Tk route contracts.
+- Required regions:
+- home-v2 card (`Schema Project PyQt Experiment`) shown only when `GDA_ENABLE_PYQT_EXPERIMENT=1`
+- subprocess launcher bridge (`python -m src.experimental.pyqt_schema_project.main`)
+- independent PyQt window surface with additive authoring/validation/generate/export experimentation
+- Required behavior:
+- launcher is disabled by default and must not appear in normal route inventory when gate is unset
+- launch failure paths must provide actionable errors using canonical contract (`<Location>: <issue>. Fix: <hint>.`)
+- canonical Tk route keys/screens remain unchanged (`App.screens` inventory contract is unaffected)
+- prototype remains deletable as one isolated package (`src/experimental/pyqt_schema_project`) plus one launcher card hook
+- canonical schema semantics, validation contracts, deterministic generation, and JSON compatibility remain source-of-truth in existing runtime modules
 
 ## 5. Library-Agnostic Mapping Guide
 

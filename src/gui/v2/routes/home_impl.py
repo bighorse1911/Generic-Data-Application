@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
+from src.experimental.pyqt_schema_project.launcher import (
+    is_experiment_enabled,
+    launch_pyqt_schema_project,
+)
 from src.gui_route_policy import ORCHESTRATOR_V2_ROUTE
 from src.gui_route_policy import PERFORMANCE_V2_ROUTE
 from src.gui_route_policy import SCHEMA_V2_ROUTE
@@ -112,6 +116,13 @@ class HomeV2Screen(tk.Frame):
             "Native v2 read-only guide for generation configuration patterns.",
             lambda: self.app.show_screen("generation_behaviors_guide_v2"),
         )
+        if is_experiment_enabled():
+            self._add_card(
+                self.cards_frame,
+                "Schema Project PyQt Experiment",
+                "Debug-only optional launcher for isolated PyQt schema-page experimentation.",
+                self._launch_pyqt_experiment,
+            )
 
     def _on_cards_frame_configure(self, _event) -> None:
         self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all"))
@@ -155,6 +166,13 @@ class HomeV2Screen(tk.Frame):
             **v2_button_options("primary"),
         ).pack(anchor="e", padx=spacing.lg + spacing.xs, pady=(0, spacing.md))
 
+    def _launch_pyqt_experiment(self) -> None:
+        ok, message = launch_pyqt_schema_project()
+        title = "Schema Project PyQt Experiment"
+        if ok:
+            messagebox.showinfo(title, message)
+            return
+        messagebox.showwarning(title, message)
 
 
 __all__ = ["HomeV2Screen"]

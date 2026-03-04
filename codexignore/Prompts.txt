@@ -5,6 +5,41 @@ Before we do anything:
 2) Summarize (in 6-10 bullet points) the current architecture, constraints, and immediate priorities.
 3) Then ask me for ONE concrete task to implement next (no broad plans).
 
+---REFACTOR PROMPT---
+Continue the incremental domain-first readability refactor in this repo. The tagret lines of code is less than 1000. If less than 1000, you are to IMMEDIATELY inform me and wait for further instruction.
+
+Before coding:
+1) Read: `PROJECT_CANON.md`, `NEXT_DECISIONS.md`, `DATA_SEMANTICS.md`, `GUI_WIREFRAME_SCHEMA.md`, and `docs/ARCHITECTURE_INDEX.md`.
+2) Summarize in 8 bullets:
+   - current architecture ownership map,
+   - compatibility/shim constraints,
+   - test guardrails,
+   - highest remaining hotspots by LOC/risk.
+3) Then ask me for ONE concrete slice to implement next.
+
+Critical constraints (must follow):
+- Strict no-behavior-change refactor.
+- Preserve all existing public imports, shim surfaces, patch points, route keys, and error-message contracts.
+- Use thin compatibility facades + concern-owned modules.
+- Keep call-site behavior/order deterministic.
+- No new dependencies.
+- Never revert unrelated local changes.
+
+Execution pattern for each slice:
+1) Add/adjust contract tests first (import/method/patch surface as needed).
+2) Extract logic into concern modules.
+3) Convert original hotspot to thin compatibility facade re-exporting the same symbols.
+4) Keep wrappers and patch points effective.
+5) Run required tests and report exact results.
+6) Update `docs/ARCHITECTURE_INDEX.md`, `NEXT_DECISIONS.md`, and add a new decision log in `docs/decisions/` (next number after the latest existing file).
+
+Validation minimum:
+- `python -m unittest tests.test_import_contracts`
+- `python -m unittest tests.test_module_size_budget`
+- Targeted subsystem tests for touched code
+- If GUI touched: `python run_gui_tests_isolated.py --timeout 60`
+
+
 
 ---CODEX PROMPT---
 

@@ -50,6 +50,7 @@ Direction 1 - Smarter Data
 - DG09 - Locale-coherent identity bundles: implemented optional project-level `locale_identity_bundles` locale-pack contracts for deterministic coherent names/addresses/phones/postcodes/currency fields with related-table FK projections and validation/GUI/test coverage (completed 2026-02-26)
 - DG10 - Streaming generation for very large schemas: implemented memory-bounded streaming generation/export flow via `generate_project_rows_streaming` and strategy runtime integration for deterministic ordering and FK-safe CSV/SQLite outputs (completed 2026-02-26)
 - Schema design modes for `schema_project_v2`: implemented one-route in-page `simple|medium|complex` UI modes with header selector, mode-scoped control visibility, mode-scoped generator allowlists, structured-form progressive disclosure, persisted workspace mode state, and non-destructive downgrade behavior that preserves hidden advanced values (completed 2026-02-26)
+- Experimental PyQt schema-project launcher and isolated prototype package: added debug-gated `home_v2` launch card (`GDA_ENABLE_PYQT_EXPERIMENT=1`), isolated subprocess launcher, canonical controller wrappers, and dedicated regression tests without changing canonical Tk route keys (completed 2026-03-04)
 
 ## Completed Directions
 - Direction 2 - Modular GUI Adoption (incremental, low-risk)
@@ -146,6 +147,10 @@ Direction 1 - Smarter Data
     - decomposed `src/generation/quality_profiles.py` into concern modules (`quality_profiles_helpers.py`, `quality_profiles_compile.py`, `quality_profiles_apply.py`) while preserving exact DG06 compile/apply behavior and error contracts,
     - kept `quality_profiles.py` as a thin compatibility facade re-exporting the same symbol surface used by pipeline and orchestrator code paths,
     - extended import-contract coverage for the new DG06 modules and validated parity with generation/integration suites plus isolated GUI regression runs.
+  - Run-center v2 concern decomposition slice (completed 2026-03-04):
+    - decomposed `src/gui/v2/routes/run_center_impl.py` into concern modules (`run_center_nav.py`, `run_center_io.py`, `run_center_runs.py`) while preserving route behavior, shim patch points, and hook indirection contracts,
+    - kept `run_center_impl.py` as a thin compatibility facade that preserves `RunCenterV2Screen` method surface and deterministic call ordering,
+    - added run-center method/import contract coverage (`tests/gui/test_run_center_v2_method_contracts.py`, `tests/test_import_contracts.py`) and validated parity with GUI regression suites plus isolated GUI execution.
   - Remaining follow-up:
     - No active soft-budget hotspot decompositions are currently queued.
 

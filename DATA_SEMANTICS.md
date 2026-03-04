@@ -64,6 +64,7 @@ Direction 3 (float -> decimal) is completed.
 - Data-generation update (2026-02-24): DG06 missingness + data-quality profile modeling implemented via optional project-level `data_quality_profiles` with deterministic MCAR/MAR/MNAR missingness and controlled quality-issue mutation (`format_error`, `stale_value`, `drift`).
 - Data-generation update (2026-02-24): DG07 sample-driven profile fitting implemented via optional project-level `sample_profile_fits` with CSV-driven inference (`sample_source`) and deterministic frozen profile overrides (`fixed_profile`).
 - Data-generation update (2026-02-25): DG08 child-cardinality distribution modeling implemented via optional FK-level `child_count_distribution` (`uniform`, `poisson`, `zipf`) with deterministic distribution-driven child-count shaping that preserves FK min/max bounds.
+- GUI-only update (2026-03-04): optional debug-gated PyQt schema-project experiment (`GDA_ENABLE_PYQT_EXPERIMENT=1`) was added as an isolated prototype launcher without changing canonical generator, validation, or JSON semantics.
 
 ## Core design principle
 

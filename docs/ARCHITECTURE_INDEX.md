@@ -185,6 +185,9 @@ This file is the navigation map for the domain-first incremental refactor.
   - `src/gui/v2/routes/shell_impl.py`
   - `src/gui/v2/routes/home_impl.py`
   - `src/gui/v2/routes/schema_studio_impl.py`
+  - `src/gui/v2/routes/run_center_nav.py`
+  - `src/gui/v2/routes/run_center_io.py`
+  - `src/gui/v2/routes/run_center_runs.py`
   - `src/gui/v2/routes/run_center_impl.py`
   - `src/gui/v2/routes/specialists_impl.py`
   - `src/gui/v2/routes/run_hooks.py`
@@ -218,6 +221,7 @@ This file is the navigation map for the domain-first incremental refactor.
 | Update schema v2 route generator-form behavior | `src/gui_v2_schema_project_form.py` with class facade `src/gui_v2_schema_project.py` |
 | Update schema-editor concern logic | `src/gui/schema/editor/*.py` (layout split ownership in `layout_build.py`, `layout_modes.py`, `layout_panels_{project,tables,columns,relationships,generate}.py`, `layout_navigation.py`, `layout_shortcuts.py`, `layout_onboarding.py`; wrappers remain in `src/gui/schema/editor_base.py`) |
 | Update v2 navigation shell routes | `src/gui/v2/routes/*_impl.py` + route wrappers in `src/gui/v2/routes/*.py` |
+| Update run-center v2 route behavior | `src/gui/v2/routes/run_center_nav.py`, `src/gui/v2/routes/run_center_io.py`, `src/gui/v2/routes/run_center_runs.py` with wrapper surface in `src/gui/v2/routes/run_center_impl.py` |
 | Update run-center patchable command hooks | `src/gui/v2/routes/run_hooks.py` and compatibility bridge `src/gui_v2_redesign.py` |
 | Keep backward import compatibility | top-level shim modules in `src/` |
 

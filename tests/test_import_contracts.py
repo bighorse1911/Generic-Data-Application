@@ -203,6 +203,9 @@ class ImportContractTests(unittest.TestCase):
             "src.gui.v2.routes.home",
             "src.gui.v2.routes.schema_studio",
             "src.gui.v2.routes.run_center",
+            "src.gui.v2.routes.run_center_nav",
+            "src.gui.v2.routes.run_center_io",
+            "src.gui.v2.routes.run_center_runs",
         )
         for module_name in modules:
             mod = importlib.import_module(module_name)

@@ -26,6 +26,7 @@ relational, schema-driven datasets for analytics, testing, and demos.
 - Native v2 missing-route parity pass (completed): new additive native routes `schema_project_v2`, `performance_workbench_v2`, and `execution_orchestrator_v2` now exist alongside classic routes; `schema_studio_v2` schema handoff now targets `schema_project_v2`.
 - Specialist v2 route restoration (completed): `erd_designer_v2` and `location_selector_v2` remain native v2 routes with explicit open-classic tool actions; `home_v2` now uses a scrollable cards region so specialist routes remain accessible as v2 route inventory grows.
 - Schema demo experiment route (completed): additive route `schema_demo_v2` now exists as a strict mockup-style v2 schema workflow (modeled from `demopage.png`) with full model-backed callbacks, constraints advanced sections, and independent preloaded demo state.
+- Debug-gated PyQt schema experiment launcher (completed): `home_v2` can expose an optional `Schema Project PyQt Experiment` card when `GDA_ENABLE_PYQT_EXPERIMENT=1`, launching an isolated subprocess-based PyQt prototype without changing route keys or replacing Tk routes.
 - v2 generator UI migration (completed): `schema_project_v2` now exposes structured inline generator configuration for all registered generators, auto-adds required dependency links from source-column selections, preserves unknown params keys during JSON roundtrips, and retains raw params JSON entry/edit as an advanced fallback.
 - Async schema JSON IO hardening (completed): `schema_project_v2` now routes Save/Load project JSON operations through non-blocking lifecycle jobs with busy/status feedback, duplicate-operation guards, and safe cancel/abort handling for file dialog exits.
 - Incremental validation engine (completed): `schema_project_v2` now uses debounced scope-aware validation for table/column/FK deltas while preserving full-project validation before generate/export actions.
@@ -57,6 +58,8 @@ relational, schema-driven datasets for analytics, testing, and demos.
   - `src/runtime` (performance/multiprocessing compatibility wrappers)
   - `src/gui/schema` (classic schema GUI implementation)
   - `src/gui/v2/routes` (v2 route-per-module exports)
+- Optional isolated experiment package:
+  - `src/experimental/pyqt_schema_project` (debug-gated PyQt6-only schema-page prototype launcher/controller/UI kept outside canonical Tk route contracts and removable as one folder)
 - Backward-compatible top-level shims remain in place (`src/schema_project_model.py`, `src/generator_project.py`, `src/generators.py`, `src/gui_schema_core.py`, `src/gui_schema_editor_base.py`, `src/gui_v2_redesign.py`) so existing imports continue to work during migration.
 - Architecture navigation index: `docs/ARCHITECTURE_INDEX.md` is the canonical “where to edit” module map.
 - Route policy constants: `src/gui_route_policy.py` defines primary/fallback/deprecated schema route keys.
@@ -199,3 +202,4 @@ relational, schema-driven datasets for analytics, testing, and demos.
 ## Non-Goals (for now)
 - No external libraries
 - No cloud deployment
+- Optional debug-only experiments may use non-stdlib dependencies only when isolated from canonical runtime contracts and disabled by default.
